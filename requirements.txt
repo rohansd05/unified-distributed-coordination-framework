@@ -1,0 +1,94 @@
+# ============================================
+# Unified Distributed Coordination Framework
+# System Requirements
+# ============================================
+
+# Backend
+JDK 21+
+Maven 3.9+
+
+# Frontend
+Node.js 20+ LTS
+npm 10+
+
+# Database
+PostgreSQL 16+
+
+# Monitoring
+Prometheus
+Grafana
+
+# Version Control
+Git 2.40+
+
+# IDE
+Visual Studio Code
+
+# --------------------------------------------
+# VS Code Extensions
+# --------------------------------------------
+
+Extension Pack for Java
+Spring Boot Extension Pack
+Maven for Java
+ES7+ React/Redux/React-Native Snippets
+Tailwind CSS IntelliSense
+PostgreSQL
+GitLens
+
+# --------------------------------------------
+# Backend Technologies
+# --------------------------------------------
+
+Spring Boot
+Spring Web
+Spring Data JPA
+Spring Boot Actuator
+Spring Validation
+Java RMI
+Java ExecutorService
+Java CompletableFuture
+Micrometer
+Micrometer Prometheus Registry
+
+# --------------------------------------------
+# Frontend Technologies
+# --------------------------------------------
+
+React
+Vite
+Tailwind CSS
+shadcn/ui
+Recharts
+Lucide React
+
+# --------------------------------------------
+# Database
+# --------------------------------------------
+
+PostgreSQL JDBC Driver
+
+# ============================================
+# TESTING REQUIREMENTS
+# ============================================
+
+# Backend Testing
+JUnit 5
+Mockito
+Spring Boot Test
+MockMvc
+AssertJ
+
+# Frontend Testing
+Vitest
+React Testing Library
+Testing Library Jest DOM
+Testing Library User Event
+jsdom
+Vitest Coverage
+
+# End-to-End Testing
+Playwright
+
+# API Testing
+REST API integration tests
