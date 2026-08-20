@@ -1,0 +1,7 @@
+udcf:
+  node:
+    id: 1
+    name: Node-1
+    role: LEADER
+    host: localhost
+    port: 8081
