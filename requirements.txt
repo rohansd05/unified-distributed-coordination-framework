@@ -1,94 +1,103 @@
-# ============================================
-# Unified Distributed Coordination Framework
-# System Requirements
-# ============================================
+# ============================================================================
+# Unified Distributed Coordination Framework — System Requirements
+#
+# NOTE: This is NOT a Python project. This file is a human-readable system
+# requirements document only.
+#
+#   DO NOT RUN:  pip install -r requirements.txt
+#
+# Actual dependency management:
+#   Backend   ->  cd backend  && mvn install
+#   Frontend  ->  cd frontend && npm install
+# ============================================================================
 
-# Backend
-# JDK 21+
-Maven 3.9+
 
-# Frontend
-Node.js 20+ LTS
-npm 10+
+# ---------------------------------------------------------------------------
+# System Software
+# ---------------------------------------------------------------------------
+JDK                       21 or higher
+Maven                     3.9 or higher
+Node.js                   20 LTS or higher
+npm                       10 or higher
+PostgreSQL                16 or higher
+Docker Desktop            latest (for Prometheus and Grafana)
+Git                       latest
+Visual Studio Code        latest
 
-# Database
-PostgreSQL 16+
 
-# Monitoring
-Prometheus
-Grafana
+# ---------------------------------------------------------------------------
+# Recommended VS Code Extensions
+# ---------------------------------------------------------------------------
+vscjava.vscode-java-pack             Extension Pack for Java
+vmware.vscode-boot-dev-pack          Spring Boot Extension Pack
+dsznajder.es7-react-js-snippets      ES7+ React snippets
+bradlc.vscode-tailwindcss            Tailwind CSS IntelliSense
+ckolkman.vscode-postgres             PostgreSQL
+eamodio.gitlens                      GitLens
+ms-azuretools.vscode-docker          Docker
+anthropic.claude-code                Claude Code
 
-# Version Control
-Git 2.40+
 
-# IDE
-Visual Studio Code
-
-# --------------------------------------------
-# VS Code Extensions
-# --------------------------------------------
-
-Extension Pack for Java
-Spring Boot Extension Pack
-Maven for Java
-ES7+ React/Redux/React-Native Snippets
-Tailwind CSS IntelliSense
-PostgreSQL
-GitLens
-
-# --------------------------------------------
-# Backend Technologies
-# --------------------------------------------
-
-Spring Boot
+# ---------------------------------------------------------------------------
+# Backend Technologies (managed by backend/pom.xml)
+# ---------------------------------------------------------------------------
+Spring Boot                          3.3.5
 Spring Web
 Spring Data JPA
 Spring Boot Actuator
 Spring Validation
-Java RMI
-Java ExecutorService
-Java CompletableFuture
+Spring WebSocket (STOMP)
+PostgreSQL JDBC Driver
 Micrometer
 Micrometer Prometheus Registry
+Java RMI                             (JDK built-in; Experiments 9 and 10 only)
+ExecutorService / ThreadPoolExecutor (JDK built-in)
+CompletableFuture                    (JDK built-in)
 
-# --------------------------------------------
-# Frontend Technologies
-# --------------------------------------------
 
-React
-Vite
-Tailwind CSS
+# ---------------------------------------------------------------------------
+# Frontend Technologies (managed by frontend/package.json)
+# ---------------------------------------------------------------------------
+React                                18
+Vite                                 5
+Tailwind CSS                         3.4   (pin to v3 — shadcn/ui setup differs on v4)
 shadcn/ui
-Recharts
+Recharts                             2
 Lucide React
+axios
+react-router-dom                     6
+@stomp/stompjs
+sockjs-client
 
-# --------------------------------------------
-# Database
-# --------------------------------------------
 
-PostgreSQL JDBC Driver
-
-# ============================================
-# TESTING REQUIREMENTS
-# ============================================
-
-# Backend Testing
+# ---------------------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------------------
 JUnit 5
 Mockito
 Spring Boot Test
 MockMvc
 AssertJ
-
-# Frontend Testing
+Awaitility
 Vitest
 React Testing Library
-Testing Library Jest DOM
-Testing Library User Event
 jsdom
-Vitest Coverage
-
-# End-to-End Testing
+@testing-library/jest-dom
+@testing-library/user-event
 Playwright
 
-# API Testing
-REST API integration tests
+
+# ---------------------------------------------------------------------------
+# Infrastructure (Docker images, pulled by infra/docker-compose.yml)
+# ---------------------------------------------------------------------------
+prom/prometheus                      latest
+grafana/grafana                      latest
+
+
+# ---------------------------------------------------------------------------
+# Explicitly NOT Used
+# ---------------------------------------------------------------------------
+# No AWS, Azure, Google Cloud or Firebase
+# No cloud-hosted databases or message queues
+# No Hadoop, Spark, Kubernetes or blockchain
+# The entire system runs on localhost or a local area network.

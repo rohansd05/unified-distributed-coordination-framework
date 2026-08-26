@@ -1,0 +1,73 @@
+# ---------- Environment ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- Java / Maven ----------
+backend/target/
+**/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+replay_pid*
+.mvn/wrapper/maven-wrapper.jar
+
+# ---------- Node / Frontend ----------
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---------- Playwright ----------
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
+# ---------- IDE ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.classpath
+.project
+.settings/
+.factorypath
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Docker / Monitoring volumes ----------
+infra/grafana/data/
+infra/prometheus/data/
+
+# ---------- Logs and runtime ----------
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# ---------- Uploads (MapReduce test files) ----------
+backend/uploads/
+frontend/public/uploads/
+
+# ---------- Build tooling ----------
+.gradle/
+build/
+out/
