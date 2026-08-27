@@ -394,13 +394,7 @@ Detailed testing strategy is documented in `docs/testing/`.
 
 ## Contributors
 
-- <Nidhi Dhyani> — <2024300050>
-- <Rohan Dhumal> — <2024300049>
-- <Swanand Dixit> — <2024300052>
-- <Jai Desai> — <2024300041>
-
----
-
-## License
-
-MIT — see `LICENSE`.
+- **Nidhi Dhyani** — `2024300050`
+- **Rohan Dhumal** — `2024300049`
+- **Swanand Dixit** — `2024300052`
+- **Jai Desai** — `2024300041`
