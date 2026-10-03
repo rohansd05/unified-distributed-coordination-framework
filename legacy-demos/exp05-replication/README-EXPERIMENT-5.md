@@ -6,7 +6,7 @@ asynchronous (eventual) consistency on a three-node cluster.
 ## Run it
 
 ```powershell
-cd backend\udcf-exp5-replication-demo
+cd legacy-demos\exp05-replication
 javac -d target\classes src\main\java\com\udcf\sync\LamportClock.java src\main\java\com\udcf\replication\*.java src\main\java\com\udcf\demo\*.java
 java -cp target\classes com.udcf.demo.ReplicationDemo
 ```

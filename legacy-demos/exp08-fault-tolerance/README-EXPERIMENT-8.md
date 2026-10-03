@@ -6,7 +6,7 @@ failure stops all updates and destroys whatever the primary alone was holding.
 ## Run it
 
 ```powershell
-cd backend\udcf-exp8-fault-tolerance-demo
+cd legacy-demos\exp08-fault-tolerance
 javac -d target\classes src\main\java\com\udcf\sync\LamportClock.java src\main\java\com\udcf\fault\*.java src\main\java\com\udcf\demo\*.java
 java -cp target\classes com.udcf.demo.FaultToleranceDemo
 ```

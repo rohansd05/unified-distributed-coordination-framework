@@ -5,7 +5,7 @@ Four load balancing algorithms compared on one cluster of deliberately unequal w
 ## Run it
 
 ```powershell
-cd backend\udcf-exp6-loadbalancer-demo
+cd legacy-demos\exp06-load-balancing
 javac -d target\classes src\main\java\com\udcf\sync\LamportClock.java src\main\java\com\udcf\loadbalancer\*.java src\main\java\com\udcf\demo\*.java
 java -cp target\classes com.udcf.demo.LoadBalancerDemo
 ```

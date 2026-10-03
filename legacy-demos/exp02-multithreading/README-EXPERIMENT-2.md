@@ -9,7 +9,7 @@ throughout the project.
 ## Run it
 
 ```powershell
-cd backend
+cd legacy-demos\exp02-multithreading
 mvn clean install
 mvn test
 mvn spring-boot:run "-Dspring-boot.run.profiles=node1"

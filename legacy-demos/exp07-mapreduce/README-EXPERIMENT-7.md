@@ -6,7 +6,7 @@ optional Apache Spark version of the same jobs.
 ## Run it (the project's implementation)
 
 ```powershell
-cd backend\udcf-exp7-mapreduce-demo
+cd legacy-demos\exp07-mapreduce
 javac -d target\classes src\main\java\com\udcf\sync\LamportClock.java src\main\java\com\udcf\mapreduce\*.java src\main\java\com\udcf\demo\*.java
 java -cp target\classes com.udcf.demo.MapReduceDemo
 ```
