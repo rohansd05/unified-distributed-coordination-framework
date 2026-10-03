@@ -1,0 +1,27 @@
+# Line endings: LF in the repository and the working tree, except Windows scripts.
+* text=auto eol=lf
+
+# Windows scripts need CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Must be LF on every machine (Linux and Docker execution, stable hashes)
+*.sh text eol=lf
+mvnw text eol=lf
+legacy-demos/exp07-mapreduce/data/*.log text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.jar binary
+*.zip binary
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+*.woff binary
+*.woff2 binary
