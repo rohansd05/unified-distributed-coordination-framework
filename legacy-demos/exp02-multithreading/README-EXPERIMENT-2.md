@@ -10,17 +10,17 @@ throughout the project.
 
 ```powershell
 cd legacy-demos\exp02-multithreading
-mvn clean install
-mvn test
-mvn spring-boot:run "-Dspring-boot.run.profiles=node1"
+..\..\backend\mvnw.cmd clean install
+..\..\backend\mvnw.cmd test
+..\..\backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node1"
 ```
 
 Three nodes, three terminals:
 
 ```powershell
-mvn spring-boot:run "-Dspring-boot.run.profiles=node1"   # 8081
-mvn spring-boot:run "-Dspring-boot.run.profiles=node2"   # 8082
-mvn spring-boot:run "-Dspring-boot.run.profiles=node3"   # 8083
+..\..\backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node1"   # 8081
+..\..\backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node2"   # 8082
+..\..\backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node3"   # 8083
 ```
 
 ## API

@@ -7,7 +7,7 @@
 #   DO NOT RUN:  pip install -r requirements.txt
 #
 # Actual dependency management:
-#   Backend   ->  cd backend  && mvn install
+#   Backend   ->  cd backend; .\mvnw.cmd install   (Maven Wrapper; Maven not needed)
 #   Frontend  ->  cd frontend && npm install
 # ============================================================================
 
@@ -99,5 +99,7 @@ grafana/grafana                      latest
 # ---------------------------------------------------------------------------
 # No AWS, Azure, Google Cloud or Firebase
 # No cloud-hosted databases or message queues
-# No Hadoop, Spark, Kubernetes or blockchain
+# No Hadoop, Kubernetes or blockchain
+# PySpark is optional and used only by
+# legacy-demos/exp07-mapreduce/spark/wordcount_spark.py (docs/HANDOFF.md R12)
 # The entire system runs on localhost or a local area network.

@@ -55,8 +55,8 @@ Internal, per node k: RMI 110k · clock UDP 600k · election UDP 700k · replica
 requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
-Phase: 0
-Step: 0.5
+Phase: 1
+Step: 1.1
 Status: not started
 
 ### Completed steps
@@ -66,18 +66,18 @@ Status: not started
 - 0.3 backend/ created from the Exp 2 app; Maven Wrapper 3.3.2 (Maven 3.9.9, only-script,
   SHA-256 pinned); 59 tests in 11 classes pass (9853164)
 - 0.4 Root CLAUDE.md; docs/CLAUDE.md removed; .env.example replaced; .gitattributes added
-  and line endings renormalised
+  (index was already LF; working copies refreshed)
+- 0.5 README.md rewritten to describe only what exists; requirements.txt and legacy
+  Exp 2 README commands fixed
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
   scheduled there.
-- Stale references, fixed in Step 0.5: root README.md; requirements.txt (`cd backend`, and
-  "No Spark" vs the PySpark script); the legacy Exp 2 README still says `mvn` (use the
-  backend wrapper, see Deviations).
 - Stale `cd backend` in the MultithreadingDemo.java Javadoc (legacy and backend copies). The
   legacy copy stays as is (R9); the backend copy is reworked in Phase 3.
 - backend/ is still the Exp 2 app, unchanged (com.udcf.threadpool etc., node1–3 profiles).
   The target layout arrives in Phases 1 and 3.
+- docs/HANDOFF.md mentions docs/CLAUDE.md in Sections 1, 4 and 5 as history; left unchanged.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is
@@ -91,3 +91,5 @@ Status: not started
 - legacy-demos/exp07-mapreduce/data/framework-events.log was produced outside the repository,
   and nothing regenerates it. It is the committed fallback for R13 and is pinned to LF, so
   its SHA-256 (5b6e42a2…) matches on every machine.
+- Step 0.5: legacy Exp 2 README now builds with ..\..\backend\mvnw.cmd (a command fix
+  beyond R9's path-only rule, because mvn is not on PATH).

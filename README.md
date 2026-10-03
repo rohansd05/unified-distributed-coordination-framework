@@ -1,21 +1,13 @@
 # Unified Distributed Coordination Framework
 
-A locally deployable, non-cloud distributed systems platform that integrates ten
-distributed-systems mechanisms into one coherent application, with a professional
-React dashboard and real Prometheus/Grafana monitoring.
-
----
-
-## Overview
-
-Distributed-systems laboratory experiments are usually written as unrelated standalone
-programs. This project instead builds **one functioning distributed system** in which
-multiple independent nodes communicate and coordinate, and treats each experiment as a
-module of that single system.
-
-Four JVM instances run from one codebase — a gateway and three nodes — differentiated
-only by Spring profile. They elect leaders, replicate data, balance load, detect
-failures and recover, while exposing live metrics to Prometheus and Grafana.
+UDCF brings ten distributed-systems lab experiments together as modules of one running
+system. The goal is a single Spring Boot process that hosts a cluster of nodes, each owning
+real sockets on 127.0.0.1, with all ten modules (client-server RMI, multithreading, clock
+synchronization, leader election, replication, load balancing, MapReduce, fault tolerance,
+MPI-style collectives and parallel matrix multiplication) sharing that cluster behind one
+web UI. [docs/HANDOFF.md](docs/HANDOFF.md) is the plan and the single source of truth for
+decisions, architecture and phases. [CLAUDE.md](CLAUDE.md) holds the instructions for
+Claude Code.
 
 ---
 
@@ -33,362 +25,138 @@ behaviour.
 
 ---
 
-## What This Project Does
+## Current Status
 
-Through the web interface a user can:
+Phase 0 (repository repair) is complete.
 
-- see distributed nodes and their live roles and health
-- generate concurrent client requests and observe multithreaded processing
-- observe Lamport logical clock synchronization across nodes
-- trigger Bully and Ring leader elections, and kill the current leader
-- observe round-robin and least-connections load balancing
-- inspect primary-backup data replication and its latency
-- simulate node failures and observe automatic failover and recovery
-- run a MapReduce job on an uploaded text file
-- demonstrate MPI-style broadcast, scatter and gather
-- run parallel matrix multiplication and compare speedup
-- monitor everything through Prometheus and Grafana
+- `backend/` is still the Experiment 2 multithreading application, copied from the legacy
+  demo. It is not yet the integrated system: there is no shared cluster, no inter-node
+  communication and no other module.
+- Experiments 2–8 exist as standalone demos in `legacy-demos/`.
+- Experiments 1, 9 and 10 are not started.
+- There is no frontend yet, and no Docker Compose, Prometheus or Grafana setup.
 
 ---
 
-## Features
+## Repository Layout
 
-- **Real distributed nodes.** Separate JVM processes communicating over HTTP; no simulation.
-- **Live metrics only.** Every displayed value is read from actual system state at request time.
-- **Configurable deployment.** Runs on one machine via ports, or across a LAN via configured node addresses.
-- **Live updates.** STOMP WebSocket pushes events to the dashboard as they happen.
-- **Full observability.** Micrometer → Prometheus → Grafana, every metric tagged by node.
-- **Tested.** Unit, integration, distributed, frontend and E2E test layers.
-
----
-
-## Experiment Coverage
-
-| # | Experiment | Implementation |
-|---|---|---|
-| 2 | Multithreading | `ThreadPoolExecutor`, bounded queue, backpressure, live pool metrics |
-| 3 | Clock Synchronization | Lamport logical clock, piggybacked via HTTP interceptors |
-| 4 | Leader Election | Bully and Ring algorithms with heartbeat-based failure detection |
-| 5 | Data Consistency & Replication | Primary-backup with ACK and Lamport-based conflict resolution |
-| 6 | Load Balancing | Round Robin and Least Connections over real node workload |
-| 7 | MapReduce | Lightweight in-framework Map → Shuffle → Reduce pipeline |
-| 8 | Fault Tolerance | Failure detection, backup promotion, service restoration |
-| 9 | MPI Collectives | Broadcast, Scatter, Gather over Java RMI |
-| 10 | Parallel Matrix Multiplication | Row-block partitioning across nodes via RMI, with speedup analysis |
-
----
-
-## Architecture
-                    CLIENT (browser)
-                          |
-                  React Dashboard :5173
-                          |
-                 Spring Boot Gateway :8080
-                          |
-                    Load Balancer
-                          |
-    +---------------------+---------------------+
-    |                     |                     |
-Node 1 :8081          Node 2 :8082          Node 3 :8083
- LEADER                 WORKER                BACKUP
-    |                     |                     |
-    +---------------------+---------------------+
-                          |
-     Threads · Clock Sync · Replication · Election
-          Fault Detection · Failover · MapReduce
-                 MPI Collectives · Matrix
-                          |
-                Micrometer / Actuator
-                          |
-                   Prometheus :9090
-                          |
-                    Grafana :3000
-                    
----
-
-## Technology Stack
-
-**Backend** Java 21 · Spring Boot 3.3 · Spring Web · Spring Data JPA · Actuator ·
-Micrometer · WebSocket (STOMP) · Java RMI · Maven
-
-**Frontend** React 18 · Vite · Tailwind CSS · shadcn/ui · Recharts · Lucide React ·
-STOMP.js · axios
-
-**Data & Monitoring** PostgreSQL 16 · Prometheus · Grafana · Docker
-
-**Testing** JUnit 5 · Mockito · AssertJ · MockMvc · Awaitility · Vitest ·
-React Testing Library · Playwright
-
----
-
-## Repository Structure
-
-Unified-Distributed-Coordination-Framework/
-├── backend/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/udcf/
-│   │   │   │   ├── UdcfBackendApplication.java
-│   │   │   │   ├── config/
-│   │   │   │   ├── controller/
-│   │   │   │   ├── dto/
-│   │   │   │   ├── model/
-│   │   │   │   ├── service/
-│   │   │   │   ├── threadpool/      # Exp 2
-│   │   │   │   ├── sync/            # Exp 3
-│   │   │   │   ├── election/        # Exp 4
-│   │   │   │   ├── replication/     # Exp 5
-│   │   │   │   ├── loadbalancer/    # Exp 6
-│   │   │   │   ├── mapreduce/       # Exp 7
-│   │   │   │   ├── fault/           # Exp 8
-│   │   │   │   ├── mpi/             # Exp 9  (RMI)
-│   │   │   │   ├── matrix/          # Exp 10 (RMI)
-│   │   │   │   ├── monitoring/
-│   │   │   │   └── demo/            # standalone console demos
-│   │   │   └── resources/
-│   │   │       ├── application.yml
-│   │   │       ├── application-gateway.yml
-│   │   │       ├── application-node1.yml
-│   │   │       ├── application-node2.yml
-│   │   │       └── application-node3.yml
-│   │   └── test/java/com/udcf/      # mirrors main/
+```
+.
+├── .vscode/                 editor settings
+├── backend/                 Spring Boot app (currently the Exp 2 application)
+│   ├── .mvn/                Maven Wrapper configuration
+│   ├── src/                 main and test sources
+│   ├── mvnw                 Maven Wrapper (sh)
+│   ├── mvnw.cmd             Maven Wrapper (Windows)
 │   └── pom.xml
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/
-│   │   │   ├── ui/                  # shadcn
-│   │   │   ├── nodes/
-│   │   │   ├── charts/
-│   │   │   └── onboarding/
-│   │   ├── pages/
-│   │   ├── services/
-│   │   ├── hooks/
-│   │   ├── lib/
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── e2e/
-│   ├── public/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   └── playwright.config.js
-│
-├── infra/
-│   ├── docker-compose.yml
-│   ├── prometheus/
-│   │   └── prometheus.yml
-│   └── grafana/
-│       ├── dashboards/
-│       │   └── udcf-overview.json
-│       └── provisioning/
-│           ├── datasources/datasource.yml
-│           └── dashboards/dashboards.yml
-│
-├── database/
-│   ├── schema.sql
-│   └── seed.sql
-│
-├── scripts/
-│   ├── start-all.ps1
-│   ├── start-nodes.ps1
-│   ├── stop-nodes.ps1
-│   ├── start-monitoring.ps1
-│   └── run-tests.ps1
-│
 ├── docs/
-│   ├── architecture/
-│   ├── experiments/
-│   ├── research/
-│   └── testing/
-│
-├── .env.example
-├── .env                  # gitignored
+│   └── HANDOFF.md           plan and single source of truth
+├── legacy-demos/            original standalone demos, Experiments 2–8
+│   ├── exp02-multithreading/
+│   ├── exp03-clock-sync/
+│   ├── exp04-election/
+│   ├── exp05-replication/
+│   ├── exp06-load-balancing/
+│   ├── exp07-mapreduce/
+│   └── exp08-fault-tolerance/
+├── .env.example             environment variables for later phases (unused by the current backend)
+├── .gitattributes           line-ending rules
 ├── .gitignore
-├── CLAUDE.md
+├── CLAUDE.md                instructions for Claude Code
 ├── README.md
-├── CONTRIBUTING.md
-├── LICENSE
-└── requirements.txt
+└── requirements.txt         human-readable system requirements (not a pip file)
+```
 
 ---
 
-## System Requirements
+## Prerequisites
 
-- JDK 21+
-- Maven 3.9+
-- Node.js 20+ LTS and npm 10+
-- PostgreSQL 16+
-- Docker Desktop (for Prometheus and Grafana)
+- JDK 21
 - Git
-- Visual Studio Code
 
-See `requirements.txt` for the full list, including recommended VS Code extensions.
+Maven is **not** required: the Maven Wrapper in `backend/` downloads Maven 3.9.9 on first
+run. Python (with `pyspark`) is needed only for the optional Spark script in
+[legacy-demos/exp07-mapreduce/spark/wordcount_spark.py](legacy-demos/exp07-mapreduce/spark/wordcount_spark.py).
 
 ---
 
-## Installation
-
-### 1. Clone
-
-```bash
-git clone <repository-url>
-cd Unified-Distributed-Coordination-Framework
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` if your PostgreSQL password or ports differ from the defaults.
-
-### 3. Create the database
-
-```bash
-psql -U postgres -f database/schema.sql
-```
-
-### 4. Start monitoring
-
-```powershell
-docker compose -f infra/docker-compose.yml up -d
-```
-
-Prometheus at http://localhost:9090 · Grafana at http://localhost:3000
-
-### 5. Build and start the backend
+## Backend
 
 ```powershell
 cd backend
-mvn clean install
+.\mvnw.cmd test
+.\mvnw.cmd spring-boot:run
 ```
 
-Then start four instances (four terminals, or use the script):
+`test` runs 59 tests in 11 classes. `spring-boot:run` starts the default profile `node1`
+on http://localhost:8081. The exposed actuator endpoints are `/actuator/health`,
+`/actuator/info`, `/actuator/metrics` and `/actuator/prometheus`. The REST API is the
+Experiment 2 API documented in
+[legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md](legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md).
+
+Profiles `node2` (port 8082) and `node3` (port 8083) start further instances. They are
+independent processes and do not communicate with each other:
 
 ```powershell
-..\scripts\start-all.ps1
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node2"   # 8082
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node3"   # 8083
 ```
 
-| Instance | Port |
-|---|---|
-| Gateway | 8080 |
-| Node 1 | 8081 |
-| Node 2 | 8082 |
-| Node 3 | 8083 |
+---
 
-### 6. Start the frontend
+## Legacy Demos
+
+The original standalone demos, kept runnable as the evidence behind the lab submissions.
+
+| Folder | Experiment | Build and run | Ports |
+|---|---|---|---|
+| [legacy-demos/exp02-multithreading/](legacy-demos/exp02-multithreading/) | 2 · Multithreading | [README-EXPERIMENT-2.md](legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md) (Maven, via the backend wrapper) | HTTP 8081–8083 |
+| [legacy-demos/exp03-clock-sync/](legacy-demos/exp03-clock-sync/) | 3 · Clock synchronization (Lamport) | `javac` / `java`, see [below](#experiments-3-and-4) | UDP 6001–6003 |
+| [legacy-demos/exp04-election/](legacy-demos/exp04-election/) | 4 · Bully and Ring leader election | `javac` / `java`, see [below](#experiments-3-and-4) | UDP 7001–7005 |
+| [legacy-demos/exp05-replication/](legacy-demos/exp05-replication/) | 5 · Data consistency and replication | [README-EXPERIMENT-5.md](legacy-demos/exp05-replication/README-EXPERIMENT-5.md) | TCP 7101–7103 |
+| [legacy-demos/exp06-load-balancing/](legacy-demos/exp06-load-balancing/) | 6 · Load balancing | [README-EXPERIMENT-6.md](legacy-demos/exp06-load-balancing/README-EXPERIMENT-6.md) | TCP 7201–7203 |
+| [legacy-demos/exp07-mapreduce/](legacy-demos/exp07-mapreduce/) | 7 · MapReduce (optional PySpark script) | [README-EXPERIMENT-7.md](legacy-demos/exp07-mapreduce/README-EXPERIMENT-7.md) | TCP 7301–7303 |
+| [legacy-demos/exp08-fault-tolerance/](legacy-demos/exp08-fault-tolerance/) | 8 · Fault tolerance (primary-backup) | [README-EXPERIMENT-8.md](legacy-demos/exp08-fault-tolerance/README-EXPERIMENT-8.md) | TCP 7401–7403 |
+
+### Experiments 3 and 4
+
+These two have no README; the commands come from each demo class's Javadoc.
 
 ```powershell
-cd frontend
-npm install
-npm run dev
+cd legacy-demos\exp03-clock-sync
+javac -d target/demo-classes src/main/java/com/udcf/sync/LamportClock.java src/main/java/com/udcf/demo/*.java
+java -cp target/demo-classes com.udcf.demo.ClockSyncDemo
 ```
-
-Open http://localhost:5173
-
----
-
-## First-Time Onboarding
-
-On first visit the application runs a five-step guided setup rather than dropping you
-into the dashboard:
-
-1. **Welcome** — what the framework is
-2. **System Health Check** — verifies backend, database, all three nodes, Prometheus and Grafana
-3. **Node Roles** — explains Leader, Worker and Backup
-4. **First Demonstration** — generates ten concurrent requests and shows them processed across threads
-5. **Dashboard** — hands control over
-
-Onboarding can be skipped at any point and restarted later from Settings.
-
----
-
-## Quick Start
 
 ```powershell
-docker compose -f infra/docker-compose.yml up -d   # monitoring
-.\scripts\start-all.ps1                            # gateway + 3 nodes
-cd frontend; npm run dev                           # dashboard
+cd legacy-demos\exp04-election
+javac -d target/classes src/main/java/com/udcf/sync/LamportClock.java src/main/java/com/udcf/election/*.java src/main/java/com/udcf/demo/*.java
+java -cp target/classes com.udcf.demo.ElectionDemo
 ```
 
----
-
-## Recommended First Demo
-
-Open the website
-
--> complete onboarding
--> check node health
--> generate 100 concurrent requests
--> observe multithreading and logical clocks
--> kill the current leader
--> run a Bully election, then a Ring election
--> update replicated data and verify the backup
--> increase load and observe load balancing
--> kill the primary and observe failover
--> run MapReduce on a text file
--> run MPI broadcast, scatter and gather
--> run parallel matrix multiplication
--> open Grafana and analyse the metrics
-
+> **Port overlap.** The legacy demos use the same port ranges that the planned integrated
+> backend will use (UDP 6001+ and 7001+, TCP 7101+, 7201+ and 7301+; see docs/HANDOFF.md
+> Section 6.3), so they must not run at the same time as it. Legacy Exp 8 uses 7401–7403,
+> which falls outside those ranges. Today, legacy Exp 2 and `backend/` are the same
+> application on the same HTTP ports 8081–8083, so run only one of them at a time.
 
 ---
 
-## Monitoring
+## Windows Notes
 
-Prometheus scrapes all four instances at `/actuator/prometheus`. Every metric carries
-`node_id` and `role` labels so all instances can be compared on one panel.
-
-Key series:
-
-distributed_requests_total distributed_active_threads
-distributed_node_status distributed_node_load
-distributed_leader_elections_total distributed_election_duration
-distributed_clock_value distributed_replication_latency
-distributed_replication_failures_total
-distributed_failures_total distributed_recovery_duration
-distributed_map_tasks_total distributed_reduce_tasks_total
-distributed_mpi_messages_total distributed_matrix_execution_duration
-
-
-Grafana is provisioned automatically with its datasource and the project dashboard.
-Default credentials are set in `.env`.
+- On the first run of the backend or a demo, Windows Firewall may ask whether to allow
+  Java. Click **Allow access** for **Private networks**.
+- Line endings are handled by `.gitattributes` (LF for sources, CRLF for `.cmd`, `.bat`
+  and `.ps1`). No `core.autocrlf` setup is needed.
 
 ---
 
-## Testing
+## Where This Is Going
 
-```powershell
-cd backend;  mvn test          # unit and integration
-cd backend;  mvn verify        # full verification
-cd frontend; npm run test      # component and service tests
-cd frontend; npm run test:coverage
-cd frontend; npx playwright test   # end-to-end
-```
-
-Or run everything:
-
-```powershell
-.\scripts\run-tests.ps1
-```
-
-Detailed testing strategy is documented in `docs/testing/`.
-
----
-
-## Documentation
-
-| Location | Contents |
-|---|---|
-| `docs/architecture/` | System design and architectural decision records |
-| `docs/experiments/` | Per-experiment implementation notes |
-| `docs/research/` | Research gap and reviewed literature |
-| `docs/testing/` | Test strategy and coverage |
+Phase 1 builds the core platform inside `backend/`: a shared cluster of nodes, a Lamport
+clock, an event bus and a module registry. Later phases add the React frontend, port
+Experiments 2–8 onto that cluster, build Experiments 1, 9 and 10, and add monitoring and
+deployment. The step-by-step plan is in docs/HANDOFF.md Section 11.
 
 ---
 
