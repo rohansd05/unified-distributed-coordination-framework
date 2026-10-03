@@ -1,0 +1,11 @@
+udcf:
+  node:
+    id: 2
+    name: Node-2
+    role: WORKER
+    host: localhost
+    port: 8082
+  threadpool:
+    # Deliberately smaller so load-balancing differences between nodes are visible later.
+    core-pool-size: 2
+    max-pool-size: 4
