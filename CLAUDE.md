@@ -56,7 +56,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 1
-Step: 1.2
+Step: 1.3
 Status: not started
 
 ### Completed steps
@@ -73,6 +73,8 @@ Status: not started
   EventRingBuffer, ClusterEventBus), core/cluster (Cluster, ClusterNode, NodeService,
   capacities, ports), core/module (ExperimentModule, ModuleRegistry,
   ModuleActionGuard); 107 core tests
+- 1.2 WebSocket/STOMP on /ws (topics /topic/events, /topic/cluster, /topic/modules/{id});
+  CORS and WebSocket origins from UDCF_ALLOWED_ORIGINS; 18 new tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -102,3 +104,8 @@ Status: not started
   beyond R9's path-only rule, because mvn is not on PATH).
 - Step 1.1: split into two parts (clock + events; cluster + modules). EventLogExporter
   deferred to Phase 9, where its format is defined by the MapReduce job.
+- Step 1.2: com.udcf.config.CorsConfig (hard-coded origins) deleted and replaced by
+  com.udcf.web.CorsConfig: same path (/api/**), methods and headers, origins from
+  UDCF_ALLOWED_ORIGINS (default http://localhost:5173,http://127.0.0.1:5173, as before),
+  no credentials. It carries @EnableConfigurationProperties(UdcfWebProperties.class)
+  because @WebMvcTest slices filter out @ConfigurationPropertiesScan.

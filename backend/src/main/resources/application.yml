@@ -31,6 +31,8 @@ udcf:
       replication-base: 7100
       requests-base: 7200
       mapreduce-base: 7300
+  web:
+    allowed-origins: ${UDCF_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
 
 management:
   endpoints:
