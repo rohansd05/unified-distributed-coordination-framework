@@ -27,14 +27,18 @@ behaviour.
 
 ## Current Status
 
-Phase 0 (repository repair) is complete.
+Phases 0 (repository repair) and 1 (core platform) are complete; Phase 2 (frontend shell
+and deployment skeleton) is in progress.
 
-- `backend/` is still the Experiment 2 multithreading application, copied from the legacy
-  demo. It is not yet the integrated system: there is no shared cluster, no inter-node
-  communication and no other module.
-- Experiments 2–8 exist as standalone demos in `legacy-demos/`.
-- Experiments 1, 9 and 10 are not started.
-- There is no frontend yet, and no Docker Compose, Prometheus or Grafana setup.
+- `backend/` has the core platform: a shared cluster of nodes, the event bus with Lamport
+  ordering, the REST API, STOMP over WebSocket, metrics, and the `local` and `public`
+  profiles. The Experiment 2 multithreading application runs alongside it and moves onto
+  the shared cluster in Phase 3.
+- `frontend/` has the application shell: sidebar, top bar and routing for every page.
+  The pages are placeholders, and the shell does not call the backend yet.
+- No experiment module is built on the shared cluster yet. Experiments 2–8 exist as
+  standalone demos in `legacy-demos/`; Experiments 1, 9 and 10 are not started.
+- There is no Docker Compose, Prometheus or Grafana setup yet.
 
 ---
 
@@ -43,7 +47,7 @@ Phase 0 (repository repair) is complete.
 ```
 .
 ├── .vscode/                 editor settings
-├── backend/                 Spring Boot app (currently the Exp 2 application)
+├── backend/                 Spring Boot app: core platform, with the Exp 2 application alongside
 │   ├── .mvn/                Maven Wrapper configuration
 │   ├── src/                 main and test sources
 │   ├── mvnw                 Maven Wrapper (sh)
@@ -51,9 +55,9 @@ Phase 0 (repository repair) is complete.
 │   └── pom.xml
 ├── docs/
 │   └── HANDOFF.md           plan and single source of truth
-├── frontend/                React 18 + Vite 5 web UI (skeleton)
+├── frontend/                React 18 + Vite 5 web UI: shell and routing, placeholder pages
 │   ├── public/              static files (favicon)
-│   ├── src/                 components, styles, tests
+│   ├── src/                 layout, pages, routes, styles, tests
 │   ├── components.json      shadcn/ui configuration
 │   ├── index.html
 │   ├── package.json         scripts and pinned dependencies
@@ -133,12 +137,14 @@ Requires Node 22.x.
 cd frontend
 npm install
 npm run dev      # http://localhost:5173 (strict port: fails if 5173 is taken)
-npm test         # Vitest + React Testing Library, 6 tests
+npm test         # Vitest + React Testing Library, 38 tests
 npm run build    # production build in frontend/dist
 ```
 
-For now this is a skeleton: one placeholder page showing the dark design tokens, fonts and
-base components. It does not call the backend yet, so the backend does not need to run.
+For now this is the application shell: the sidebar, top bar and a placeholder for every
+page, including one page per experiment. It does not call the backend yet, so the backend
+does not need to run. Vite reads `VITE_*` variables from the root `.env`; see
+[.env.example](.env.example).
 
 ---
 

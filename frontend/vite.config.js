@@ -8,6 +8,8 @@ const src = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'src')
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Read the root .env (docs/HANDOFF.md 10.3). Only VITE_* variables reach the browser.
+  envDir: '..',
   resolve: {
     alias: { '@': src },
   },

@@ -56,7 +56,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 2
-Step: 2.2
+Step: 2.3
 Status: not started
 
 ### Completed steps
@@ -84,6 +84,11 @@ Status: not started
 - 2.1 frontend/ skeleton: Vite 5.4, React 18 (JSX), Tailwind 3.4, shadcn@2.3.0 (new-york,
   JSX), dark tokens from Section 8.3, self-hosted Inter and JetBrains Mono, Vitest + RTL +
   jsdom; 6 tests
+- 2.2 Layout (sidebar, top bar), routing for all Section 8.2 pages as stubs, shared
+  experiment-page skeleton (Section 8.4), static experiment catalog; react-router-dom
+  6.30.6; full-height app shell (main and sidebar scroll independently), responsive
+  sidebar drawer below md (backdrop, Escape, focus management), themed dark scrollbars
+  (scrollbar-color, thin); 45 tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -100,6 +105,12 @@ Status: not started
   module arrives (Phase 12) the test must use a different mechanism or lab number.
 - public profile shows full /actuator/health details (including the disk path); set
   show-details: never in application-public.yml in Step 2.5.
+- The root .env may still hold pre-Phase-0 keys (for example VITE_WS_URL=http://...).
+  Refresh it from .env.example before Step 2.3.
+- react-router-dom 6.30.6 carries two moderate advisories: GHSA-wrjc-x8rr-h8h6 (open
+  redirect via a backslash in a Link/navigate target) and GHSA-337j-9hxr-rhxg (SSR
+  hydration only; not used here). Rule: never build a Link/navigate target from untrusted
+  input. Both are fixed only in react-router 7.18+, a major upgrade outside R15.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is
@@ -141,3 +152,6 @@ Status: not started
   (user decision) although it no longer receives security patches; the risk is
   limited to the local dev server. Fonts are self-hosted via @fontsource-variable
   (user decision).
+- Step 2.2: the sidebar uses a static catalog of the ten experiments, because the module
+  registry is empty until Phase 3. Step 2.3 merges live status from GET /api/modules
+  (unknown modules show as Planned). Vite reads the root .env (envDir '..').

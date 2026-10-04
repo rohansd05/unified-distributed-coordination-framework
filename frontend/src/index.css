@@ -24,6 +24,26 @@
  * marks leaders, success and live state, so it lives in --success; --accent is a hover
  * surface (#1D2A4D) between surface and border.
  */
+/*
+ * Dark scrollbars everywhere. color-scheme: dark gives the browser's generic dark controls;
+ * scrollbar-color and scrollbar-width (Chromium 121+, so Brave, Chrome and Edge, and
+ * Firefox) theme them. The thumb is the handoff's "muted" token (#92A5C4) at 50% opacity,
+ * because --border/--muted (#24304F) would be nearly invisible on the track (about 1.3:1).
+ * scrollbar-color inherits but scrollbar-width does not, so both are set on every element
+ * to cover main, the sidebar and any future scroll container.
+ */
+:root {
+  color-scheme: dark;
+  --scrollbar-thumb: hsl(217.2 29.8% 67.1% / 0.5); /* --muted-foreground at 50% */
+  --scrollbar-track: hsl(225.5 52.4% 12.4%);       /* --background */
+}
+
+html,
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
 :root,
 .dark {
   --background: 225.5 52.4% 12.4%;           /* #0F1730 */
