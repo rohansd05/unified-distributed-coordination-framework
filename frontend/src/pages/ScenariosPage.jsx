@@ -8,7 +8,7 @@ export function ScenariosPage() {
         title="Scenarios"
         description="Guided demonstrations that span several modules."
       />
-      <ComingSoon when="Arrives in Phase 13" />
+      <ComingSoon when="Arrives in Phase 9A (Experiments 2–8); extended in Phase 13" />
     </>
   )
 }

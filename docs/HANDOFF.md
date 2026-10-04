@@ -7,8 +7,9 @@
 
 | | |
 |---|---|
-| Document version | 1.0 |
+| Document version | 1.1 |
 | Written | 2026-10-03 |
+| Amended | 2026-10-04: R16, R17, Phase 9A (seven-experiment system demo) |
 | Repository | `https://github.com/rohansd05/unified-distributed-coordination-framework` |
 | Repository HEAD when written | `96540d4` |
 | Local path | `C:\Users\NIDHI\Desktop\unified-distributed-coordination-framework` |
@@ -199,6 +200,8 @@ are now revised. **This table is authoritative.**
 | **R13** | The MapReduce module can analyse **the cluster's own live event log**, exported from the event bus. A committed sample file is kept as a fallback. | NEW | Replaces the generated static log with real data. |
 | **R14** | `CLAUDE.md` lives at the repository root. | NEW | Claude Code only auto-loads it from the root. |
 | **R15** | Stack, unchanged: Java 21, Spring Boot 3.3.5, React 18 + Vite 5 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide, axios, react-router 6, @stomp/stompjs. No Lombok. Constructor injection only. | KEEPS | Ask the user before adding any dependency not listed in Section 6 or 8. |
+| **R16** | **Seven-experiment system demo after Phase 9.** New Phase 9A wires links L1–L5 among Experiments 2–8 and delivers the global timeline, the four scenarios, a demo polish pass and a demo package. Phase 13 then adds L6, makes the leader the MPI root, and extends scenarios and timeline to Experiments 1, 9 and 10. | NEW (2026-10-04) | The user needs a showable integrated system before Experiments 1, 9 and 10 exist. All four suggested scenarios use only Experiments 2–8. |
+| **R17** | **Distinctive, non-template UI.** Pages use a deliberate visual language (node-graph motifs, purposeful animation, real empty states) following the frontend-design guidance, and avoid the stock shadcn look. A demo-polish step (9A.4) precedes the full polish in Phase 14. | NEW (2026-10-04) | User requirement: the UI must not look AI-generated. |
 
 **R2 notes — why each transport.** UDP for clock sync and election, because those algorithms are
 designed to survive unreliable, unordered delivery; using a reliable transport would hide what is
@@ -278,8 +281,12 @@ Document that in the README.
 | **L5** | Event bus | Exp 7 MapReduce | MapReduce can analyse the cluster's own live events. |
 | **L6** | Exp 1 RMI → Exp 9 collectives → Exp 10 | | Matrix multiplication uses scatter and gather, which use RMI. |
 
-**Build order for links.** Each module first works on the shared cluster in isolation. Links are
-wired together in Phase 13.
+**Build order for links.** Each module first works on the shared cluster in isolation, but
+exposes the hook its links need. For example, the replication primary, the MapReduce
+coordinator and the Berkeley time daemon come from a role provider, and Experiments 4 and 8
+consume the shared FailureDetector. Links among Experiments 2–8 (L1 for Experiments 3, 5, 7
+and 8; L2; L3; L4; L5) are wired in Phase 9A. L6, and the MPI-root part of L1, are wired in
+Phase 13.
 
 ### 6.5 Backend package layout (target)
 
@@ -308,7 +315,7 @@ backend/
     │   ├── faulttolerance/  Exp 8
     │   ├── mpi/             Exp 9
     │   └── matrix/          Exp 10
-    ├── scenario/          guided multi-module scenarios (Phase 13)
+    ├── scenario/          guided multi-module scenarios (Phase 9A; extended in Phase 13)
     └── web/               WebSocketConfig, CorsConfig, GlobalExceptionHandler, SystemController, ClusterController, EventController
 ```
 
@@ -576,7 +583,7 @@ end-to-end. Ask before adding anything else.
 | `/` | Overview — cluster health, node grid with role badges, live event stream, quick actions, integration map |
 | `/cluster` | Node control — crash and recover each node, capacities, running services |
 | `/experiments/1-rmi` … `/experiments/10-matrix` | One page per experiment |
-| `/scenarios` | Guided multi-module demonstrations (Phase 13) |
+| `/scenarios` | Guided multi-module demonstrations (Phase 9A; extended in Phase 13) |
 | `/timeline` | Global causally ordered event log with module and node filters |
 | `/monitoring` | Link to Grafana — shown only when `VITE_GRAFANA_URL` is set (local mode) |
 | `/about` | Architecture, mapping to the lab list, the honesty table, restart onboarding |
@@ -672,7 +679,7 @@ docker compose -f infra/docker-compose.yml up --build
 `cd frontend; npm run dev`.
 
 Provide `scripts/start-all.ps1` and `scripts/stop-all.ps1` as thin wrappers around these
-commands.
+commands (first created in Phase 9A.5 for dev mode).
 
 ### 10.2 Public lite — Vercel and Render
 
@@ -758,6 +765,9 @@ Order: **3** Exp 2 · **4** Exp 3 · **5** Exp 4 · **6** Exp 5 · **7** Exp 8 �
 (Experiments 2–8 already exist and are ported first; 8 follows 5 because it reuses the replication
 service; 9 and 10 need 1.)
 
+**Phase 9A** (the seven-experiment system demo) follows Phase 9, before Phase 10. Every module
+phase builds its link hooks (Section 6.4) so that Phase 9A only wires them.
+
 Every module phase has the same five steps:
 
 | Step | Work |
@@ -768,13 +778,23 @@ Every module phase has the same five steps:
 | d | Frontend page per the template in Section 8.4, with component tests |
 | e | Verify against the module's "done when" in Section 7, then commit |
 
+### Phase 9A — Seven-experiment system demo (Experiments 2–8)
+
+| Step | Work | Done when |
+|---|---|---|
+| 9A.1 | Wire L1 (leader becomes the Berkeley time daemon, the replication primary and the MapReduce coordinator; Experiment 8 promotes through election) and L2 (the shared failure detector for Experiments 4 and 8). Verify L3 (Experiment 6 dispatches into Experiment 2 executors), L4 (Lamport time on every inter-node message) and L5 (event log to MapReduce). | Crashing the leader triggers election, then a new time daemon, replication failover and a new MapReduce coordinator, all visible in one timeline. |
+| 9A.2 | Global causally ordered timeline page (formerly 13.3), covering Experiments 2–8. | Events from every built module interleave correctly by `(lamportTime, nodeId)`. |
+| 9A.3 | Scenarios page with the four scenarios: "The leader dies mid-write", "A slow node under load", "Analyse the incident with MapReduce", "Split-brain that never happens" (formerly 13.2). | Each scenario runs end to end with narration. |
+| 9A.4 | Demo polish (R17) for Overview, Cluster, the seven experiment pages, Timeline and Scenarios: consistent visual language; loading, empty and error states; an integration map on Overview showing live links. Experiments 1, 9 and 10 are clearly marked as planned. | A full walkthrough of the seven experiments shows no placeholder content outside the planned Experiments 1, 9 and 10. |
+| 9A.5 | Demo package: `scripts/start-all.ps1` and `scripts/stop-all.ps1` (dev mode: backend and frontend); `docs/demo/seven-experiment-demo.md` (order, clicks, talking points, expected results); a refreshed public lite deployment. | One command starts the local demo; the demo script runs end to end; the public site works after a cold start. |
+
 ### Phase 13 — Integration links and scenarios
 
 | Step | Work | Done when |
 |---|---|---|
-| 13.1 | Wire links L1–L6 from Section 6.4. | Crashing the leader triggers election, failover, a new MapReduce coordinator and a new MPI root, all visible in one timeline. |
-| 13.2 | Scenarios page. Suggested: "The leader dies mid-write", "A slow node under load", "Analyse the incident with MapReduce", "Split-brain that never happens". | Each scenario runs end to end with narration. |
-| 13.3 | Global causally ordered timeline page. | Events from every module interleave correctly by `(lamportTime, nodeId)`. |
+| 13.1 | Wire L6 (Experiment 1 RMI, then Experiment 9 collectives, then Experiment 10) and extend L1 so the leader is the MPI root. | Crashing the leader triggers election, failover, a new MapReduce coordinator and a new MPI root, all visible in one timeline. |
+| 13.2 | Extend the Scenarios page with at least one scenario involving Experiments 1, 9 and 10 (for example, "The leader dies during a matrix multiply"). | Each scenario runs end to end with narration. |
+| 13.3 | Extend the timeline and the integration map to Experiments 1, 9 and 10. | Events from all ten modules interleave correctly by `(lamportTime, nodeId)`. |
 
 ### Phase 14 — Polish
 
@@ -784,8 +804,8 @@ focus, colour never the only signal), copy review, consistent spacing.
 ### Phase 15 — Monitoring and local Docker Compose
 
 Prometheus config, Grafana provisioning and dashboard, `infra/docker-compose.yml`,
-`scripts/*.ps1`. **Done when** one command brings up all four services and Grafana shows live
-data.
+`scripts/*.ps1` (extending the Phase 9A.5 dev-mode scripts with Docker Compose). **Done when**
+one command brings up all four services and Grafana shows live data.
 
 ### Phase 16 — Public lite deployment, final
 
@@ -796,7 +816,8 @@ document the URLs. **Done when** the public site works after a cold start.
 
 Coverage sweep; Playwright end-to-end flows (onboarding; crash leader → election → new leader;
 load balancing comparison); `docs/architecture/`, `docs/experiments/` (one page per lab
-experiment); final README; a demo script for the viva.
+experiment); final README; a demo script for the viva, extending
+`docs/demo/seven-experiment-demo.md` (Phase 9A.5) to all ten experiments.
 
 ---
 
@@ -906,6 +927,9 @@ commands, and ask me first if anything is genuinely undecided. One step at a tim
 ## Appendix A — New CLAUDE.md for the repository root
 
 > Phase 0, step 0.4 writes this block, exactly, to `CLAUDE.md` at the repository root.
+>
+> The live CLAUDE.md at the repository root has since been updated; see its Decisions and
+> Current Position.
 
 ```markdown
 # CLAUDE.md — UDCF

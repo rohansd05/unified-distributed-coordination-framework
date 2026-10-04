@@ -197,10 +197,11 @@ java -cp target/classes com.udcf.demo.ElectionDemo
 
 ## Where This Is Going
 
-Phase 1 builds the core platform inside `backend/`: a shared cluster of nodes, a Lamport
-clock, an event bus and a module registry. Later phases add the React frontend, port
-Experiments 2–8 onto that cluster, build Experiments 1, 9 and 10, and add monitoring and
-deployment. The step-by-step plan is in docs/HANDOFF.md Section 11.
+The core platform (Phase 1) and the frontend shell (Phase 2) come first; Phases 3–9 port
+Experiments 2–8 onto the shared cluster. After Phase 9, Phase 9A delivers an integrated demo
+of Experiments 2–8 (a global timeline, guided scenarios and a demo script); Experiments 1, 9
+and 10 follow, then monitoring and deployment. The step-by-step plan is in docs/HANDOFF.md
+Section 11.
 
 ---
 

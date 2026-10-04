@@ -21,6 +21,10 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
      except to fix paths.
 - R10 One shared cluster; crashing a node affects every module on it.
 - R15 Stack fixed. Ask before adding any dependency not already listed in docs/HANDOFF.md.
+- R16 Phase 9A (after Phase 9): seven-experiment system demo; links L1–L5, timeline,
+     scenarios, demo polish, demo package. Phase 13 adds L6, the MPI root, and Exps 1, 9, 10.
+- R17 Distinctive, non-template UI (frontend-design guidance); demo polish in 9A.4
+     before Phase 14.
 
 ## Hard rules
 1. One phase step at a time. Never generate the whole project at once.
@@ -155,3 +159,5 @@ Status: not started
 - Step 2.2: the sidebar uses a static catalog of the ten experiments, because the module
   registry is empty until Phase 3. Step 2.3 merges live status from GET /api/modules
   (unknown modules show as Planned). Vite reads the root .env (envDir '..').
+- Plan amended to HANDOFF v1.1 (2026-10-04): Phase 9A added; Phase 13 reduced to L6, the MPI
+  root, and Exps 1, 9, 10 (user decision).

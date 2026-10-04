@@ -8,7 +8,7 @@ export function TimelinePage() {
         title="Timeline"
         description="The global, causally ordered event log, filtered by module and node."
       />
-      <ComingSoon when="Arrives in Phase 13" />
+      <ComingSoon when="Arrives in Phase 9A (Experiments 2–8); extended in Phase 13" />
     </>
   )
 }
