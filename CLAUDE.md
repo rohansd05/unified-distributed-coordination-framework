@@ -56,8 +56,8 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 1
-Step: 1.1
-Status: not started
+Step: 1.1 (part 2 of 2: core/cluster and core/module)
+Status: in progress
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -69,6 +69,8 @@ Status: not started
   (index was already LF; working copies refreshed)
 - 0.5 README.md rewritten to describe only what exists; requirements.txt and legacy
   Exp 2 README commands fixed
+- 1.1 part 1: core/clock (LamportClock ported) and core/events (ClusterEvent,
+  EventRingBuffer, ClusterEventBus); 54 new tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -93,3 +95,5 @@ Status: not started
   its SHA-256 (5b6e42a2…) matches on every machine.
 - Step 0.5: legacy Exp 2 README now builds with ..\..\backend\mvnw.cmd (a command fix
   beyond R9's path-only rule, because mvn is not on PATH).
+- Step 1.1: split into two parts (clock + events; cluster + modules). EventLogExporter
+  deferred to Phase 9, where its format is defined by the MapReduce job.

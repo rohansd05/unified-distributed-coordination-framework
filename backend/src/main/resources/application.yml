@@ -18,6 +18,9 @@ udcf:
     keep-alive-seconds: 60
     thread-name-prefix: udcf-worker-
     metrics-window-seconds: 30
+  events:
+    buffer-size: 5000
+    dispatch-queue-size: 1024
 
 management:
   endpoints:
