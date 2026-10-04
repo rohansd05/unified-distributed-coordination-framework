@@ -56,8 +56,8 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 1
-Step: 1.1 (part 2 of 2: core/cluster and core/module)
-Status: in progress
+Step: 1.2
+Status: not started
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -69,8 +69,10 @@ Status: in progress
   (index was already LF; working copies refreshed)
 - 0.5 README.md rewritten to describe only what exists; requirements.txt and legacy
   Exp 2 README commands fixed
-- 1.1 part 1: core/clock (LamportClock ported) and core/events (ClusterEvent,
-  EventRingBuffer, ClusterEventBus); 54 new tests
+- 1.1 Core platform: core/clock (LamportClock ported), core/events (ClusterEvent,
+  EventRingBuffer, ClusterEventBus), core/cluster (Cluster, ClusterNode, NodeService,
+  capacities, ports), core/module (ExperimentModule, ModuleRegistry,
+  ModuleActionGuard); 107 core tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -80,6 +82,9 @@ Status: in progress
 - backend/ is still the Exp 2 app, unchanged (com.udcf.threadpool etc., node1–3 profiles).
   The target layout arrives in Phases 1 and 3.
 - docs/HANDOFF.md mentions docs/CLAUDE.md in Sections 1, 4 and 5 as history; left unchanged.
+- Node roles (leader/primary/backup) arrive with election in Phase 5; until then the
+  cluster reports none. Cluster reset semantics (clocks and event history) are decided in
+  Step 1.3.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is

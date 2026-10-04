@@ -21,6 +21,16 @@ udcf:
   events:
     buffer-size: 5000
     dispatch-queue-size: 1024
+  cluster:
+    size: 5
+    capacity-pattern: [FAST, MEDIUM, SLOW, MEDIUM, FAST]
+    ports:
+      rmi-base: 1100
+      clock-base: 6000
+      election-base: 7000
+      replication-base: 7100
+      requests-base: 7200
+      mapreduce-base: 7300
 
 management:
   endpoints:
