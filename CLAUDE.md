@@ -56,7 +56,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 2
-Step: 2.1
+Step: 2.2
 Status: not started
 
 ### Completed steps
@@ -81,6 +81,9 @@ Status: not started
   (distributed_node_status, events published and dropped); local and public profiles;
   backend on ${PORT:8080}; node1–3 profiles retired; 19 new tests
 - Phase 1 complete
+- 2.1 frontend/ skeleton: Vite 5.4, React 18 (JSX), Tailwind 3.4, shadcn@2.3.0 (new-york,
+  JSX), dark tokens from Section 8.3, self-hosted Inter and JetBrains Mono, Vitest + RTL +
+  jsdom; 6 tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -95,6 +98,8 @@ Status: not started
   cluster reports none.
 - web/TestModuleConfig registers a fake module with lab number 10; when the real Matrix
   module arrives (Phase 12) the test must use a different mechanism or lab number.
+- public profile shows full /actuator/health details (including the disk path); set
+  show-details: never in application-public.yml in Step 2.5.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is
@@ -131,3 +136,8 @@ Status: not started
 - Step 1.4 (Exp 2): ThreadPoolMetrics now tags every meter with node_id from udcf.node.id
   (new constructor parameter); ThreadPoolMetricsTest's setUp passes it (one line) and a new
   test checks node_id on every Exp 2 meter.
+- Step 2.1: the handoff token 'accent' (#02C39A) is the 'success' colour in the
+  frontend, because shadcn reserves 'accent' for hover surfaces. Vite 5.4 is kept
+  (user decision) although it no longer receives security patches; the risk is
+  limited to the local dev server. Fonts are self-hosted via @fontsource-variable
+  (user decision).

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="UDCF">
+  <rect width="32" height="32" rx="7" fill="#0F1730"/>
+  <g stroke="#02C39A" stroke-width="2" stroke-linecap="round" fill="none">
+    <path d="M9 10 L23 9 L22 23 L10 22 Z"/>
+    <path d="M9 10 L22 23"/>
+  </g>
+  <g fill="#02C39A">
+    <circle cx="9" cy="10" r="3.2"/>
+    <circle cx="23" cy="9" r="3.2"/>
+    <circle cx="22" cy="23" r="3.2"/>
+    <circle cx="10" cy="22" r="3.2"/>
+  </g>
+</svg>

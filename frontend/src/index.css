@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens: docs/HANDOFF.md Section 8.3, dark theme only.
+ * Values are HSL triplets converted exactly from the handoff hex values; Tailwind reads
+ * them as hsl(var(--name) / <alpha-value>), see tailwind.config.js.
+ *
+ *   Handoff token   Hex       Variable(s)
+ *   background      #0F1730   --background (also --success-foreground, --warning-foreground)
+ *   surface         #16213E   --card, --popover
+ *   border          #24304F   --border, --input, --muted
+ *   navy            #21295C   --navy, --secondary
+ *   primary         #1C7293   --primary, --ring
+ *   accent          #02C39A   --success
+ *   warning         #C8821C   --warning
+ *   danger          #B9463A   --destructive
+ *   text            #E6EDF5   --foreground and every other *-foreground
+ *   muted           #92A5C4   --muted-foreground
+ *
+ * Why the handoff's "accent" is called "success" here: shadcn/ui reserves --accent for the
+ * subtle hover surface of menus and ghost or outline buttons. The handoff's accent green
+ * marks leaders, success and live state, so it lives in --success; --accent is a hover
+ * surface (#1D2A4D) between surface and border.
+ */
+:root,
+.dark {
+  --background: 225.5 52.4% 12.4%;           /* #0F1730 */
+  --foreground: 212.0 42.9% 93.1%;           /* #E6EDF5 */
+  --card: 223.5 47.6% 16.5%;                 /* #16213E */
+  --card-foreground: 212.0 42.9% 93.1%;      /* #E6EDF5 */
+  --popover: 223.5 47.6% 16.5%;              /* #16213E */
+  --popover-foreground: 212.0 42.9% 93.1%;   /* #E6EDF5 */
+  --primary: 196.6 68.0% 34.3%;              /* #1C7293 */
+  --primary-foreground: 212.0 42.9% 93.1%;   /* #E6EDF5 */
+  --secondary: 231.9 47.2% 24.5%;            /* #21295C */
+  --secondary-foreground: 212.0 42.9% 93.1%; /* #E6EDF5 */
+  --muted: 223.3 37.4% 22.5%;                /* #24304F */
+  --muted-foreground: 217.2 29.8% 67.1%;     /* #92A5C4 */
+  --accent: 223.8 45.3% 20.8%;               /* #1D2A4D */
+  --accent-foreground: 212.0 42.9% 93.1%;    /* #E6EDF5 */
+  --destructive: 5.7 52.3% 47.6%;            /* #B9463A */
+  --destructive-foreground: 212.0 42.9% 93.1%; /* #E6EDF5 */
+  --border: 223.3 37.4% 22.5%;               /* #24304F */
+  --input: 223.3 37.4% 22.5%;                /* #24304F */
+  --ring: 196.6 68.0% 34.3%;                 /* #1C7293 */
+  --success: 167.3 98.0% 38.6%;              /* #02C39A */
+  --success-foreground: 225.5 52.4% 12.4%;   /* #0F1730 */
+  --warning: 35.6 75.4% 44.7%;               /* #C8821C */
+  --warning-foreground: 225.5 52.4% 12.4%;   /* #0F1730 */
+  --navy: 231.9 47.2% 24.5%;                 /* #21295C */
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+}

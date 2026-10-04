@@ -51,6 +51,14 @@ Phase 0 (repository repair) is complete.
 │   └── pom.xml
 ├── docs/
 │   └── HANDOFF.md           plan and single source of truth
+├── frontend/                React 18 + Vite 5 web UI (skeleton)
+│   ├── public/              static files (favicon)
+│   ├── src/                 components, styles, tests
+│   ├── components.json      shadcn/ui configuration
+│   ├── index.html
+│   ├── package.json         scripts and pinned dependencies
+│   ├── tailwind.config.js   design tokens as Tailwind colours
+│   └── vite.config.js       dev server, @ alias, Vitest
 ├── legacy-demos/            original standalone demos, Experiments 2–8
 │   ├── exp02-multithreading/
 │   ├── exp03-clock-sync/
@@ -114,6 +122,23 @@ The API:
 
 The multi-process Experiment 2 demo (three instances on HTTP 8081–8083) is in
 [legacy-demos/exp02-multithreading/](legacy-demos/exp02-multithreading/).
+
+---
+
+## Frontend
+
+Requires Node 22.x.
+
+```powershell
+cd frontend
+npm install
+npm run dev      # http://localhost:5173 (strict port: fails if 5173 is taken)
+npm test         # Vitest + React Testing Library, 6 tests
+npm run build    # production build in frontend/dist
+```
+
+For now this is a skeleton: one placeholder page showing the dark design tokens, fonts and
+base components. It does not call the backend yet, so the backend does not need to run.
 
 ---
 
