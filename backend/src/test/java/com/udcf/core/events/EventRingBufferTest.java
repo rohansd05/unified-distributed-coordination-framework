@@ -176,4 +176,76 @@ class EventRingBufferTest {
             pool.shutdownNow();
         }
     }
+
+    @Test
+    @DisplayName("clear empties the buffer and resets the evicted count")
+    void clearEmptiesAndResetsEvicted() {
+        EventRingBuffer buffer = new EventRingBuffer(3);
+        for (long s = 1; s <= 5; s++) {
+            buffer.append(event(s, "m", 1, s));
+        }
+
+        buffer.clear();
+
+        assertThat(buffer.size()).isZero();
+        assertThat(buffer.evictedCount()).isZero();
+        assertThat(buffer.snapshot()).isEmpty();
+        assertThat(buffer.query(null, null, 10)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("after clear the buffer fills and wraps around normally")
+    void worksNormallyAfterClear() {
+        EventRingBuffer buffer = new EventRingBuffer(3);
+        buffer.append(event(1, "m", 1, 1));
+        buffer.append(event(2, "m", 1, 2));
+        buffer.clear();
+
+        for (long s = 10; s <= 13; s++) {
+            buffer.append(event(s, "m", 1, s));
+        }
+
+        assertThat(sequences(buffer.snapshot())).containsExactly(11L, 12L, 13L);
+        assertThat(buffer.evictedCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("clear during concurrent appends leaves a consistent buffer")
+    void clearIsSafeUnderConcurrentAppends() throws Exception {
+        int threads = 20;
+        int perThread = 500;
+        EventRingBuffer buffer = new EventRingBuffer(1000);
+        AtomicLong sequence = new AtomicLong();
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads + 1);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    for (int i = 0; i < perThread; i++) {
+                        buffer.append(event(sequence.incrementAndGet(), "m", 1, i));
+                    }
+                    return null;
+                }));
+            }
+            futures.add(pool.submit(() -> {
+                start.await();
+                for (int i = 0; i < 50; i++) {
+                    buffer.clear();
+                }
+                return null;
+            }));
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+
+            List<ClusterEvent> snapshot = buffer.snapshot();
+            assertThat(snapshot).hasSize(buffer.size()).doesNotContainNull();
+            assertThat(buffer.size()).isLessThanOrEqualTo(1000);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
 }

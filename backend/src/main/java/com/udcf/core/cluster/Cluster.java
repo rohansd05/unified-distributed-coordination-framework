@@ -68,6 +68,20 @@ public class Cluster implements AutoCloseable {
         return node(id).recover();
     }
 
+    /** The cluster-level Lamport clock, used for events with node id 0. */
+    public LamportClock clusterClock() {
+        return clock;
+    }
+
+    /**
+     * Resets every node's clock and the cluster clock to zero. Only an explicit cluster
+     * reset calls this; crash and recovery never do.
+     */
+    public void resetClocks() {
+        nodes.forEach(node -> node.clock().reset());
+        clock.reset();
+    }
+
     /** Recovers every crashed node. */
     public void recoverAll() {
         nodes.forEach(ClusterNode::recover);

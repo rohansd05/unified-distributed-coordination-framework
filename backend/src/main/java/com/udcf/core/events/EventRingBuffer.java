@@ -1,6 +1,7 @@
 package com.udcf.core.events;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -45,6 +46,14 @@ public class EventRingBuffer {
             head = (head + 1) % slots.length;
             evicted++;
         }
+    }
+
+    /** Removes every event and resets {@link #evictedCount()} to zero. */
+    public synchronized void clear() {
+        Arrays.fill(slots, null);
+        head = 0;
+        size = 0;
+        evicted = 0;
     }
 
     public synchronized int size() {

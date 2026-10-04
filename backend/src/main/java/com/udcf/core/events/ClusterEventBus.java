@@ -107,6 +107,19 @@ public class ClusterEventBus implements AutoCloseable {
         return buffer.query(module, nodeId, limit);
     }
 
+    /**
+     * Empties the event history (used by a clean-slate cluster reset).
+     *
+     * <p>Sequence numbering continues and a number is never reused. The
+     * {@link #droppedNotifications()} health counter is kept. Events already queued for
+     * subscribers are still delivered, in order.</p>
+     */
+    public void clearHistory() {
+        synchronized (publishLock) {
+            buffer.clear();
+        }
+    }
+
     /** Events recorded in the buffer that subscribers never received. */
     public long droppedNotifications() {
         return dropped.get();

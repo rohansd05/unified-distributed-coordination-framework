@@ -267,4 +267,65 @@ class ClusterEventBusTest {
         assertThat(sequences(bus.query("election", null, 10))).containsExactly(3L, 1L);
         assertThat(sequences(bus.query(null, 1, 10))).containsExactly(2L, 3L);
     }
+
+    @Test
+    @DisplayName("clearHistory empties the history and sequence numbers continue")
+    void clearHistoryKeepsSequence() {
+        newBus(10, 10);
+        bus.publish(draft(1, 1));
+        bus.publish(draft(1, 2));
+
+        bus.clearHistory();
+
+        assertThat(bus.query(null, null, 10)).isEmpty();
+        ClusterEvent next = bus.publish(draft(1, 3));
+        assertThat(next.sequence()).isEqualTo(3);
+        assertThat(bus.query(null, null, 10)).containsExactly(next);
+    }
+
+    @Test
+    @DisplayName("clearHistory keeps the dropped-notification count")
+    void clearHistoryKeepsDroppedCount() {
+        newBus(10, 10);
+        bus.close();
+        bus.publish(draft(1, 1));   // after close: counted as dropped
+
+        bus.clearHistory();
+
+        assertThat(bus.droppedNotifications()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("events already queued for subscribers are still delivered in order after clearHistory")
+    void clearHistoryKeepsQueuedEvents() throws Exception {
+        newBus(100, 100);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<ClusterEvent> received = Collections.synchronizedList(new ArrayList<>());
+        bus.subscribe(event -> {
+            if (event.sequence() == 1) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            received.add(event);
+        });
+
+        try {
+            bus.publish(draft(1, 1));
+            assertThat(entered.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+            bus.publish(draft(1, 2));
+            bus.publish(draft(1, 3));
+
+            bus.clearHistory();
+        } finally {
+            release.countDown();
+        }
+
+        await().atMost(TIMEOUT).until(() -> received.size() == 3);
+        assertThat(sequences(received)).containsExactly(1L, 2L, 3L);
+    }
 }

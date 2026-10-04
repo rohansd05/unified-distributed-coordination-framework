@@ -56,7 +56,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 1
-Step: 1.3
+Step: 1.4
 Status: not started
 
 ### Completed steps
@@ -75,6 +75,8 @@ Status: not started
   ModuleActionGuard); 107 core tests
 - 1.2 WebSocket/STOMP on /ws (topics /topic/events, /topic/cluster, /topic/modules/{id});
   CORS and WebSocket origins from UDCF_ALLOWED_ORIGINS; 18 new tests
+- 1.3 REST API: /api/system/{health,info}, /api/cluster (+ node crash/recover, reset),
+  /api/modules, /api/events; ProblemDetail errors; clean-slate reset; 42 new tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -85,8 +87,9 @@ Status: not started
   The target layout arrives in Phases 1 and 3.
 - docs/HANDOFF.md mentions docs/CLAUDE.md in Sections 1, 4 and 5 as history; left unchanged.
 - Node roles (leader/primary/backup) arrive with election in Phase 5; until then the
-  cluster reports none. Cluster reset semantics (clocks and event history) are decided in
-  Step 1.3.
+  cluster reports none.
+- web/TestModuleConfig registers a fake module with lab number 10; when the real Matrix
+  module arrives (Phase 12) the test must use a different mechanism or lab number.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is
@@ -109,3 +112,8 @@ Status: not started
   UDCF_ALLOWED_ORIGINS (default http://localhost:5173,http://127.0.0.1:5173, as before),
   no credentials. It carries @EnableConfigurationProperties(UdcfWebProperties.class)
   because @WebMvcTest slices filter out @ConfigurationPropertiesScan.
+- Step 1.3: added web/ModuleController for GET /api/modules (not in Section 6.5).
+  Reset is a clean slate (user decision): recover all nodes, reset modules, reset all
+  Lamport clocks, clear event history, publish CLUSTER_RESET. Added
+  EventRingBuffer.clear, ClusterEventBus.clearHistory, Cluster.resetClocks and
+  Cluster.clusterClock. /api/events/export deferred to Phase 9.

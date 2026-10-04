@@ -26,7 +26,9 @@ import java.util.function.Function;
  *
  * <p><b>The clock is never reset</b> by {@link #crash()}, {@link #recover()} or
  * {@link #stop()}: it is modelled as stable storage, so post-recovery events stay ordered
- * after pre-crash events. See the crash-and-recovery note on {@link LamportClock}.</p>
+ * after pre-crash events. See the crash-and-recovery note on {@link LamportClock}. Only an
+ * explicit cluster reset ({@link ClusterResetService}) resets it, together with every other
+ * clock and the event history.</p>
  *
  * <p>Every lifecycle event is published with module {@code "cluster"}, this node's id and
  * {@code lamportTime = clock().tick()}.</p>

@@ -143,4 +143,30 @@ class ClusterTest {
     void nodesUnmodifiable() {
         assertThatThrownBy(() -> cluster.nodes().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    @DisplayName("resetClocks sets every node clock and the cluster clock to zero")
+    void resetClocks() {
+        cluster.crash(1);
+        cluster.recover(1);
+        cluster.node(4).clock().update(99);
+        assertThat(cluster.clusterClock().current()).isPositive();
+
+        cluster.resetClocks();
+
+        assertThat(cluster.nodes()).allSatisfy(node -> assertThat(node.clock().current()).isZero());
+        assertThat(cluster.clusterClock().current()).isZero();
+    }
+
+    @Test
+    @DisplayName("clusterClock is the clock behind CLUSTER_STARTED")
+    void clusterClockIsTheStartedClock() {
+        ClusterEvent started = bus.query("cluster", 0, 1000).get(0);
+
+        assertThat(started.type()).isEqualTo("CLUSTER_STARTED");
+        assertThat(started.lamportTime()).isEqualTo(1);
+        assertThat(cluster.clusterClock().current()).isEqualTo(1);
+        assertThat(cluster.clusterClock()).isSameAs(cluster.clusterClock());
+        assertThat(cluster.clusterClock().tick()).isEqualTo(2);
+    }
 }
