@@ -1,0 +1,42 @@
+package com.udcf.core.metrics;
+
+/**
+ * Every {@code distributed_*} meter name (docs/HANDOFF.md 6.9) and the {@code node_id} tag.
+ *
+ * <p>Counter names end in {@code _total}, as Experiment 2's {@code distributed_requests_total}
+ * does. The Prometheus registry strips the suffix and adds it back, so the scrape shows
+ * {@code _total} exactly once.</p>
+ *
+ * <p>Every meter carries {@link #NODE_ID} (decision R5); cluster-level meters use
+ * {@link #CLUSTER_NODE_ID}.</p>
+ *
+ * <p>No dedicated test: constants only.</p>
+ */
+public final class MetricNames {
+
+    public static final String REQUESTS_TOTAL = "distributed_requests_total";
+    public static final String ACTIVE_THREADS = "distributed_active_threads";
+    public static final String NODE_STATUS = "distributed_node_status";
+    public static final String LEADER_ELECTIONS_TOTAL = "distributed_leader_elections_total";
+    public static final String ELECTION_DURATION = "distributed_election_duration";
+    public static final String CLOCK_VALUE = "distributed_clock_value";
+    public static final String REPLICATION_LATENCY = "distributed_replication_latency";
+    public static final String REPLICATION_FAILURES_TOTAL = "distributed_replication_failures_total";
+    public static final String FAILURES_TOTAL = "distributed_failures_total";
+    public static final String RECOVERY_DURATION = "distributed_recovery_duration";
+    public static final String MAP_TASKS_TOTAL = "distributed_map_tasks_total";
+    public static final String REDUCE_TASKS_TOTAL = "distributed_reduce_tasks_total";
+    public static final String MPI_MESSAGES_TOTAL = "distributed_mpi_messages_total";
+    public static final String MATRIX_EXECUTION_DURATION = "distributed_matrix_execution_duration";
+    public static final String EVENTS_PUBLISHED_TOTAL = "distributed_events_published_total";
+    public static final String EVENT_NOTIFICATIONS_DROPPED_TOTAL = "distributed_event_notifications_dropped_total";
+
+    /** Tag key every meter carries. */
+    public static final String NODE_ID = "node_id";
+
+    /** {@link #NODE_ID} value for cluster-level meters. */
+    public static final String CLUSTER_NODE_ID = "0";
+
+    private MetricNames() {
+    }
+}

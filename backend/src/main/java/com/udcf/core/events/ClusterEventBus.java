@@ -120,6 +120,16 @@ public class ClusterEventBus implements AutoCloseable {
         }
     }
 
+    /**
+     * Total events ever published: equal to the last sequence number assigned. Unaffected by
+     * {@link #clearHistory()}; a rejected draft does not count.
+     */
+    public long publishedCount() {
+        synchronized (publishLock) {
+            return sequence;
+        }
+    }
+
     /** Events recorded in the buffer that subscribers never received. */
     public long droppedNotifications() {
         return dropped.get();

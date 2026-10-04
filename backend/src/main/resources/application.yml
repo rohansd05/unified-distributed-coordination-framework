@@ -1,16 +1,18 @@
-# Shared configuration for every instance.
-# Node identity lives in the profile files so one codebase can run as many nodes.
+# Shared configuration. Profiles: local (default, full system) and public (lite deployment).
 
 spring:
   application:
     name: udcf-backend
   profiles:
-    default: node1
+    default: local
 
 server:
-  port: ${udcf.node.port:8081}
+  port: ${PORT:8080}
 
 udcf:
+  node:
+    # Experiment 2's node identity. Disappears in Phase 3, when Exp 2 runs on the shared cluster.
+    id: 1
   threadpool:
     core-pool-size: 4
     max-pool-size: 8
@@ -41,11 +43,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info
   endpoint:
     health:
       show-details: always
   metrics:
+    tags:
+      application: udcf
+      mode: ${udcf.system.mode}
     distribution:
       percentiles-histogram:
         distributed_request_duration: true

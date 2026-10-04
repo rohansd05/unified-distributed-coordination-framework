@@ -1,0 +1,6 @@
+# Full local system: Prometheus scrapes this backend, so metrics are exposed.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus

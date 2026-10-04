@@ -55,8 +55,8 @@ Internal, per node k: RMI 110k · clock UDP 600k · election UDP 700k · replica
 requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
-Phase: 1
-Step: 1.4
+Phase: 2
+Step: 2.1
 Status: not started
 
 ### Completed steps
@@ -77,14 +77,19 @@ Status: not started
   CORS and WebSocket origins from UDCF_ALLOWED_ORIGINS; 18 new tests
 - 1.3 REST API: /api/system/{health,info}, /api/cluster (+ node crash/recover, reset),
   /api/modules, /api/events; ProblemDetail errors; clean-slate reset; 42 new tests
+- 1.4 Per-meter node_id tagging, global tags application and mode; cluster meters
+  (distributed_node_status, events published and dropped); local and public profiles;
+  backend on ${PORT:8080}; node1–3 profiles retired; 19 new tests
+- Phase 1 complete
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
   scheduled there.
 - Stale `cd backend` in the MultithreadingDemo.java Javadoc (legacy and backend copies). The
   legacy copy stays as is (R9); the backend copy is reworked in Phase 3.
-- backend/ is still the Exp 2 app, unchanged (com.udcf.threadpool etc., node1–3 profiles).
-  The target layout arrives in Phases 1 and 3.
+- backend/ still contains the Exp 2 app (com.udcf.threadpool etc.) beside the new core/
+  and web/ packages; Exp 2 reads udcf.node.id: 1 until Phase 3, when it moves to
+  modules/multithreading.
 - docs/HANDOFF.md mentions docs/CLAUDE.md in Sections 1, 4 and 5 as history; left unchanged.
 - Node roles (leader/primary/backup) arrive with election in Phase 5; until then the
   cluster reports none.
@@ -117,3 +122,12 @@ Status: not started
   Lamport clocks, clear event history, publish CLUSTER_RESET. Added
   EventRingBuffer.clear, ClusterEventBus.clearHistory, Cluster.resetClocks and
   Cluster.clusterClock. /api/events/export deferred to Phase 9.
+- Step 1.4: node1–3 profiles retired from backend/ (user decision); the backend runs on
+  ${PORT:8080}. JVM flags (-XX:MaxRAMPercentage=75 -Xss512k) deferred to the Dockerfile in
+  Step 2.5. Added ClusterEventBus.publishedCount().
+- Step 1.4 (Exp 2): com.udcf.monitoring.MetricsConfig deleted. It added global common tags
+  node_id and role to every meter in the JVM, which R5 forbids now that one JVM hosts
+  several nodes; role is dropped (roles arrive with election in Phase 5).
+- Step 1.4 (Exp 2): ThreadPoolMetrics now tags every meter with node_id from udcf.node.id
+  (new constructor parameter); ThreadPoolMetricsTest's setUp passes it (one line) and a new
+  test checks node_id on every Exp 2 meter.

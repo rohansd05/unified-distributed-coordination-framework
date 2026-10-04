@@ -88,19 +88,32 @@ cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
-`test` runs 59 tests in 11 classes. `spring-boot:run` starts the default profile `node1`
-on http://localhost:8081. The exposed actuator endpoints are `/actuator/health`,
-`/actuator/info`, `/actuator/metrics` and `/actuator/prometheus`. The REST API is the
-Experiment 2 API documented in
-[legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md](legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md).
+`test` runs 245 tests. `spring-boot:run` starts the default profile `local` on
+http://localhost:8080 (set `PORT` to change it): a cluster of 5 nodes, with the actuator
+endpoints `/actuator/health`, `/actuator/info`, `/actuator/metrics` and
+`/actuator/prometheus`.
 
-Profiles `node2` (port 8082) and `node3` (port 8083) start further instances. They are
-independent processes and do not communicate with each other:
+The `public` profile is the lite configuration for the public deployment: 3 nodes, a
+1500-event buffer, a smaller thread pool, and only `/actuator/health` and `/actuator/info`:
 
 ```powershell
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node2"   # 8082
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=node3"   # 8083
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=public"
 ```
+
+The API:
+
+- `GET /api/system/health`, `GET /api/system/info`
+- `GET /api/cluster`, `GET /api/cluster/nodes/{id}`, `POST /api/cluster/nodes/{id}/crash`,
+  `POST /api/cluster/nodes/{id}/recover`, `POST /api/cluster/reset`
+- `GET /api/modules`
+- `GET /api/events?module=&node=&limit=`
+- STOMP over WebSocket on `/ws`, topics `/topic/events`, `/topic/cluster` and
+  `/topic/modules/{id}`
+- the Experiment 2 API under `/api/multithreading`, documented in
+  [legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md](legacy-demos/exp02-multithreading/README-EXPERIMENT-2.md)
+
+The multi-process Experiment 2 demo (three instances on HTTP 8081–8083) is in
+[legacy-demos/exp02-multithreading/](legacy-demos/exp02-multithreading/).
 
 ---
 
@@ -137,8 +150,8 @@ java -cp target/classes com.udcf.demo.ElectionDemo
 > **Port overlap.** The legacy demos use the same port ranges that the planned integrated
 > backend will use (UDP 6001+ and 7001+, TCP 7101+, 7201+ and 7301+; see docs/HANDOFF.md
 > Section 6.3), so they must not run at the same time as it. Legacy Exp 8 uses 7401–7403,
-> which falls outside those ranges. Today, legacy Exp 2 and `backend/` are the same
-> application on the same HTTP ports 8081–8083, so run only one of them at a time.
+> which falls outside those ranges. `backend/` now serves HTTP on 8080, so it no longer
+> shares HTTP ports with legacy Exp 2 (8081–8083).
 
 ---
 

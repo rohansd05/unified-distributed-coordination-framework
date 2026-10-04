@@ -328,4 +328,20 @@ class ClusterEventBusTest {
         await().atMost(TIMEOUT).until(() -> received.size() == 3);
         assertThat(sequences(received)).containsExactly(1L, 2L, 3L);
     }
+
+    @Test
+    @DisplayName("publishedCount counts every publish, across clearHistory, but not rejected drafts")
+    void publishedCountSurvivesClearHistory() {
+        newBus(10, 10);
+        assertThat(bus.publishedCount()).isZero();
+        bus.publish(draft(1, 1));
+        bus.publish(draft(1, 2));
+
+        bus.clearHistory();
+        bus.publish(draft(1, 3));
+        assertThatIllegalArgumentException().isThrownBy(() -> bus.publish(EventDraft.of(" ", 1, "T", 0)));
+
+        assertThat(bus.publishedCount()).isEqualTo(3);
+        assertThat(bus.query(null, null, 10)).hasSize(1);
+    }
 }

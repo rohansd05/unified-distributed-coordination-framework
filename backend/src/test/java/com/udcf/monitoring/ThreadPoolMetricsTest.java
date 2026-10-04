@@ -31,7 +31,7 @@ class ThreadPoolMetricsTest {
                 new LinkedBlockingQueue<>(10), new NamedThreadFactory("metrics-worker-"),
                 new ThreadPoolExecutor.AbortPolicy());
         throughputTracker = new ThroughputTracker(new ThreadPoolProperties());
-        metrics = new ThreadPoolMetrics(registry, executor, throughputTracker);
+        metrics = new ThreadPoolMetrics(registry, executor, throughputTracker, 1);
         metrics.bindGauges();
     }
 
@@ -100,5 +100,25 @@ class ThreadPoolMetricsTest {
 
         assertThat(registry.get("distributed_requests_total").tag("outcome", "failed")
                 .counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("every Exp 2 meter carries its own node_id tag")
+    void everyMeterCarriesNodeId() {
+        ThreadPoolMetrics nodeTwo = new ThreadPoolMetrics(registry, executor, throughputTracker, 2);
+        nodeTwo.recordAccepted();
+        DistributedRequest request = new DistributedRequest("m3", 2, WorkloadType.IO_SIMULATED, 5);
+        request.markStarted("metrics-worker-1");
+        request.markCompleted("done");
+        nodeTwo.recordFinished(request);
+
+        assertThat(registry.getMeters()).isNotEmpty()
+                .allSatisfy(meter -> assertThat(meter.getId().getTag("node_id"))
+                        .as("node_id on %s", meter.getId().getName())
+                        .isIn("1", "2"));
+        assertThat(registry.get("distributed_active_threads").tag("node_id", "1").gauge()).isNotNull();
+        assertThat(registry.get("distributed_requests_total").tag("node_id", "2").tag("outcome", "accepted")
+                .counter().count()).isEqualTo(1.0d);
+        assertThat(registry.get("distributed_request_duration").tag("node_id", "2").timer().count()).isEqualTo(1L);
     }
 }

@@ -1,7 +1,0 @@
-udcf:
-  node:
-    id: 3
-    name: Node-3
-    role: BACKUP
-    host: localhost
-    port: 8083
