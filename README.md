@@ -137,14 +137,18 @@ Requires Node 22.x.
 cd frontend
 npm install
 npm run dev      # http://localhost:5173 (strict port: fails if 5173 is taken)
-npm test         # Vitest + React Testing Library, 38 tests
+npm test         # Vitest + React Testing Library, 83 tests
 npm run build    # production build in frontend/dist
 ```
 
-For now this is the application shell: the sidebar, top bar and a placeholder for every
-page, including one page per experiment. It does not call the backend yet, so the backend
-does not need to run. Vite reads `VITE_*` variables from the root `.env`; see
-[.env.example](.env.example).
+The frontend displays live cluster status and connection state. For live data, the backend must be running on port 8080:
+
+```powershell
+cd backend
+.\mvnw.cmd spring-boot:run
+```
+
+The root `.env` must define `VITE_API_BASE_URL` and `VITE_WS_URL` (copy [.env.example](.env.example) to `.env`). Vite reads `VITE_*` variables from the repository root. When these variables are missing or invalid, the app displays a clear configuration error.
 
 ---
 

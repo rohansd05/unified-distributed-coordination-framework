@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXPERIMENTS, findBySlug } from './experiments'
+import { EXPERIMENTS, findBySlug, formatStatus, mergeModuleStatus } from './experiments'
 
 /** Phase each experiment arrives in (docs/HANDOFF.md Section 11). */
 const ARRIVES_IN = { 1: 10, 2: 3, 3: 4, 4: 5, 5: 6, 6: 8, 7: 9, 8: 7, 9: 11, 10: 12 }
@@ -33,5 +33,43 @@ describe('experiment catalog', () => {
     for (const e of EXPERIMENTS) {
       expect(e.arrivesIn, `lab ${e.lab}`).toBe(ARRIVES_IN[e.lab])
     }
+  })
+})
+
+describe('mergeModuleStatus', () => {
+  it('assigns backend status to known modules and PLANNED to unbuilt ones', () => {
+    const backendModules = [
+      { id: 'multithreading', status: 'IDLE' },
+      { id: 'election', status: 'RUNNING' },
+    ]
+
+    const merged = mergeModuleStatus(EXPERIMENTS, backendModules)
+    expect(merged).toHaveLength(10)
+
+    const exp2 = merged.find((e) => e.id === 'multithreading')
+    expect(exp2.status).toBe('IDLE')
+
+    const exp4 = merged.find((e) => e.id === 'election')
+    expect(exp4.status).toBe('RUNNING')
+
+    const exp1 = merged.find((e) => e.id === 'rmi')
+    expect(exp1.status).toBe('PLANNED')
+  })
+
+  it('sets status to null for all experiments when modules is null or not an array', () => {
+    const mergedNull = mergeModuleStatus(EXPERIMENTS, null)
+    expect(mergedNull.every((e) => e.status === null)).toBe(true)
+
+    const mergedUndefined = mergeModuleStatus(EXPERIMENTS, undefined)
+    expect(mergedUndefined.every((e) => e.status === null)).toBe(true)
+  })
+})
+
+describe('formatStatus', () => {
+  it('capitalizes the status string', () => {
+    expect(formatStatus('PLANNED')).toBe('Planned')
+    expect(formatStatus('IDLE')).toBe('Idle')
+    expect(formatStatus('RUNNING')).toBe('Running')
+    expect(formatStatus(null)).toBe('')
   })
 })

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { EXPERIMENTS } from '@/lib/experiments'
 import { renderRoute } from '@/test/renderRoute'
+import { Sidebar } from '@/components/layout/Sidebar'
+import { ClusterContext } from '@/services/cluster/ClusterContext'
 
 afterEach(() => {
   cleanup()
@@ -45,5 +48,18 @@ describe('Sidebar', () => {
     vi.stubEnv('VITE_GRAFANA_URL', 'http://localhost:3000')
     renderRoute('/')
     expect(mainNav().getByRole('link', { name: 'Monitoring' }).getAttribute('href')).toBe('/monitoring')
+  })
+
+  it('shows "Planned" as status text for experiments when modules are loaded', () => {
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <ClusterContext.Provider value={{ modules: [] }}>
+          <Sidebar open={false} onClose={() => {}} />
+        </ClusterContext.Provider>
+      </MemoryRouter>,
+    )
+
+    const plannedElements = screen.getAllByText('Planned')
+    expect(plannedElements).toHaveLength(10)
   })
 })

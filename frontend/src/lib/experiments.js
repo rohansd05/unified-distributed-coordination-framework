@@ -22,3 +22,34 @@ export const EXPERIMENTS = [
 export function findBySlug(slug) {
   return EXPERIMENTS.find((experiment) => experiment.slug === slug)
 }
+
+/**
+ * Merges live module status from /api/modules into the catalog.
+ * When modules is null (e.g. fetch failed), returns the catalog without statuses.
+ * When modules is an array, each experiment gets the backend status (IDLE, RUNNING, BUSY, ERROR)
+ * if reported, or 'PLANNED' otherwise.
+ *
+ * @param {Array} catalog
+ * @param {Array | null} modules
+ * @returns {Array}
+ */
+export function mergeModuleStatus(catalog = EXPERIMENTS, modules) {
+  if (!Array.isArray(modules)) {
+    return catalog.map((experiment) => ({ ...experiment, status: null }))
+  }
+
+  const statusMap = new Map(modules.map((m) => [m.id, m.status]))
+
+  return catalog.map((experiment) => ({
+    ...experiment,
+    status: statusMap.has(experiment.id) ? statusMap.get(experiment.id) : 'PLANNED',
+  }))
+}
+
+/**
+ * Formats a status string for UI display (e.g. 'PLANNED' -> 'Planned').
+ */
+export function formatStatus(status) {
+  if (!status) return ''
+  return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
+}

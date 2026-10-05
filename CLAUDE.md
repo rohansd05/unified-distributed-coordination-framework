@@ -60,7 +60,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 2
-Step: 2.3
+Step: 2.4
 Status: not started
 
 ### Completed steps
@@ -93,6 +93,9 @@ Status: not started
   6.30.6; full-height app shell (main and sidebar scroll independently), responsive
   sidebar drawer below md (backdrop, Escape, focus management), themed dark scrollbars
   (scrollbar-color, thin); 45 tests
+- 2.3 API client (axios 1.20.0), single shared STOMP connection with re-subscribe on
+  reconnect (@stomp/stompjs 7.3.0), ClusterProvider (re-fetch on /topic/cluster and
+  reconnect), live top bar, sidebar module status (Planned until modules exist); 83 tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are

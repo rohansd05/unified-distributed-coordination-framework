@@ -27,14 +27,14 @@ function openMenu() {
 }
 
 describe('AppLayout and TopBar', () => {
-  it('shows the four status slots with "—" and "Not connected yet"', () => {
+  it('shows the four status slots in the top bar', () => {
     renderRoute('/')
 
-    for (const label of ['Connection', 'Mode', 'Leader', 'Nodes up']) {
+    expect(screen.getByText('Connection', { selector: 'dt' }).nextElementSibling.textContent).toBe('Backend unreachable')
+    for (const label of ['Mode', 'Leader', 'Nodes up']) {
       const term = screen.getByText(label, { selector: 'dt' })
       expect(term.nextElementSibling.textContent).toBe('—')
     }
-    expect(screen.getByText('Not connected yet')).toBeTruthy()
   })
 
   it('has a skip link targeting the main content', () => {

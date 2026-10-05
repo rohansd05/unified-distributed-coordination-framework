@@ -2,8 +2,9 @@ import { NavLink } from 'react-router-dom'
 import { Activity, GitBranch, Info, LayoutDashboard, ListOrdered, Server, X } from 'lucide-react'
 import { LabBadge } from '@/components/LabBadge'
 import { Button } from '@/components/ui/button'
-import { EXPERIMENTS } from '@/lib/experiments'
+import { EXPERIMENTS, formatStatus, mergeModuleStatus } from '@/lib/experiments'
 import { grafanaUrl } from '@/lib/env'
+import { useCluster } from '@/hooks/useCluster'
 import { cn } from '@/lib/utils'
 
 /**
@@ -40,6 +41,8 @@ function Item({ to, icon: Icon, end, children }) {
  */
 export function Sidebar({ open, onClose, closeButtonRef }) {
   const showMonitoring = grafanaUrl() !== null
+  const { modules } = useCluster()
+  const experiments = mergeModuleStatus(EXPERIMENTS, modules)
 
   return (
     <aside
@@ -81,11 +84,16 @@ export function Sidebar({ open, onClose, closeButtonRef }) {
             Experiments
           </h2>
           <ul aria-labelledby="nav-experiments" className="space-y-1">
-            {EXPERIMENTS.map((experiment) => (
+            {experiments.map((experiment) => (
               <li key={experiment.slug}>
                 <NavLink to={`/experiments/${experiment.slug}`} className={itemClass}>
                   <LabBadge lab={experiment.lab} />
                   <span className="truncate">{experiment.title}</span>
+                  {experiment.status && (
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {formatStatus(experiment.status)}
+                    </span>
+                  )}
                 </NavLink>
               </li>
             ))}
