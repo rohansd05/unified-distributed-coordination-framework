@@ -165,12 +165,12 @@ UDCF supports a public "lite" cloud deployment pairing a Render Docker web servi
   - Required Environment Variables:
     - `SPRING_PROFILES_ACTIVE`: `public`
     - `UDCF_ALLOWED_ORIGINS`: exact Vercel production origin (e.g. `https://<frontend-url>`, no trailing slash)
-  - Public URL placeholder: `<backend-url>`
+  - Public URL: https://udcf-backend.onrender.com/actuator/health
 - **Frontend (Vercel):** Deployed from `frontend/` as a static Vite build (`dist/`), with client-side SPA routing rewrites configured in [frontend/vercel.json](frontend/vercel.json).
   - Required Environment Variables:
     - `VITE_API_BASE_URL`: `https://<backend-url>`
     - `VITE_WS_URL`: `wss://<backend-url>/ws`
-  - Public URL placeholder: `<frontend-url>`
+  - Public URL: https://unified-distributed-coordination-fr.vercel.app
 - **Cold Start Behavior:** Render's free tier spins down instances after 15 minutes of inactivity. When a request arrives, the server wakes in approximately one minute. While spinning up, the frontend displays a `Reconnecting…` status badge and automatically recovers once the backend becomes live.
 
 ---

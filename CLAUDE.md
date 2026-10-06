@@ -59,9 +59,9 @@ Internal, per node k: RMI 110k · clock UDP 600k · election UDP 700k · replica
 requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
-Phase: 2
-Step: 2.5
-Status: in progress (deployment pending in the dashboards)
+Phase: 3
+Step: 3a
+Status: not started
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -100,6 +100,9 @@ Status: in progress (deployment pending in the dashboards)
   event stream, quick actions) and Cluster page (per-node status, capacity, ports, services,
   crash/recover, reset with confirmation, responsive node list); contract fixtures from real
   backend JSON, shared status helper (clusterStatus.js); shadcn alert-dialog and toast; 126 tests
+- 2.5 Public lite deployment: backend on Render (Docker, public profile, Singapore),
+  frontend on Vercel; REST and wss verified end to end, including after a cold start
+  (<N> s); Phase 2 complete
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
