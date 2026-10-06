@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
+import { Toaster } from '@/components/ui/toaster'
 
 /**
  * Full-height app shell: skip link, sidebar, top bar and the routed page.
@@ -82,6 +83,7 @@ export function AppLayout() {
           </div>
         </main>
       </div>
+      <Toaster />
     </div>
   )
 }

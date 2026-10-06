@@ -60,7 +60,7 @@ requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
 Phase: 2
-Step: 2.4
+Step: 2.5
 Status: not started
 
 ### Completed steps
@@ -96,6 +96,10 @@ Status: not started
 - 2.3 API client (axios 1.20.0), single shared STOMP connection with re-subscribe on
   reconnect (@stomp/stompjs 7.3.0), ClusterProvider (re-fetch on /topic/cluster and
   reconnect), live top bar, sidebar module status (Planned until modules exist); 83 tests
+- 2.4 Overview (live SVG topology with explicit SVG focus ring and legible nodes, health,
+  event stream, quick actions) and Cluster page (per-node status, capacity, ports, services,
+  crash/recover, reset with confirmation, responsive node list); contract fixtures from real
+  backend JSON, shared status helper (clusterStatus.js); shadcn alert-dialog and toast; 126 tests
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
@@ -118,6 +122,9 @@ Status: not started
   redirect via a backslash in a Link/navigate target) and GHSA-337j-9hxr-rhxg (SSR
   hydration only; not used here). Rule: never build a Link/navigate target from untrusted
   input. Both are fixed only in react-router 7.18+, a major upgrade outside R15.
+- Vite 5.4.21 carries one high advisory: GHSA-fx2h-pf6j-xcff / CVE-2026-53571 (bypass of
+  server.fs.deny on Windows via alternate 8.3/NTFS data stream paths; affects only local dev
+  server with exposed host/network). Fixed only in Vite 6.4.3+, a major upgrade outside R15.
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is

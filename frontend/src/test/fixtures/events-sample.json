@@ -1,0 +1,36 @@
+[
+  {
+    "sequence": 1,
+    "module": "cluster",
+    "nodeId": 0,
+    "type": "CLUSTER_STARTED",
+    "lamportTime": 1,
+    "wallTime": "2026-10-06T11:07:57.811876600Z",
+    "peerId": null,
+    "message": "Cluster started with 5 nodes",
+    "data": {
+      "size": 5,
+      "capacities": [
+        "FAST",
+        "MEDIUM",
+        "SLOW",
+        "MEDIUM",
+        "FAST"
+      ]
+    }
+  },
+  {
+    "sequence": 2,
+    "module": "cluster",
+    "nodeId": 2,
+    "type": "NODE_CRASHED",
+    "lamportTime": 1,
+    "wallTime": "2026-10-06T11:08:11.874813Z",
+    "peerId": null,
+    "message": "Node 2 crashed",
+    "data": {
+      "services": [],
+      "failures": []
+    }
+  }
+]

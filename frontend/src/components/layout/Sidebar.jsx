@@ -80,7 +80,7 @@ export function Sidebar({ open, onClose, closeButtonRef }) {
         </ul>
 
         <div>
-          <h2 id="nav-experiments" className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 id="nav-experiments" className="px-3 pb-2 text-xs font-semibold text-muted-foreground">
             Experiments
           </h2>
           <ul aria-labelledby="nav-experiments" className="space-y-1">
