@@ -61,7 +61,7 @@ requests TCP 720k · mapreduce TCP 730k
 ## Current Position
 Phase: 2
 Step: 2.5
-Status: not started
+Status: in progress (deployment pending in the dashboards)
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -114,17 +114,21 @@ Status: not started
   cluster reports none.
 - web/TestModuleConfig registers a fake module with lab number 10; when the real Matrix
   module arrives (Phase 12) the test must use a different mechanism or lab number.
-- public profile shows full /actuator/health details (including the disk path); set
-  show-details: never in application-public.yml in Step 2.5.
 - The root .env may still hold pre-Phase-0 keys (for example VITE_WS_URL=http://...).
   Refresh it from .env.example before Step 2.3.
-- react-router-dom 6.30.6 carries two moderate advisories: GHSA-wrjc-x8rr-h8h6 (open
-  redirect via a backslash in a Link/navigate target) and GHSA-337j-9hxr-rhxg (SSR
-  hydration only; not used here). Rule: never build a Link/navigate target from untrusted
-  input. Both are fixed only in react-router 7.18+, a major upgrade outside R15.
-- Vite 5.4.21 carries one high advisory: GHSA-fx2h-pf6j-xcff / CVE-2026-53571 (bypass of
-  server.fs.deny on Windows via alternate 8.3/NTFS data stream paths; affects only local dev
-  server with exposed host/network). Fixed only in Vite 6.4.3+, a major upgrade outside R15.
+- Current npm audit advisories (6 categories, 15 vulnerabilities: 7 moderate, 6 high, 2 critical):
+  - react-router / react-router-dom: GHSA-wrjc-x8rr-h8h6 (moderate, range 6.0.0 - 7.17.0, open redirect via backslash in Link/navigate target; reaches browser code, mitigated by never constructing Link/navigate targets from untrusted input) and GHSA-337j-9hxr-rhxg (moderate, range 6.0.0 - 7.17.0, arbitrary constructor injection via deserializeErrors() in SSR hydration; SSR is not used, client-side SPA only). Fixed only in react-router 7.18+, a major upgrade outside R15.
+  - @vitest/mocker: GHSA-82fw-gwwq-j7x9 (moderate, range 2.1.0 - 4.1.10, path traversal / arbitrary file read via redirect mock; dependency path: vitest -> @vitest/mocker). Test tooling only, does not reach browser code. Fixed in vitest 4.1.11+, a major upgrade outside R15.
+  - tinypool: GHSA-5gmw-xhrv-c9v3 (critical, range <=2.1.1, prototype pollution gadget in worker options to RCE) and GHSA-85c8-ppgw-ccpr (critical, range <=2.1.1, prototype pollution gadget in run() options to RCE; dependency path: vitest -> tinypool). Test tooling only, does not reach browser code. Fixed in vitest 4.1.11+, a major upgrade outside R15.
+  - braces: GHSA-vfj7-8cjw-p6xm (high, range *, stack-exhaustion DoS through deeply nested patterns; dependency paths: tailwindcss -> chokidar -> braces, tailwindcss -> fast-glob -> micromatch -> braces). Dev and build tooling only, does not reach browser code. No upstream fix available for tailwindcss 3.4.
+  - postcss-selector-parser: GHSA-rj75-hqrm-r3gf (moderate, range <7.1.6, quadratic complexity in flat selector parsing CPU exhaustion; dependency path: tailwindcss -> postcss-nested -> postcss-selector-parser). Dev and build tooling only, does not reach browser code. No upstream fix available for tailwindcss 3.4.
+  - esbuild: GHSA-67mh-4wv8-2f99 (moderate, range <=0.24.2, development server cross-origin request handling; dependency path: vite -> esbuild). Dev server tooling only, does not reach production browser bundle. Fixed in vite 6.4.4+, a major upgrade outside R15.
+- Existing known issue (retained from Step 2.4 fix-up, not reported in the current npm audit output):
+  - Vite 5.4.21 carries GHSA-fx2h-pf6j-xcff / CVE-2026-53571 (server.fs.deny bypass on Windows via alternate 8.3/NTFS data stream paths; affects only local dev server with exposed host/network). Fixed only in Vite 6.4.3+, outside R15.
+- Hosting facts & constraints:
+  - Render free tier: 512 MB RAM, 0.1 CPU, ~1 minute cold start after 15 minutes of inactivity, 750 free instance hours per month.
+  - Vercel Hobby tier: non-commercial use, 1 team member.
+  - Origin restriction: Vercel preview deployment URLs (e.g. `https://<project>-*-<user>.vercel.app`) cannot connect to the backend because UDCF_ALLOWED_ORIGINS is configured strictly for the single production origin (`https://<project>.vercel.app`).
 
 ### Deviations from plan
 - Step 0.2: legacy Exp 2 has no javac route. Its build check is

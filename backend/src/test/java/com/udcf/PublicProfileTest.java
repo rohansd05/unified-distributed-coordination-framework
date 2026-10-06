@@ -72,9 +72,13 @@ class PublicProfileTest {
     }
 
     @Test
-    @DisplayName("GET /actuator/health is 200")
-    void healthExposed() throws Exception {
-        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    @DisplayName("GET /actuator/health is 200 with status UP and no components or details in body")
+    void healthExposedWithoutDetails() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist())
+                .andExpect(jsonPath("$.details").doesNotExist());
     }
 
     @Test

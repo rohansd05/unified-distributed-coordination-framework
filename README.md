@@ -34,8 +34,9 @@ and deployment skeleton) is in progress.
   ordering, the REST API, STOMP over WebSocket, metrics, and the `local` and `public`
   profiles. The Experiment 2 multithreading application runs alongside it and moves onto
   the shared cluster in Phase 3.
-- `frontend/` has the application shell: sidebar, top bar and routing for every page.
-  The pages are placeholders, and the shell does not call the backend yet.
+- `frontend/` has the application shell, including live Overview and Cluster pages
+  with crash, recover and reset controls connected to the backend. The remaining
+  experiment pages are stubs until their corresponding modules are built.
 - No experiment module is built on the shared cluster yet. Experiments 2–8 exist as
   standalone demos in `legacy-demos/`; Experiments 1, 9 and 10 are not started.
 - There is no Docker Compose, Prometheus or Grafana setup yet.
@@ -50,6 +51,8 @@ and deployment skeleton) is in progress.
 ├── backend/                 Spring Boot app: core platform, with the Exp 2 application alongside
 │   ├── .mvn/                Maven Wrapper configuration
 │   ├── src/                 main and test sources
+│   ├── .dockerignore
+│   ├── Dockerfile           multi-stage container image
 │   ├── mvnw                 Maven Wrapper (sh)
 │   ├── mvnw.cmd             Maven Wrapper (Windows)
 │   └── pom.xml
@@ -62,6 +65,7 @@ and deployment skeleton) is in progress.
 │   ├── index.html
 │   ├── package.json         scripts and pinned dependencies
 │   ├── tailwind.config.js   design tokens as Tailwind colours
+│   ├── vercel.json          SPA route rewrites
 │   └── vite.config.js       dev server, @ alias, Vitest
 ├── legacy-demos/            original standalone demos, Experiments 2–8
 │   ├── exp02-multithreading/
@@ -76,6 +80,7 @@ and deployment skeleton) is in progress.
 ├── .gitignore
 ├── CLAUDE.md                instructions for Claude Code
 ├── README.md
+├── render.yaml              Render Blueprint definition
 └── requirements.txt         human-readable system requirements (not a pip file)
 ```
 
@@ -137,7 +142,7 @@ Requires Node 22.x.
 cd frontend
 npm install
 npm run dev      # http://localhost:5173 (strict port: fails if 5173 is taken)
-npm test         # Vitest + React Testing Library, 83 tests
+npm test         # Vitest + React Testing Library, 126 tests
 npm run build    # production build in frontend/dist
 ```
 
@@ -149,6 +154,24 @@ cd backend
 ```
 
 The root `.env` must define `VITE_API_BASE_URL` and `VITE_WS_URL` (copy [.env.example](.env.example) to `.env`). Vite reads `VITE_*` variables from the repository root. When these variables are missing or invalid, the app displays a clear configuration error.
+
+---
+
+## Deployment
+
+UDCF supports a public "lite" cloud deployment pairing a Render Docker web service with a Vercel static SPA.
+
+- **Backend (Render):** Deployed as a Docker web service using [backend/Dockerfile](backend/Dockerfile) and configured via [render.yaml](render.yaml) under the `public` Spring profile.
+  - Required Environment Variables:
+    - `SPRING_PROFILES_ACTIVE`: `public`
+    - `UDCF_ALLOWED_ORIGINS`: exact Vercel production origin (e.g. `https://<frontend-url>`, no trailing slash)
+  - Public URL placeholder: `<backend-url>`
+- **Frontend (Vercel):** Deployed from `frontend/` as a static Vite build (`dist/`), with client-side SPA routing rewrites configured in [frontend/vercel.json](frontend/vercel.json).
+  - Required Environment Variables:
+    - `VITE_API_BASE_URL`: `https://<backend-url>`
+    - `VITE_WS_URL`: `wss://<backend-url>/ws`
+  - Public URL placeholder: `<frontend-url>`
+- **Cold Start Behavior:** Render's free tier spins down instances after 15 minutes of inactivity. When a request arrives, the server wakes in approximately one minute. While spinning up, the frontend displays a `Reconnecting…` status badge and automatically recovers once the backend becomes live.
 
 ---
 

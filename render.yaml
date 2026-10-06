@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: udcf-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    rootDir: backend
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: public
+      # Prompted in the Render Dashboard on service creation (sync: false).
+      # Set in the dashboard to the exact Vercel production origin (https://<project>.vercel.app, no trailing slash).
+      - key: UDCF_ALLOWED_ORIGINS
+        sync: false
