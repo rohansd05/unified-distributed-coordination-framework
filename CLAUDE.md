@@ -20,7 +20,8 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 - R9 legacy-demos/ holds the original standalone demos. Keep them compiling. Do not edit them
      except to fix paths.
 - R10 One shared cluster; crashing a node affects every module on it.
-- R15 Stack fixed. Ask before adding any dependency not already listed in docs/HANDOFF.md.
+- R15 Stack fixed (Vite 6.4.x, Vitest 4.x per Step 2.4b). Ask before adding any dependency
+     not already listed in docs/HANDOFF.md.
 - R16 Phase 9A (after Phase 9): seven-experiment system demo; links L1–L5, timeline,
      scenarios, demo polish, demo package. Phase 13 adds L6, the MPI root, and Exps 1, 9, 10.
 - R17 Distinctive, non-template UI (frontend-design guidance); demo polish in 9A.4
@@ -40,7 +41,7 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 
 ## Layout
 backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.udcf.web)
-frontend/       React 18 + Vite 5 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
+frontend/       React 18 + Vite 6 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
 infra/          docker-compose.yml, prometheus/, grafana/
 legacy-demos/   original standalone demos for Experiments 2–8
 scripts/        start-all.ps1, stop-all.ps1
@@ -100,6 +101,7 @@ Status: not started
   event stream, quick actions) and Cluster page (per-node status, capacity, ports, services,
   crash/recover, reset with confirmation, responsive node list); contract fixtures from real
   backend JSON, shared status helper (clusterStatus.js); shadcn alert-dialog and toast; 126 tests
+- 2.4b Toolchain security update: vite 6.4.4, vitest 4.1.11; audit 15 (7 mod, 6 high, 2 crit) -> 10 (5 mod, 5 high, 0 crit); 126 tests
 - 2.5 Public lite deployment: backend on Render (Docker, public profile, Singapore),
   frontend on Vercel; REST and wss verified end to end, including after a cold start
   (<N> s); Phase 2 complete
@@ -119,15 +121,10 @@ Status: not started
   module arrives (Phase 12) the test must use a different mechanism or lab number.
 - The root .env may still hold pre-Phase-0 keys (for example VITE_WS_URL=http://...).
   Refresh it from .env.example before Step 2.3.
-- Current npm audit advisories (6 categories, 15 vulnerabilities: 7 moderate, 6 high, 2 critical):
+- Current npm audit advisories (3 categories, 10 vulnerabilities: 5 moderate, 5 high, 0 critical):
   - react-router / react-router-dom: GHSA-wrjc-x8rr-h8h6 (moderate, range 6.0.0 - 7.17.0, open redirect via backslash in Link/navigate target; reaches browser code, mitigated by never constructing Link/navigate targets from untrusted input) and GHSA-337j-9hxr-rhxg (moderate, range 6.0.0 - 7.17.0, arbitrary constructor injection via deserializeErrors() in SSR hydration; SSR is not used, client-side SPA only). Fixed only in react-router 7.18+, a major upgrade outside R15.
-  - @vitest/mocker: GHSA-82fw-gwwq-j7x9 (moderate, range 2.1.0 - 4.1.10, path traversal / arbitrary file read via redirect mock; dependency path: vitest -> @vitest/mocker). Test tooling only, does not reach browser code. Fixed in vitest 4.1.11+, a major upgrade outside R15.
-  - tinypool: GHSA-5gmw-xhrv-c9v3 (critical, range <=2.1.1, prototype pollution gadget in worker options to RCE) and GHSA-85c8-ppgw-ccpr (critical, range <=2.1.1, prototype pollution gadget in run() options to RCE; dependency path: vitest -> tinypool). Test tooling only, does not reach browser code. Fixed in vitest 4.1.11+, a major upgrade outside R15.
   - braces: GHSA-vfj7-8cjw-p6xm (high, range *, stack-exhaustion DoS through deeply nested patterns; dependency paths: tailwindcss -> chokidar -> braces, tailwindcss -> fast-glob -> micromatch -> braces). Dev and build tooling only, does not reach browser code. No upstream fix available for tailwindcss 3.4.
   - postcss-selector-parser: GHSA-rj75-hqrm-r3gf (moderate, range <7.1.6, quadratic complexity in flat selector parsing CPU exhaustion; dependency path: tailwindcss -> postcss-nested -> postcss-selector-parser). Dev and build tooling only, does not reach browser code. No upstream fix available for tailwindcss 3.4.
-  - esbuild: GHSA-67mh-4wv8-2f99 (moderate, range <=0.24.2, development server cross-origin request handling; dependency path: vite -> esbuild). Dev server tooling only, does not reach production browser bundle. Fixed in vite 6.4.4+, a major upgrade outside R15.
-- Existing known issue (retained from Step 2.4 fix-up, not reported in the current npm audit output):
-  - Vite 5.4.21 carries GHSA-fx2h-pf6j-xcff / CVE-2026-53571 (server.fs.deny bypass on Windows via alternate 8.3/NTFS data stream paths; affects only local dev server with exposed host/network). Fixed only in Vite 6.4.3+, outside R15.
 - Hosting facts & constraints:
   - Render free tier: 512 MB RAM, 0.1 CPU, ~1 minute cold start after 15 minutes of inactivity, 750 free instance hours per month.
   - Vercel Hobby tier: non-commercial use, 1 team member.
@@ -178,3 +175,4 @@ Status: not started
   (unknown modules show as Planned). Vite reads the root .env (envDir '..').
 - Plan amended to HANDOFF v1.1 (2026-10-04): Phase 9A added; Phase 13 reduced to L6, the MPI
   root, and Exps 1, 9, 10 (user decision).
+- Step 2.4b: R15 amended to Vite 6.4 / Vitest 4 (user decision, security)

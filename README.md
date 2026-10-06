@@ -58,7 +58,7 @@ and deployment skeleton) is in progress.
 │   └── pom.xml
 ├── docs/
 │   └── HANDOFF.md           plan and single source of truth
-├── frontend/                React 18 + Vite 5 web UI: shell and routing, placeholder pages
+├── frontend/                React 18 + Vite 6 web UI: shell and routing, placeholder pages
 │   ├── public/              static files (favicon)
 │   ├── src/                 layout, pages, routes, styles, tests
 │   ├── components.json      shadcn/ui configuration

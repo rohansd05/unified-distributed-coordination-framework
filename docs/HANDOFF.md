@@ -7,9 +7,10 @@
 
 | | |
 |---|---|
-| Document version | 1.1 |
+| Document version | 1.2 |
 | Written | 2026-10-03 |
 | Amended | 2026-10-04: R16, R17, Phase 9A (seven-experiment system demo) |
+| Amended | 2026-10-07: R15 amended — Vite 6.4, Vitest 4 for security fixes |
 | Repository | `https://github.com/rohansd05/unified-distributed-coordination-framework` |
 | Repository HEAD when written | `96540d4` |
 | Local path | `C:\Users\NIDHI\Desktop\unified-distributed-coordination-framework` |
@@ -199,7 +200,8 @@ are now revised. **This table is authoritative.**
 | **R12** | The Java MapReduce engine is the implementation. The PySpark script moves to `legacy-demos/exp07-mapreduce/spark/` as an optional illustration. | NEW | Project rules forbid heavy dependencies; the lab statement asks that the technique be applied to *this* project, which only the Java engine does. |
 | **R13** | The MapReduce module can analyse **the cluster's own live event log**, exported from the event bus. A committed sample file is kept as a fallback. | NEW | Replaces the generated static log with real data. |
 | **R14** | `CLAUDE.md` lives at the repository root. | NEW | Claude Code only auto-loads it from the root. |
-| **R15** | Stack, unchanged: Java 21, Spring Boot 3.3.5, React 18 + Vite 5 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide, axios, react-router 6, @stomp/stompjs. No Lombok. Constructor injection only. | KEEPS | Ask the user before adding any dependency not listed in Section 6 or 8. |
+| **R15** | Stack: Java 21, Spring Boot 3.3.5, React 18 + Vite 6.4 (JSX; amended per R15a), Tailwind 3.4, shadcn/ui, Recharts, Lucide, axios, react-router 6, @stomp/stompjs. No Lombok. Constructor injection only. | KEEPS | Ask the user before adding any dependency not listed in Section 6 or 8. |
+| **R15a** | Vite 6.4.x and Vitest 4.x replace Vite 5 and Vitest 3, on Node 22.11, to clear dev-server and test-runner advisories (user decision). | NEW (2026-10-07) | Replaces Vite 5.4.21 and Vitest 3.2.7. Clears critical tinypool advisories (GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr), @vitest/mocker (GHSA-82fw-gwwq-j7x9), esbuild (GHSA-67mh-4wv8-2f99) and Vite bypass CVE-2026-53571. |
 | **R16** | **Seven-experiment system demo after Phase 9.** New Phase 9A wires links L1–L5 among Experiments 2–8 and delivers the global timeline, the four scenarios, a demo polish pass and a demo package. Phase 13 then adds L6, makes the leader the MPI root, and extends scenarios and timeline to Experiments 1, 9 and 10. | NEW (2026-10-04) | The user needs a showable integrated system before Experiments 1, 9 and 10 exist. All four suggested scenarios use only Experiments 2–8. |
 | **R17** | **Distinctive, non-template UI.** Pages use a deliberate visual language (node-graph motifs, purposeful animation, real empty states) following the frontend-design guidance, and avoid the stock shadcn look. A demo-polish step (9A.4) precedes the full polish in Phase 14. | NEW (2026-10-04) | User requirement: the UI must not look AI-generated. |
 
@@ -572,8 +574,8 @@ module's phase.
 
 ### 8.1 Stack
 
-React 18, Vite 5, **JavaScript (JSX)**, Tailwind CSS 3.4, shadcn/ui, Recharts, Lucide React, axios,
-react-router-dom 6, @stomp/stompjs. Testing: Vitest, React Testing Library, jsdom, Playwright for
+React 18, Vite 6.4 (amended per R15a), **JavaScript (JSX)**, Tailwind CSS 3.4, shadcn/ui, Recharts, Lucide React, axios,
+react-router-dom 6, @stomp/stompjs. Testing: Vitest 4, React Testing Library, jsdom, Playwright for
 end-to-end. Ask before adding anything else.
 
 ### 8.2 Routes
@@ -969,7 +971,7 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 
 ## Layout
 backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.udcf.web)
-frontend/       React 18 + Vite 5 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
+frontend/       React 18 + Vite 6 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
 infra/          docker-compose.yml, prometheus/, grafana/
 legacy-demos/   original standalone demos for Experiments 2–8
 scripts/        start-all.ps1, stop-all.ps1
