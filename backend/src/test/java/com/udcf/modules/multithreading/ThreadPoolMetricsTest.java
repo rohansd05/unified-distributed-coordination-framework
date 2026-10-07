@@ -1,59 +1,23 @@
 package com.udcf.modules.multithreading;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ThreadPoolMetricsTest {
 
+    // The two gauge tests moved to MultithreadingMetricsTest with the gauges (E2c).
+
     private SimpleMeterRegistry registry;
-    private ThreadPoolExecutor executor;
-    private ThroughputTracker throughputTracker;
     private ThreadPoolMetrics metrics;
 
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        executor = new ThreadPoolExecutor(2, 4, 60, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(10), new NamedThreadFactory("metrics-worker-"),
-                new ThreadPoolExecutor.AbortPolicy());
-        throughputTracker = new ThroughputTracker(30);
-        metrics = new ThreadPoolMetrics(registry, executor, throughputTracker, 1);
-        metrics.bindGauges();
-    }
-
-    @AfterEach
-    void tearDown() {
-        executor.shutdownNow();
-    }
-
-    @Test
-    @DisplayName("registers the distributed_* gauges the Grafana dashboards expect")
-    void registersExpectedGauges() {
-        assertThat(registry.find("distributed_active_threads").gauge()).isNotNull();
-        assertThat(registry.find("distributed_pool_size").gauge()).isNotNull();
-        assertThat(registry.find("distributed_queued_requests").gauge()).isNotNull();
-        assertThat(registry.find("distributed_queue_remaining_capacity").gauge()).isNotNull();
-        assertThat(registry.find("distributed_request_throughput").gauge()).isNotNull();
-        assertThat(registry.find("distributed_response_time_p95_millis").gauge()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("gauges read live executor state rather than a cached copy")
-    void gaugesTrackLiveExecutorState() {
-        assertThat(registry.get("distributed_queued_requests").gauge().value()).isZero();
-
-        executor.getQueue().add(() -> { });
-
-        assertThat(registry.get("distributed_queued_requests").gauge().value()).isEqualTo(1.0d);
+        metrics = new ThreadPoolMetrics(registry, 1);
     }
 
     @Test
@@ -100,7 +64,8 @@ class ThreadPoolMetricsTest {
     @Test
     @DisplayName("every Exp 2 meter carries its own node_id tag")
     void everyMeterCarriesNodeId() {
-        ThreadPoolMetrics nodeTwo = new ThreadPoolMetrics(registry, executor, throughputTracker, 2);
+        metrics.recordAccepted();
+        ThreadPoolMetrics nodeTwo = new ThreadPoolMetrics(registry, 2);
         nodeTwo.recordAccepted();
         DistributedRequest request = new DistributedRequest("m3", 2, WorkloadType.IO_SIMULATED, 5);
         request.markStarted("metrics-worker-1");
@@ -111,7 +76,8 @@ class ThreadPoolMetricsTest {
                 .allSatisfy(meter -> assertThat(meter.getId().getTag("node_id"))
                         .as("node_id on %s", meter.getId().getName())
                         .isIn("1", "2"));
-        assertThat(registry.get("distributed_active_threads").tag("node_id", "1").gauge()).isNotNull();
+        assertThat(registry.get("distributed_requests_total").tag("node_id", "1").tag("outcome", "accepted")
+                .counter().count()).isEqualTo(1.0d);
         assertThat(registry.get("distributed_requests_total").tag("node_id", "2").tag("outcome", "accepted")
                 .counter().count()).isEqualTo(1.0d);
         assertThat(registry.get("distributed_request_duration").tag("node_id", "2").timer().count()).isEqualTo(1L);

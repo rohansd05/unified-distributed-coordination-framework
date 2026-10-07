@@ -10,16 +10,6 @@ server:
   port: ${PORT:8080}
 
 udcf:
-  node:
-    # Experiment 2's node identity. Disappears in Phase 3, when Exp 2 runs on the shared cluster.
-    id: 1
-  threadpool:
-    core-pool-size: 4
-    max-pool-size: 8
-    queue-capacity: 200
-    keep-alive-seconds: 60
-    thread-name-prefix: udcf-worker-
-    metrics-window-seconds: 30
   events:
     buffer-size: 5000
     dispatch-queue-size: 1024
@@ -46,6 +36,11 @@ udcf:
     metrics-window-seconds: 30
     request-history-size: 500
     read-timeout-millis: 5000
+    # The demo sends threads + queue capacity + extra-requests as one burst, so it always rejects some.
+    backpressure:
+      extra-requests: 50
+      workload: CPU_HASH
+      payload-size: 200
 
 management:
   endpoints:

@@ -139,7 +139,7 @@ class RequestProcessingServiceTest {
         RequestResult result = service.submitAndWait(WorkloadType.CPU_HASH, 5);
 
         assertThat(result.status()).isEqualTo(RequestStatus.REJECTED);
-        assertThat(result.errorMessage()).contains("Queue full");
+        assertThat(result.errorMessage()).isEqualTo(RequestProcessingService.NODE_DOWN);
         assertThat(result.threadName()).isNull();
         verify(metrics).recordRejected();
     }
@@ -330,6 +330,71 @@ class RequestProcessingServiceTest {
         // The race really happened: some requests finished and some were cut off by the crash.
         assertThat(completedOverall).isPositive();
         assertThat(abortedOverall).isPositive();
+    }
+
+    @Test
+    @DisplayName("a request refused because the queue is full says the queue is full")
+    void rejectsWithQueueFullWhenSaturated() {
+        ThreadPoolExecutor tiny = new ThreadPoolExecutor(1, 1, 60, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(1), new NamedThreadFactory("tiny-worker-"),
+                new ThreadPoolExecutor.AbortPolicy());
+        RequestProcessingService node = new RequestProcessingService(tiny, new WorkloadExecutor(), registry,
+                throughputTracker, metrics, events, 1, 1);
+        try {
+            node.submitAsync(WorkloadType.IO_SIMULATED, 5000);   // runs (2 s)
+            node.submitAsync(WorkloadType.IO_SIMULATED, 5000);   // queued
+            await().atMost(5, TimeUnit.SECONDS).until(() -> tiny.getActiveCount() == 1);
+
+            RequestResult result = node.submitAsync(WorkloadType.CPU_HASH, 5).join();
+
+            assertThat(result.status()).isEqualTo(RequestStatus.REJECTED);
+            assertThat(result.errorMessage()).isEqualTo(RequestProcessingService.QUEUE_FULL);
+        } finally {
+            tiny.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("submitTogether accepts exactly threads + queue capacity and rejects the rest, every time")
+    void submitTogetherIsDeterministic() {
+        for (int round = 0; round < 20; round++) {
+            ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 60, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(10), new NamedThreadFactory("burst-worker-"),
+                    new ThreadPoolExecutor.AbortPolicy());
+            RequestProcessingService node = new RequestProcessingService(pool, new WorkloadExecutor(),
+                    new RequestRegistry(100), new ThroughputTracker(30), metrics, events, 1, 1);
+            try {
+                // CPU_HASH 1 finishes in microseconds: without the gate, workers would free
+                // slots during submission and accept more than 4 + 10.
+                List<RequestProcessingService.Submission> burst = node.submitTogether(WorkloadType.CPU_HASH, 1, 20);
+
+                long rejected = burst.stream()
+                        .filter(s -> s.result().isDone() && s.result().join().status() == RequestStatus.REJECTED)
+                        .count();
+                assertThat(rejected).isEqualTo(6);
+                assertThat(burst).extracting(RequestProcessingService.Submission::requestId).doesNotHaveDuplicates();
+                CompletableFuture.allOf(burst.stream().map(RequestProcessingService.Submission::result)
+                        .toArray(CompletableFuture[]::new)).orTimeout(10, TimeUnit.SECONDS).join();
+                assertThat(burst).filteredOn(s -> s.result().join().status() == RequestStatus.COMPLETED).hasSize(14);
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("a burst interrupted by a crash ends every request once, FAILED, and never hangs")
+    void submitTogetherSurvivesACrash() {
+        List<RequestProcessingService.Submission> burst = service.submitTogether(WorkloadType.IO_SIMULATED, 5000, 30);
+        await().atMost(5, TimeUnit.SECONDS)
+                .until(() -> registry.countByStatus().get(RequestStatus.PROCESSING) == 4L);
+
+        service.shutdownNow("Node crashed");
+
+        CompletableFuture.allOf(burst.stream().map(RequestProcessingService.Submission::result)
+                .toArray(CompletableFuture[]::new)).orTimeout(10, TimeUnit.SECONDS).join();
+        assertThat(burst).allSatisfy(s -> assertThat(s.result().join().status()).isEqualTo(RequestStatus.FAILED));
+        verify(metrics, times(30)).recordFinished(any());
     }
 
     /** Blocks all 4 workers on long IO waits and returns their futures. */

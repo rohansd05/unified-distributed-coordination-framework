@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -128,5 +129,32 @@ class RequestRegistryTest {
         pool.shutdownNow();
 
         assertThat(registry.size()).isEqualTo(threads * perThread);
+    }
+
+    @Test
+    @DisplayName("a clear racing with registrations never leaves the index and the eviction order out of step")
+    void clearRacingWithRegistrationStaysConsistent() throws InterruptedException {
+        RequestRegistry registry = new RequestRegistry(50);
+        AtomicBoolean stop = new AtomicBoolean();
+        Thread writer = new Thread(() -> {
+            for (int i = 0; !stop.get(); i++) {
+                registry.register(request("w" + i));
+            }
+        });
+        writer.start();
+        for (int i = 0; i < 2000; i++) {
+            registry.clear();
+        }
+        stop.set(true);
+        writer.join();
+
+        // An id left in the index but missing from the eviction order would never be evicted,
+        // and the registry would keep more than its capacity from here on.
+        for (int i = 0; i < 200; i++) {
+            registry.register(request("after" + i));
+        }
+        assertThat(registry.size()).isEqualTo(50);
+        assertThat(registry.recent(0)).hasSize(50)
+                .allMatch(request -> request.getId().startsWith("after"));
     }
 }

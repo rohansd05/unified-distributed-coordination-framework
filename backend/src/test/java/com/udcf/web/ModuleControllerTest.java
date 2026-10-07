@@ -8,15 +8,15 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
-import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Guards GET /api/modules. Shares context D with ClusterControllerTest, so the registry
- * holds the one fake module from {@link TestModuleConfig}; the empty-registry case is
- * covered by CoreContextTest.
+ * holds the real modules plus the fake one from {@link TestModuleConfig} (lab 10). The
+ * assertions find modules by id rather than by position or count, so other tracks' modules
+ * can join the registry without breaking this test (E2c).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -31,10 +31,13 @@ class ModuleControllerTest {
     void listsModules() throws Exception {
         mockMvc.perform(get("/api/modules"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].id").value(TestModuleConfig.FakeModule.ID))
-                .andExpect(jsonPath("$[0].labNumber").value(TestModuleConfig.FakeModule.LAB_NUMBER))
-                .andExpect(jsonPath("$[0].title").value("Test Module"))
-                .andExpect(jsonPath("$[0].status").value("IDLE"));
+                .andExpect(jsonPath("$[?(@.id == 'multithreading')].labNumber").value(2))
+                .andExpect(jsonPath("$[?(@.id == 'multithreading')].title").value("Multithreading"))
+                .andExpect(jsonPath("$[?(@.id == 'multithreading')].status").value("IDLE"))
+                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].labNumber")
+                        .value(TestModuleConfig.FakeModule.LAB_NUMBER))
+                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].title").value("Test Module"))
+                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].status").value("IDLE"))
+                .andExpect(jsonPath("$[-1:].id").value(TestModuleConfig.FakeModule.ID));
     }
 }

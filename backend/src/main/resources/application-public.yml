@@ -6,10 +6,6 @@ udcf:
     size: 3          # the capacity pattern is unchanged, so nodes are FAST, MEDIUM, SLOW
   events:
     buffer-size: 1500
-  threadpool:
-    core-pool-size: 2
-    max-pool-size: 4
-    queue-capacity: 100
   multithreading:
     queue-capacity: 100
 

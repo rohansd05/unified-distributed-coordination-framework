@@ -18,12 +18,17 @@ import java.util.concurrent.ConcurrentLinkedDeque;
  *
  * <p>Oldest entries are evicted once {@link #capacity} is exceeded, so a long
  * demonstration run cannot exhaust heap.</p>
+ *
+ * <p>{@link #register} and {@link #clear} change the index and the insertion order together
+ * under one lock, so a clear racing with new requests (a module reset during a batch) never
+ * leaves the two out of step. Reads stay lock-free.</p>
  */
 public class RequestRegistry {
 
     private final int capacity;
     private final Map<String, DistributedRequest> byId = new ConcurrentHashMap<>();
     private final ConcurrentLinkedDeque<String> insertionOrder = new ConcurrentLinkedDeque<>();
+    private final Object writeLock = new Object();
 
     /** @param capacity most requests kept; at least 1 */
     public RequestRegistry(int capacity) {
@@ -31,9 +36,11 @@ public class RequestRegistry {
     }
 
     public void register(DistributedRequest request) {
-        byId.put(request.getId(), request);
-        insertionOrder.addLast(request.getId());
-        evictOverflow();
+        synchronized (writeLock) {
+            byId.put(request.getId(), request);
+            insertionOrder.addLast(request.getId());
+            evictOverflow();
+        }
     }
 
     private void evictOverflow() {
@@ -81,7 +88,9 @@ public class RequestRegistry {
     }
 
     public void clear() {
-        byId.clear();
-        insertionOrder.clear();
+        synchronized (writeLock) {
+            byId.clear();
+            insertionOrder.clear();
+        }
     }
 }

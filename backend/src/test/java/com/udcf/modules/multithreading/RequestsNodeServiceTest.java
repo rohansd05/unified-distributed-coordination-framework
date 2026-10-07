@@ -58,7 +58,8 @@ class RequestsNodeServiceTest {
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
             new ClusterProperties.Ports(41100, 41200, 41300, 41400, 41500, 41600));
     private static final MultithreadingProperties PROPERTIES =
-            new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000);
+            new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
+                    new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
     private static final int SENDER = 7;
 
     private ClusterEventBus bus;
@@ -207,7 +208,8 @@ class RequestsNodeServiceTest {
     @Test
     @DisplayName("a full queue rejects work with a REJECTED reply and a REQUEST_REJECTED event")
     void fullQueueRejects() throws Exception {
-        MultithreadingProperties tinyQueue = new MultithreadingProperties(1, 60, "udcf-worker-", 30, 500, 2000);
+        MultithreadingProperties tinyQueue = new MultithreadingProperties(1, 60, "udcf-worker-", 30, 500, 2000,
+                new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
         RequestsNodeService.on(cluster.node(3), tinyQueue, meters, bus);   // SLOW: 1 thread, queue 1
         List<CompletableFuture<WorkReply>> replies = new ArrayList<>();
         for (int i = 0; i < 6; i++) {
@@ -428,6 +430,27 @@ class RequestsNodeServiceTest {
         } finally {
             release.set(true);
         }
+    }
+
+    @Test
+    @DisplayName("find never starts a service; snapshot is empty unless running; clearHistory keeps the service up")
+    void findSnapshotAndClearHistory() throws IOException {
+        assertThat(RequestsNodeService.find(cluster.node(1))).isEmpty();
+        assertThat(cluster.node(1).runningServices()).isEmpty();
+
+        RequestsNodeService service = service(1);
+        send(1, WorkloadType.CPU_HASH, 5);
+
+        assertThat(RequestsNodeService.find(cluster.node(1))).containsSame(service);
+        assertThat(service.snapshot()).get().extracting(stats -> stats.maxPoolSize()).isEqualTo(4);
+        service.clearHistory();
+        assertThat(service.registry().size()).isZero();
+        assertThat(service.snapshot()).get().extracting(stats -> stats.sampleCount()).isEqualTo(0);
+        assertThat(service.isRunning()).isTrue();
+
+        cluster.crash(1);
+        assertThat(service.snapshot()).isEmpty();
+        service.clearHistory();   // safe while crashed
     }
 
     private double count(String outcome) {

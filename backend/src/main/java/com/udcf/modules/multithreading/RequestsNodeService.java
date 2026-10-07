@@ -6,6 +6,7 @@ import com.udcf.core.cluster.NodeService;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
 import com.udcf.modules.multithreading.dto.RequestResult;
+import com.udcf.modules.multithreading.dto.ThreadPoolStats;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -64,8 +66,9 @@ import java.util.concurrent.ThreadPoolExecutor;
  * TIME_WAIT. A bind failure on start or recover is reported, never retried.</p>
  *
  * <p><b>Metrics.</b> Request counters and the duration timer go to the given
- * {@link MeterRegistry}, tagged with this node's id (R5). Gauges are not bound here (see the
- * track file's known issues; they move to E2c).</p>
+ * {@link MeterRegistry}, tagged with this node's id (R5). The executor gauges are bound once
+ * per node by {@link MultithreadingMetrics}, which reads {@link #snapshot()} at scrape time,
+ * so they follow the executor across crash and recovery.</p>
  */
 public class RequestsNodeService implements NodeService {
 
@@ -170,6 +173,33 @@ public class RequestsNodeService implements NodeService {
     }
 
     /**
+     * Live executor snapshot, or empty while the service is not running. Never throws, and
+     * never starts anything, so gauges and the module overview can call it at any time.
+     */
+    public Optional<ThreadPoolStats> snapshot() {
+        Engine current = engine;
+        if (!running || current == null) {
+            return Optional.empty();
+        }
+        return Optional.of(current.stats().snapshot());
+    }
+
+    /**
+     * Clears the request history and the throughput samples (a module reset). Work in
+     * flight carries on. Safe at any moment, including while the node crashes or recovers:
+     * it touches neither the executor nor the sockets, and each structure clears atomically.
+     */
+    public void clearHistory() {
+        registry.clear();
+        throughputTracker.clear();
+    }
+
+    /** The node's requests service if it has ever been started; never starts one. */
+    public static Optional<RequestsNodeService> find(ClusterNode node) {
+        return node.service(NAME).map(RequestsNodeService.class::cast);
+    }
+
+    /**
      * Runs {@code task} on this node's current Exp 2 executor, outside the request history.
      *
      * <p>The future completes with the task's result or exception; exceptionally with
@@ -241,8 +271,8 @@ public class RequestsNodeService implements NodeService {
     private Engine newEngine() {
         int id = node.id();
         ThreadPoolExecutor executor = NodeExecutorFactory.forNode(id, node.capacity(), properties);
-        // Gauges are deliberately not bound in E2b (track file, known issues).
-        ThreadPoolMetrics metrics = new ThreadPoolMetrics(meterRegistry, executor, throughputTracker, id);
+        // Gauges are bound once per node by MultithreadingMetrics, never per executor.
+        ThreadPoolMetrics metrics = new ThreadPoolMetrics(meterRegistry, id);
         RequestProcessingService processing = new RequestProcessingService(executor, new WorkloadExecutor(),
                 registry, throughputTracker, metrics, requestEvents, id, node.capacity().workMultiplier());
         ThreadPoolStatsService stats = new ThreadPoolStatsService(executor, registry, throughputTracker,

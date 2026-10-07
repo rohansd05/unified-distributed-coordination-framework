@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: payloadSize, count","instance":"/api/modules/multithreading/nodes/1/batches","errors":{"payloadSize":"payloadSize must not exceed 5000","count":"count must be at least 1"}}
