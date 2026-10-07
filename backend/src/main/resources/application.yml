@@ -41,6 +41,10 @@ udcf:
       extra-requests: 50
       workload: CPU_HASH
       payload-size: 200
+  # Experiment 6 (lab 6). The balancer dispatches into each node's Exp 2 requests service (link L3).
+  loadbalancing:
+    # Connect and read timeout per attempt; the read also covers the worker's queue wait.
+    request-timeout-millis: 10000
 
 management:
   endpoints:

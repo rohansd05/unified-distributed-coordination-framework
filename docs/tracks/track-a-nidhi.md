@@ -27,7 +27,7 @@
 
 ### Steps
 - [x] E6a — strategies (Round Robin, smooth Weighted Round Robin, Least Connections, Least Response Time = EWMA latency x (in-flight + 1), alpha 0.3), `WorkerInfo`, `DispatchResult`, `PhaseReport`, circuit-breaker reroute, as pure classes. Needs: E2d.
-- [ ] E6b — the balancer dispatching over TCP into each node's requests service, with reroute when a worker is down. Needs: E6a, E2b.
+- [x] E6b — the balancer dispatching over TCP into each node's requests service, with reroute when a worker is down. Needs: E6a, E2b.
 - [ ] E6c — `LoadBalancingModule` (lab 6): run a strategy, "compare all four", crash a worker mid-run; events, metrics, fixtures. Needs: E6b.
 - [ ] E6d — page and end-to-end check. Needs: E6c.
 
@@ -189,6 +189,63 @@
   `roundRobinMostEven()`. The page may state "Round Robin finished last" only when
   `roundRobinFinishedLast()` is true for the measured run, never as a fixed claim; likewise for
   "most even" with `roundRobinMostEven()`.
+- **Exp 6 over TCP (E6b), for E6c.** `new LoadBalancingGateway(cluster, multithreadingProperties,
+  meterRegistry, bus, loadBalancingProperties).run(strategy, requestCount >= 1, workUnits 1-5000,
+  concurrency >= 1)` returns the measured `PhaseReport` and waits for it. Every cluster node is a
+  worker (a node that is down stays in the list, is found by a refused connection, and shows 0
+  requests). Each run starts the Exp 2 requests service on every UP node (lazily, never on a
+  crashed one) and builds fresh workers and a fresh transport, so counters and the event cap are
+  per run; `workers()` returns the current or last run's workers with live counters. One run at a
+  time (a ReentrantLock, so no virtual-thread pinning); E6c's ModuleActionGuard should answer 409
+  first. Exp 6 adds no NodeService and no port. `new BatchRunner([nanoClock]).run(balancer,
+  strategy, requestCount, workUnits, concurrency)`: calls `resetForRun()`, runs `min(concurrency,
+  requestCount)` client loops on virtual threads named `udcf-lb-client-<i>` (at most `concurrency`
+  in flight), measures the makespan from the first request to the last answer, returns results in
+  request-id order; a transport RuntimeException is rethrown after every client stops.
+  Settings: `udcf.loadbalancing.request-timeout-millis` (10000; the public profile inherits it).
+- **Transport mapping (E6b, final).** `TcpWorkerTransport` sends sender id 0 with the cluster's
+  Lamport clock (`Cluster.clusterClock()`; RequestsClient ticks before sending and merges the
+  reply, link L4) and always `CPU_HASH` work (real, never simulated). COMPLETED = served;
+  REJECTED, FAILED and ProtocolException (the node answered ERROR, or sent a malformed reply) =
+  `WorkerDeclinedException` (reroute, worker stays healthy); ConnectException,
+  SocketTimeoutException and a connection closed without a reply = `IOException` (reroute, the
+  circuit breaker marks the worker unhealthy for the rest of the run). Note: a crashing node sends
+  no reply at all (E2b checks `running` before replying), so in-flight and queued work on a
+  crashed node always shows up as a closed connection, never as a FAILED reply.
+- **Load-balancing events (E6b).** Module `loadbalancing`, node 0, the cluster clock ticked for
+  the event, peer = the worker. `DISPATCH_FAILED` per attempt that tripped the breaker, data
+  `{requestId, reason (ConnectException, SocketTimeoutException, IOException), message}`;
+  `DISPATCH_DECLINED` per declined attempt, data `{requestId, status (REJECTED, FAILED,
+  PROTOCOL_ERROR), detail, workerRequestId (when the node gave one)}`. At most 20 of the two
+  together per worker per run (`TcpWorkerTransport.MAX_EVENTS_PER_WORKER`); beyond that only
+  `WorkerInfo.failed()` and `declined()` move, so E6c shows the true totals from those counters.
+  Served attempts publish nothing here: the node publishes `REQUEST_COMPLETED` (module
+  multithreading, peer 0). RUN_STARTED/RUN_FINISHED are E6c's.
+- **At least once, never exactly once (E6c, E6d).** A timeout trips the breaker even though the
+  work may still finish on that worker, and the request is then sent elsewhere, so a request can
+  run twice. Do not claim exactly-once delivery. "Zero failed requests" holds only while some
+  other worker is healthy and has queue room; if every worker is down, every request fails
+  promptly (one refused attempt per worker) and nothing hangs.
+- **Work units (E6c defaults).** Work units = the Exp 2 payload size, 1-5000; one unit is 40
+  SHA-256 rounds times the node's work multiplier. It is NOT the legacy demo's unit (one SHA-256
+  round): the legacy default of 900 rounds is about 23 Exp 2 units (measured here: payload 23
+  about 0.10 ms, payload 900 about 3.7 ms per request on a x1 node).
+- **Opt-in probe (E6b).** `LoadBalancingProbeTest`, skipped unless the system property
+  `udcf.loadbalancing.probe=true`: `cd backend; .\mvnw.cmd test -Dtest=LoadBalancingProbeTest
+  -Dudcf.loadbalancing.probe=true`. Runs all four strategies on FAST, MEDIUM, SLOW, MEDIUM, FAST
+  at 60 requests and 12 clients for payloads 25, 100, 400 and 900 and prints a table; it asserts
+  nothing about which strategy wins.
+- **Test ports (E6b): 47100 to 47899 are Track A's Exp 6 test range.** Cluster bases 47100-47600
+  (LoadBalancingGatewayTest), 47110-47610 (TcpWorkerTransportTest), 47120-47620 (the probe);
+  scripted servers 47801-47806; 47809 is kept unbound. Other tracks: please avoid this range.
+
+---
+
+## Deviations (for Rohan to confirm)
+
+- E6b (step anatomy "b"): Experiment 6 adds no `NodeService`. It has no port range (HANDOFF 6.1
+  and 6.3); the balancer is a cluster-level client that dispatches into the Exp 2 requests
+  service on 720k (link L3), whose crash and recovery already close and rebind the sockets.
 
 ---
 
@@ -225,6 +282,9 @@
 - The sidebar's module status comes from ClusterProvider, which reloads `/api/modules` only on
   start and reconnect, so it does not follow Idle/Running/Busy live; the page itself shows the
   live module status.
+- The balancer's timeout also covers the worker's queue wait; on Render's 0.1 CPU a long queue
+  could exceed it and trip the breaker on a live worker. Re-measure in Phase 16 and size E6c's
+  defaults so the worst-case queue wait stays well below the timeout.
 
 ---
 
@@ -315,3 +375,18 @@
   returns empty instead of 0 latency figures when nothing was served; (12) no rounding in the pure
   classes; (13) WorkerNode's private pool, the Lamport clock and runBatch are not ported (L3 and
   E6b).
+- 2026-10-08 E6b done: TcpWorkerTransport (Exp 2 RequestsClient, sender 0 on the cluster clock,
+  CPU_HASH only, the final outcome mapping, DISPATCH_FAILED/DISPATCH_DECLINED events capped at 20
+  per worker per run), BatchRunner (virtual-thread clients, measured makespan), LoadBalancingGateway
+  (every node a worker, lazy start of the requests service on UP nodes, fresh transport per run,
+  ReentrantLock), LoadBalancingProperties and udcf.loadbalancing.request-timeout-millis 10000;
+  integration tests on real sockets (ports 47100-47899) including a crash with work in flight and
+  queued and an all-crashed cluster; no virtual-thread pinning under -Djdk.tracePinnedThreads=full;
+  opt-in probe run once (round robin finished last and was most even at payloads 25, 100, 400 and
+  900 on this 12-core machine; the gap was small at 25 and 100); E6a classes unchanged; backend
+  459 tests, 1 skipped (the opt-in probe), 3 runs all green; frontend not run (no frontend
+  change); deviations: (1) no NodeService (see Deviations); (2) the crash-with-queued-work test
+  asserts that the crashed worker's attempts all failed by closed connection (failed() >= 2,
+  declined() == 0), not that some came back FAILED "Node crashed": E2b sends no reply after a crash,
+  so such replies cannot occur without changing multithreading (out of scope); the FAILED-reply
+  path is covered with a scripted server instead.
