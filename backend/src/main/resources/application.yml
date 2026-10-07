@@ -45,6 +45,7 @@ udcf:
     thread-name-prefix: udcf-worker-
     metrics-window-seconds: 30
     request-history-size: 500
+    read-timeout-millis: 5000
 
 management:
   endpoints:

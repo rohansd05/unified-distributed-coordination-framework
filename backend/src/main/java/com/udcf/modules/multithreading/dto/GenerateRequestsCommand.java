@@ -16,17 +16,23 @@ import jakarta.validation.constraints.NotNull;
  */
 public record GenerateRequestsCommand(
 
-        @Min(value = 1, message = "count must be at least 1")
-        @Max(value = 1000, message = "count must not exceed 1000")
+        @Min(value = MIN_COUNT, message = "count must be at least 1")
+        @Max(value = MAX_COUNT, message = "count must not exceed 1000")
         int count,
 
         @NotNull(message = "type is required")
         WorkloadType type,
 
-        @Min(value = 1, message = "payloadSize must be at least 1")
-        @Max(value = 5000, message = "payloadSize must not exceed 5000")
+        @Min(value = MIN_PAYLOAD_SIZE, message = "payloadSize must be at least 1")
+        @Max(value = MAX_PAYLOAD_SIZE, message = "payloadSize must not exceed 5000")
         int payloadSize
 ) {
+    /** Batch and payload limits from docs/HANDOFF.md Appendix B (Exp 2); the TCP protocol uses the same payload limits. */
+    public static final int MIN_COUNT = 1;
+    public static final int MAX_COUNT = 1000;
+    public static final int MIN_PAYLOAD_SIZE = 1;
+    public static final int MAX_PAYLOAD_SIZE = 5000;
+
     public static GenerateRequestsCommand of(int count, WorkloadType type, int payloadSize) {
         return new GenerateRequestsCommand(count, type, payloadSize);
     }

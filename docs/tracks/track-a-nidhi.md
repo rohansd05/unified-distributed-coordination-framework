@@ -14,7 +14,7 @@
 
 ### Steps
 - [x] E2a — move the Exp 2 engine into `com.udcf.modules.multithreading` as pure classes sized per node; the 11 existing test classes are moved (never deleted) and pass. Needs: none.
-- [ ] E2b — per-node "requests" NodeService on `ports().requests()` (720k) running work on that node's executor. Needs: E2a.
+- [x] E2b — per-node "requests" NodeService on `ports().requests()` (720k) running work on that node's executor. Needs: E2a.
 - [ ] E2c — `MultithreadingModule` (lab 2) and `/api/modules/multithreading` endpoints (submit a batch to a node, per-node stats, a backpressure demo); events and metrics; retire the old `/api/multithreading` controller, the old Exp 2 packages and `udcf.node.id`, and list these removals in the Progress log for Rohan; fix registry-dependent tests if this is the first module to register; contract fixtures. Needs: E2b.
 - [ ] E2d — build the shared experiment-page kit exactly as in README section 7, then the Multithreading page; verify HANDOFF Section 7 Exp 2 "done when". Needs: E2c.
 
@@ -51,6 +51,36 @@
   in E2c (DTOs) and E2d (UI), not in E2a: the `IO_SIMULATED` workload type gets the Simulated
   badge, because it is a sleep; the FAST/MEDIUM/SLOW difference gets a plain note saying the
   capacity profile is configured, not measured hardware, because all nodes share one machine.
+- **Requests service (E2b): `RequestsNodeService`.** `RequestsNodeService.on(node, properties,
+  meterRegistry, bus)` starts a node's service lazily (`ClusterNode.ensureService`, name
+  `requests`) on 127.0.0.1:`node.ports().requests()` (720k). Crash closes the port and every open
+  connection and shuts the executor down; recover rebinds on a fresh executor. The request
+  history (`registry()`) survives both.
+- **`RequestsClient` (for E6b).** `new RequestsClient(timeoutMillis).send(port, senderId,
+  senderClock, type, payloadSize)` returns a `WorkReply` (nodeId, lamportTime, requestId, status
+  COMPLETED/FAILED/REJECTED, threadName, queueWaitMillis, processingMillis, totalMillis, detail).
+  It ticks `senderClock` before sending and merges the reply's Lamport time after (L4). Failures:
+  `ConnectException` = crashed node (nothing listening); `SocketTimeoutException` = silent node;
+  any other `IOException` = connection closed without a reply (for example a crash mid-request),
+  or `ProtocolException` when the node answered ERROR.
+- **Wire format (`RequestsProtocol`).** One line each way per TCP connection, printable ASCII,
+  LF-terminated (`\n`), at most 1024 characters (a longer request gets ERROR and the connection
+  closes). Request `WORK|<senderId>|<lamport>|<TYPE>;<payloadSize>` (sender 0 = cluster-level
+  client, payload 1-5000). Reply `<STATUS>|<nodeId>|<lamport>|<requestId>;<thread>;<queueWaitMs>;
+  <processingMs>;<totalMs>;<detail>` (thread empty when no worker ran it). Error
+  `ERROR|<nodeId>|<lamport>|<message>`.
+- **`RequestsNodeService.execute(Callable<T>)` (for Jai's E10b).** Runs a task on that node's
+  current Exp 2 executor and returns a `CompletableFuture<T>`; not recorded in the request
+  history. Throws `NodeDownException` at once if the node is down. The future completes with the
+  result or the task's exception, exceptionally with `RejectedExecutionException` if the queue
+  is full, and exceptionally with `NodeDownException` if the node crashes before or during the
+  task (it never hangs; a task that ignores interrupts runs on, but its result is discarded).
+- **Event shape (E2b).** One event per TCP request, published when its reply is sent:
+  module `multithreading`, nodeId = the serving node, peerId = the sender id (0 = cluster-level),
+  lamportTime = the reply's Lamport time, type `REQUEST_COMPLETED`, `REQUEST_FAILED` or
+  `REQUEST_REJECTED`; data `requestId`, `receiveLamport`, `workload`, `payloadSize`,
+  `threadName` (absent when no worker ran it), `totalMillis`. A node that crashes mid-request
+  sends no reply and publishes no event.
 
 ---
 
@@ -58,7 +88,19 @@
 
 - E2b must not bind per-node metric gauges while `config/LegacyMultithreadingConfig` exists:
   Micrometer would silently return node 1's existing gauge, still bound to the legacy executor
-  (R7). Gauge binding for per-node executors moves to E2c.
+  (R7). Gauge binding for per-node executors moves to E2c. (E2b binds none.) E2c must bind each
+  gauge to something that survives recovery (for example `RequestsNodeService`, reading the
+  current executor), not to an executor: after a recover the old executor is dead, and Micrometer
+  would keep returning the gauge bound to it.
+- Events for in-process submissions (`RequestsNodeService.processing()`, E2c's HTTP batches) are
+  decided in E2c; E2b publishes events only for requests that arrive over TCP.
+- A request submitted in-process in the instant a node crashes (after `processing()` returned,
+  before the executor shut down) ends REJECTED with the existing message "Queue full - node at
+  capacity", which is not the real reason. The message is kept because existing tests assert it;
+  E2c can map it when it builds its API.
+- Socket binding was checked on Windows only (probe: a second bind on a port in use is refused
+  with SO_REUSEADDR on, and an immediate rebind after a crash succeeds). Linux behaviour is
+  verified by CI running RequestsNodeServiceTest (port-in-use and crash-then-recover tests).
 - E2c must retire `config/LegacyMultithreadingConfig`, `controller/MultithreadingController`,
   `config/ThreadPoolProperties`, `udcf.threadpool` (application.yml and application-public.yml)
   and `udcf.node.id`, and must update `PrometheusScrapeTest` and `PublicProfileTest`, which
@@ -83,3 +125,16 @@
   test classes moved in E2a (user decision); (2) backend copy of demo/MultithreadingDemo deleted
   (user decision; legacy-demos/exp02-multithreading keeps the demo), so the CLAUDE.md Known-issues
   line about its stale Javadoc is obsolete for the backend copy, for Rohan to update.
+- 2026-10-07 E2b done: RequestsNodeService (TCP on ports().requests(), lazy via ensureService,
+  virtual thread per connection, Lamport on both directions, one REQUEST_* event per TCP request,
+  crash closes sockets and shuts the executor, recover rebinds on a fresh executor, history kept),
+  RequestsProtocol (1024-character lines), RequestsClient, execute(Callable) for E10b; requests
+  end exactly once (DistributedRequest transitions checked under one lock, shutdownNow aborts
+  queued work), CPU work interruptible every 1024 rounds; backend 316 tests, frontend not run (no
+  frontend change); deviations: (1) YAML key is udcf.multithreading.read-timeout-millis (plan said
+  read-timeout-ms; Spring binds the key to the record component's name); (2) over-long request
+  lines: after the ERROR reply the server half-closes and drains up to 64 KB before closing, so
+  TCP does not reset the connection and destroy the reply; (3) SO_REUSEADDR without a bind retry,
+  chosen from a Windows probe (Linux checked by CI only); (4) the exactly-once race test uses a
+  gated workload, because with a warm JIT a timing-based version finished all work before the
+  crash.

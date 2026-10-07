@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
@@ -106,19 +107,39 @@ public class RequestProcessingService {
      * not defeat the thread pool.</p>
      */
     public RequestResult submitAndWait(WorkloadType type, int payloadSize) {
-        DistributedRequest request = newRequest(type, payloadSize);
-        registry.register(request);
+        return submitAsync(type, payloadSize).join();
+    }
 
-        try {
-            CompletableFuture<RequestResult> future =
-                    CompletableFuture.supplyAsync(() -> process(request), executor);
+    /**
+     * Submits a single request and returns a future for its result.
+     *
+     * <p>The future always completes, exactly once: with the finished result, with a
+     * REJECTED result straight away if the queue is full, or with a FAILED result if
+     * {@link #shutdownNow(String)} aborts the request first.</p>
+     */
+    public CompletableFuture<RequestResult> submitAsync(WorkloadType type, int payloadSize) {
+        return enqueue(newRequest(type, payloadSize)).future;
+    }
 
-            metrics.recordAccepted();
-            events.requestAccepted(request.toResult());
-            return future.join();
-        } catch (RejectedExecutionException e) {
-            return reject(request);
+    /**
+     * Crash or stop: shuts the executor down for good and interrupts running work, which
+     * then ends FAILED ("Interrupted during processing"). Every request still waiting in
+     * the queue ends FAILED with {@code reason}; it is counted and published once and its
+     * future completes. Work submitted afterwards is rejected.
+     *
+     * @return the requests this call aborted from the queue
+     */
+    public List<RequestResult> shutdownNow(String reason) {
+        List<RequestResult> aborted = new ArrayList<>();
+        for (Runnable queued : executor.shutdownNow()) {
+            if (queued instanceof QueuedRequest task) {
+                task.abort(reason).ifPresent(aborted::add);
+            }
         }
+        if (!aborted.isEmpty()) {
+            log.warn("Node {} aborted {} queued requests: {}", nodeId, aborted.size(), reason);
+        }
+        return aborted;
     }
 
     private DistributedRequest newRequest(WorkloadType type, int payloadSize) {
@@ -131,16 +152,22 @@ public class RequestProcessingService {
      * Returns the same instance so the caller can inspect the resulting status.
      */
     DistributedRequest submit(DistributedRequest request) {
+        enqueue(request);
+        return request;
+    }
+
+    private QueuedRequest enqueue(DistributedRequest request) {
         registry.register(request);
+        QueuedRequest task = new QueuedRequest(request);
 
         try {
-            executor.execute(() -> process(request));
+            executor.execute(task);
             metrics.recordAccepted();
             events.requestAccepted(request.toResult());
         } catch (RejectedExecutionException e) {
-            reject(request);
+            task.future.complete(reject(request));
         }
-        return request;
+        return task;
     }
 
     private RequestResult reject(DistributedRequest request) {
@@ -152,29 +179,70 @@ public class RequestProcessingService {
         return result;
     }
 
-    /** Runs on a worker thread. Records timings and never lets an exception escape. */
+    /**
+     * Runs on a worker thread. Records timings and never lets an exception escape.
+     *
+     * <p>Metrics, throughput and the finished event are recorded only by the call that
+     * actually ends the request, so a request is never counted twice.</p>
+     */
     RequestResult process(DistributedRequest request) {
-        request.markStarted(Thread.currentThread().getName());
+        if (!request.markStarted(Thread.currentThread().getName())) {
+            return request.toResult();   // already ended, for example aborted by shutdownNow
+        }
         events.requestStarted(request.toResult());
 
+        boolean ended;
         try {
             String summary = workloadExecutor.execute(request.getType(), request.getPayloadSize() * workMultiplier);
-            request.markCompleted(summary);
+            ended = request.markCompleted(summary);
         } catch (InterruptedException e) {
             // Preserve the interrupt so a shutdown in progress is not swallowed.
             Thread.currentThread().interrupt();
-            request.markFailed("Interrupted during processing");
+            ended = request.markFailed("Interrupted during processing");
         } catch (RuntimeException e) {
-            request.markFailed(e.getClass().getSimpleName() + ": " + e.getMessage());
+            ended = request.markFailed(e.getClass().getSimpleName() + ": " + e.getMessage());
             log.error("Request {} failed on node {}", request.getId(), nodeId, e);
         }
 
-        throughputTracker.record(request.totalMillis());
-        metrics.recordFinished(request);
-
         RequestResult result = request.toResult();
-        events.requestFinished(result);
+        if (ended) {
+            throughputTracker.record(request.totalMillis());
+            metrics.recordFinished(request);
+            events.requestFinished(result);
+        }
         return result;
+    }
+
+    /**
+     * The one task type this service puts on the executor, so {@link #shutdownNow(String)}
+     * can recognise the requests it drains from the queue.
+     */
+    private final class QueuedRequest implements Runnable {
+
+        private final DistributedRequest request;
+        private final CompletableFuture<RequestResult> future = new CompletableFuture<>();
+
+        private QueuedRequest(DistributedRequest request) {
+            this.request = request;
+        }
+
+        @Override
+        public void run() {
+            future.complete(process(request));
+        }
+
+        /** Ends a request that never started. Empty if it had already ended. */
+        private Optional<RequestResult> abort(String reason) {
+            if (!request.markFailed(reason)) {
+                future.complete(request.toResult());
+                return Optional.empty();
+            }
+            metrics.recordFinished(request);
+            RequestResult result = request.toResult();
+            events.requestFinished(result);
+            future.complete(result);
+            return Optional.of(result);
+        }
     }
 
     public int getNodeId() {

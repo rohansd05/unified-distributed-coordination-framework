@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkloadExecutorTest {
 
@@ -57,5 +58,19 @@ class WorkloadExecutorTest {
     void guardsAgainstNonPositivePayload() throws InterruptedException {
         assertThat(executor.execute(WorkloadType.CPU_HASH, 0)).startsWith("hash=");
         assertThat(executor.execute(WorkloadType.CPU_HASH, -10)).startsWith("hash=");
+    }
+
+    @Test
+    @DisplayName("CPU work stops with InterruptedException when its thread is interrupted")
+    void cpuWorkStopsWhenInterrupted() {
+        Thread.currentThread().interrupt();
+        try {
+            // 5000 units is 200,000 hash rounds; the interrupt check runs every 1024.
+            assertThatThrownBy(() -> executor.execute(WorkloadType.CPU_HASH, 5000))
+                    .isInstanceOf(InterruptedException.class)
+                    .hasMessageContaining("hash rounds");
+        } finally {
+            Thread.interrupted();   // never leak the flag into other tests
+        }
     }
 }
