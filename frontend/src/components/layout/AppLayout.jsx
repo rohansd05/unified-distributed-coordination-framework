@@ -8,7 +8,10 @@ import { Toaster } from '@/components/ui/toaster'
  * Full-height app shell: skip link, sidebar, top bar and the routed page.
  *
  * The document never scrolls. <main id="content"> is the content scroller and the sidebar
- * scrolls on its own, so the sidebar and top bar always stay in view.
+ * scrolls on its own, so the sidebar and top bar always stay in view. <main> is also
+ * position: relative, so it is the containing block of every absolutely positioned element in
+ * a page (sr-only text, aria-live regions, tooltips). Without that, such an element takes the
+ * document as its containing block, escapes main's overflow and makes the document scroll.
  *
  * Below md the sidebar is a drawer. It closes on a backdrop click, Escape, its own close
  * button, the top-bar button or navigation. Focus moves into the drawer when it opens and
@@ -77,7 +80,7 @@ export function AppLayout() {
           onToggleMenu={() => setMenuOpen((open) => !open)}
           menuButtonRef={menuButtonRef}
         />
-        <main id="content" tabIndex={-1} className="flex-1 overflow-y-auto px-6 py-8 focus:outline-none">
+        <main id="content" tabIndex={-1} className="relative flex-1 overflow-y-auto px-6 py-8 focus:outline-none">
           <div className="mx-auto max-w-5xl space-y-8">
             <Outlet />
           </div>

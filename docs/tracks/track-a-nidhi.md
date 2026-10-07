@@ -16,7 +16,7 @@
 - [x] E2a — move the Exp 2 engine into `com.udcf.modules.multithreading` as pure classes sized per node; the 11 existing test classes are moved (never deleted) and pass. Needs: none.
 - [x] E2b — per-node "requests" NodeService on `ports().requests()` (720k) running work on that node's executor. Needs: E2a.
 - [x] E2c — `MultithreadingModule` (lab 2) and `/api/modules/multithreading` endpoints (submit a batch to a node, per-node stats, a backpressure demo); events and metrics; retire the old `/api/multithreading` controller, the old Exp 2 packages and `udcf.node.id`, and list these removals in the Progress log for Rohan; fix registry-dependent tests if this is the first module to register; contract fixtures. Needs: E2b.
-- [ ] E2d — build the shared experiment-page kit exactly as in README section 7, then the Multithreading page; verify HANDOFF Section 7 Exp 2 "done when". Needs: E2c.
+- [x] E2d — build the shared experiment-page kit exactly as in README section 7, then the Multithreading page; verify HANDOFF Section 7 Exp 2 "done when". Needs: E2c.
 
 ---
 
@@ -112,6 +112,52 @@
   request body now gets the same 400 shape as a bad parameter: title "Invalid request
   parameters", `errors: {field: message}`. Existing `com.udcf.web` behaviour is unchanged.
 
+- **Experiment-page kit (E2d, for every "d" step).** Built exactly as docs/tracks/README.md
+  section 7. A module page lives in `frontend/src/modules/<moduleId>/`, whose `index.jsx`
+  default-exports `{ id, Page }`; `src/modules/registry.js` finds it and `ExperimentPage`
+  renders `<Page experiment={catalogEntry} />` (unbuilt modules keep the placeholder). Kit, in
+  `src/components/experiment/`, all generic (nothing module-specific):
+  - `ExperimentLayout({ experiment, howItWorks, controls, visualisation, measurements,
+    whatToNotice })`: header (lab badge, title, the catalog's optional `concept`), then the
+    HANDOFF 8.4 sections as h2s in order; How it works is a disclosure button, open by
+    default; the Event log is added by itself from `experiment.id`; `whatToNotice` may be an
+    array of strings (rendered as a list).
+  - `MetricCard({ label, value, unit, hint, simulated })`: null, undefined, NaN, Infinity or ""
+    show "—" ("Not available"), never 0; `simulated` true or a reason string adds the badge.
+  - `SimulatedBadge({ reason })`: visible "Simulated", reason in a tooltip on hover and keyboard
+    focus, also the accessible description; no dependency.
+  - `ModuleEventLog({ moduleId })` with `src/hooks/useModuleEvents({ moduleId, limit, api })`:
+    loads `GET /api/events?module=<id>&limit=50`, appends `/topic/modules/<id>`, causal order,
+    clears on `CLUSTER_RESET` (which arrives on `/topic/cluster`), reloads on reconnect.
+  - Test ids: `experiment-layout`; `section-how-it-works`, `section-controls`,
+    `section-visualisation`, `section-measurements`, `section-event-log`,
+    `section-what-to-notice`; `metric-card`; `simulated-badge`; `module-event-log`.
+  - A catalog entry in `src/lib/experiments.js` may add `concept: '<one line>'`.
+  - Usage for a new module page (`src/modules/<moduleId>/index.jsx` plus a page file):
+    ```jsx
+    // src/modules/clocksync/index.jsx (example; real pages put Page in its own file)
+    import { ExperimentLayout } from '@/components/experiment/ExperimentLayout'
+    import { MetricCard } from '@/components/experiment/MetricCard'
+    function Page({ experiment }) {
+      return <ExperimentLayout experiment={experiment}
+        howItWorks={<p>Plain explanation.</p>} controls={<Controls />}
+        visualisation={<BoldPicture />} whatToNotice={['First.', 'Second.']}
+        measurements={<MetricCard label="Rounds" value={stats?.rounds ?? null} />} />
+    }
+    export default { id: 'clocksync', Page }
+    ```
+  - App-shell rule (shared `components/layout/AppLayout.jsx`, E2d fix): the document never
+    scrolls; `<main id="content">` is the only content scroller AND is `position: relative`, so it
+    is the containing block of every absolutely positioned element in a page. Do not remove
+    `relative` from `<main>`, do not use `position: fixed` inside a page, and give any `sr-only`
+    text, `aria-live` region or absolute tooltip a positioned ancestor inside the page (an
+    `sr-only` element whose containing block is the document escapes main's overflow and makes
+    the whole document scroll).
+  - Pattern used by the Multithreading page, reusable: module REST calls in a module-local
+    `<module>Api.js` built on the shared axios client (`createApi().client`), so
+    `services/api.js` is not edited; live data via one hook that refreshes on the module's
+    events and polls only while something is active.
+
 ---
 
 ## Known issues
@@ -128,8 +174,25 @@
   so other tracks' modules do not break it.
 - The fixtures under `frontend/src/test/fixtures/multithreading/` were captured under the local
   profile (5 nodes, ports 7201 to 7205); their README lists the values that change per capture.
-- E2d's manual-check table should use the FAST node (node 1) to show several distinct worker
-  threads; the SLOW node has only one.
+- A node's request history keeps the newest 500 entries (`request-history-size`). In a burst
+  larger than the node can hold, the rejected requests are submitted last, so a 1000-request
+  burst pushes the accepted ones (and, after a crash, their "Node crashed" results) out of the
+  history: the page can then show only the rejected rows. The E2d manual check uses a
+  200-request batch for the crash case for this reason (checked in the browser on 2026-10-08).
+- `components/layout/AppLayout.test.jsx` (Step 2.4 tests that render `/`) still mounts the real
+  Overview page without an api mock, so it calls the backend (10 refused-connection lines when
+  the API points at a dead port). `routes.test.jsx` is fixed (E2d fix); this one was out of scope.
+- Pre-existing, below the `sm` breakpoint: the shadcn toast viewport (`components/ui/toast.jsx`)
+  is `fixed top-0 w-full` with no `left-0`, so its left edge falls at its static position after
+  the content column and toasts are off-screen at 375 px (measured left 372 of 372). Not caused
+  by the E2d fix (same with `relative` removed); a one-class fix (`left-0`) for a later step.
+- At 375 px an open SimulatedBadge tooltip can reach past the right edge of `<main>` (measured
+  403 of 362), so `<main>` scrolls sideways while the tooltip is open; the document does not.
+- The capacity note from GET /api/modules/multithreading still says 'a SLOW node'; a one-word
+  backend change plus a fixture recapture is a separate follow-up (Track A, Rohan to schedule).
+- The sidebar's module status comes from ClusterProvider, which reloads `/api/modules` only on
+  start and reconnect, so it does not follow Idle/Running/Busy live; the page itself shows the
+  live module status.
 
 ---
 
@@ -180,3 +243,22 @@
   Known-issues lines about the Exp 2 app beside core/ (com.udcf.threadpool, udcf.node.id: 1) and
   anything naming LegacyMultithreadingConfig, ThreadPoolProperties, udcf.threadpool or
   udcf.node.id are now obsolete.
+- 2026-10-08 E2d done: shared experiment-page kit (ExperimentLayout, MetricCard, SimulatedBadge,
+  ModuleEventLog with useModuleEvents, modules/registry.js, ExperimentPage renders registered
+  pages) and the Multithreading page (executor view with queue tank and thread lanes, SVG
+  throughput chart, thread tally, request table, batch and backpressure controls, measurements,
+  live through /topic/modules/multithreading with polling only while active), approved texts,
+  contract test on the E2c fixtures, browser check against the real backend; backend 376 tests
+  (no backend change), frontend 230 tests; deviations: (1) SimulatedBadge's closed tooltip is
+  display: none instead of visibility: hidden, after the browser check found it widened the page
+  at 375 px; (2) ThreadTally.jsx and contract.test.js added beside the planned files; (3) manual
+  row 7 uses a 200-request batch, because a 1000-request burst evicts the crashed requests from
+  the 500-entry history (see Known issues).
+- 2026-10-08 E2d fix: the document scrolled on /experiments/2-multithreading (scrollHeight 1154
+  vs innerHeight 631; 2298 vs 740 at 375x740) because ExecutorView's aria-live `sr-only` text
+  took the document as its containing block, `<main>` not being positioned; fixed by making
+  `<main id="content">` `relative` in the SHARED `components/layout/AppLayout.jsx` (plus
+  `relative` on the ExecutorView figure); all 8 pages now measure scrollHeight = innerHeight at
+  1280x800 and 375x740, at the top and with main scrolled to the bottom; "A SLOW node" became
+  "A Slow node"; routes.test.jsx now mocks the page APIs (0 network calls); 2 regression tests in
+  AppLayout.test.jsx; backend not changed, frontend 232 tests; deviations: none.

@@ -2,17 +2,26 @@ import { useParams } from 'react-router-dom'
 import { LabBadge } from '@/components/LabBadge'
 import { PageHeader } from '@/components/PageHeader'
 import { findBySlug } from '@/lib/experiments'
+import { modulePages } from '@/modules/registry'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 
 /** The sections every experiment page has, in order (docs/HANDOFF.md 8.4). */
 const SECTIONS = ['How it works', 'Controls', 'Live visualisation', 'Measurements', 'Event log', 'What to notice']
 
-/** One page for all ten experiments; an unknown slug is a 404. */
+/**
+ * One route for all ten experiments; an unknown slug is a 404. A module whose page is
+ * registered (src/modules/registry.js) renders it; the others keep this placeholder.
+ */
 export function ExperimentPage() {
   const { slug } = useParams()
   const experiment = findBySlug(slug)
   if (!experiment) {
     return <NotFoundPage />
+  }
+
+  const ModulePage = modulePages[experiment.id]
+  if (ModulePage) {
+    return <ModulePage experiment={experiment} />
   }
 
   return (
