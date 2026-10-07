@@ -10,6 +10,8 @@ udcf:
     core-pool-size: 2
     max-pool-size: 4
     queue-capacity: 100
+  multithreading:
+    queue-capacity: 100
 
 management:
   endpoints:

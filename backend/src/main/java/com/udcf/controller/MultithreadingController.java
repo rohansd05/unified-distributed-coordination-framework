@@ -1,14 +1,14 @@
 package com.udcf.controller;
 
-import com.udcf.dto.BatchSubmissionResponse;
-import com.udcf.dto.GenerateRequestsCommand;
-import com.udcf.dto.RequestResult;
-import com.udcf.dto.ThreadPoolStats;
-import com.udcf.model.DistributedRequest;
-import com.udcf.model.WorkloadType;
-import com.udcf.threadpool.RequestProcessingService;
-import com.udcf.threadpool.RequestRegistry;
-import com.udcf.threadpool.ThreadPoolStatsService;
+import com.udcf.modules.multithreading.DistributedRequest;
+import com.udcf.modules.multithreading.RequestProcessingService;
+import com.udcf.modules.multithreading.RequestRegistry;
+import com.udcf.modules.multithreading.ThreadPoolStatsService;
+import com.udcf.modules.multithreading.WorkloadType;
+import com.udcf.modules.multithreading.dto.BatchSubmissionResponse;
+import com.udcf.modules.multithreading.dto.GenerateRequestsCommand;
+import com.udcf.modules.multithreading.dto.RequestResult;
+import com.udcf.modules.multithreading.dto.ThreadPoolStats;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

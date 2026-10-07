@@ -1,7 +1,7 @@
 package com.udcf;
 
-import com.udcf.threadpool.RequestProcessingService;
-import com.udcf.threadpool.ThreadPoolStatsService;
+import com.udcf.modules.multithreading.RequestProcessingService;
+import com.udcf.modules.multithreading.ThreadPoolStatsService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -38,6 +38,13 @@ udcf:
   system:
     version: "@project.version@"
     mode: local
+  # Experiment 2 (lab 2). Thread counts come from each node's capacity (FAST 4, MEDIUM 2, SLOW 1).
+  multithreading:
+    queue-capacity: 200
+    keep-alive-seconds: 60
+    thread-name-prefix: udcf-worker-
+    metrics-window-seconds: 30
+    request-history-size: 500
 
 management:
   endpoints:
