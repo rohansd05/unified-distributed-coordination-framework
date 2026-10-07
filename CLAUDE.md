@@ -26,6 +26,8 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
      scenarios, demo polish, demo package. Phase 13 adds L6, the MPI root, and Exps 1, 9, 10.
 - R17 Distinctive, non-template UI (frontend-design guidance); demo polish in 9A.4
      before Phase 14.
+- R18 From Phase 3, four parallel tracks (docs/tracks/); one pull request per step into
+     protected main; Rohan merges with merge commits; CI checks backend and frontend.
 
 ## Hard rules
 1. One phase step at a time. Never generate the whole project at once.
@@ -36,8 +38,8 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 6. No hard-coded ports, cluster size or origins outside configuration.
 7. Ring election messages must never be handled on the listener thread (known deadlock).
 8. Never print or commit secrets. .env stays gitignored.
-9. After each completed step, update Current Position below. Never commit or push;
-   the user does (docs/HANDOFF.md Section 12).
+9. After each completed step, update your own track file (docs/tracks/). AI agents never
+   run any git command.
 
 ## Layout
 backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.udcf.web)
@@ -60,9 +62,10 @@ Internal, per node k: RMI 110k · clock UDP 600k · election UDP 700k · replica
 requests TCP 720k · mapreduce TCP 730k
 
 ## Current Position
-Phase: 3
-Step: 3a
-Status: not started
+Phase 3 onwards runs as four parallel tracks (R18). Each track's position and progress
+log is in its own file: docs/tracks/track-a-nidhi.md, track-b-swanand.md, track-c-jai.md,
+track-d-rohan.md. Shared rules: docs/tracks/README.md. Only Rohan edits this file,
+docs/HANDOFF.md and README.md.
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)

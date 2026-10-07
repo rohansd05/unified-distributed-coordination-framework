@@ -7,10 +7,11 @@
 
 | | |
 |---|---|
-| Document version | 1.2 |
+| Document version | 1.3 |
 | Written | 2026-10-03 |
 | Amended | 2026-10-04: R16, R17, Phase 9A (seven-experiment system demo) |
 | Amended | 2026-10-07: R15 amended — Vite 6.4, Vitest 4 for security fixes |
+| Amended | 2026-10-07: R18 parallel tracks, pull-request flow, CI |
 | Repository | `https://github.com/rohansd05/unified-distributed-coordination-framework` |
 | Repository HEAD when written | `96540d4` |
 | Local path | `C:\Users\NIDHI\Desktop\unified-distributed-coordination-framework` |
@@ -204,6 +205,7 @@ are now revised. **This table is authoritative.**
 | **R15a** | Vite 6.4.x and Vitest 4.x replace Vite 5 and Vitest 3, on Node 22.11, to clear dev-server and test-runner advisories (user decision). | NEW (2026-10-07) | Replaces Vite 5.4.21 and Vitest 3.2.7. Clears critical tinypool advisories (GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr), @vitest/mocker (GHSA-82fw-gwwq-j7x9), esbuild (GHSA-67mh-4wv8-2f99) and Vite bypass CVE-2026-53571. |
 | **R16** | **Seven-experiment system demo after Phase 9.** New Phase 9A wires links L1–L5 among Experiments 2–8 and delivers the global timeline, the four scenarios, a demo polish pass and a demo package. Phase 13 then adds L6, makes the leader the MPI root, and extends scenarios and timeline to Experiments 1, 9 and 10. | NEW (2026-10-04) | The user needs a showable integrated system before Experiments 1, 9 and 10 exist. All four suggested scenarios use only Experiments 2–8. |
 | **R17** | **Distinctive, non-template UI.** Pages use a deliberate visual language (node-graph motifs, purposeful animation, real empty states) following the frontend-design guidance, and avoid the stock shadcn look. A demo-polish step (9A.4) precedes the full polish in Phase 14. | NEW (2026-10-04) | User requirement: the UI must not look AI-generated. |
+| **R18** | **From Phase 3, four parallel tracks (`docs/tracks/`); one pull request per step into protected `main`; Rohan merges with merge commits; CI checks `backend` and `frontend`.** | NEW (2026-10-07) | Four people working in parallel need separate branches, one place per track to record progress, and automatic checks before merging. |
 
 **R2 notes — why each transport.** UDP for clock sync and election, because those algorithms are
 designed to survive unreliable, unordered delivery; using a reliable transport would hide what is
@@ -761,6 +763,9 @@ early (step 2.5) so hosting problems surface while they are cheap to fix.
 | 2.5 | **Skeleton deployment:** backend Dockerfile to Render, frontend to Vercel. Verify REST and `wss` WebSocket end to end. | The public URL shows live cluster state. |
 
 ### Phases 3 to 12 — One phase per module
+
+The module phases run as four parallel tracks per docs/tracks/README.md, with step ids
+E<n><letter>; the a–e steps per phase still apply (step e is done inside step d).
 
 Order: **3** Exp 2 · **4** Exp 3 · **5** Exp 4 · **6** Exp 5 · **7** Exp 8 · **8** Exp 6 ·
 **9** Exp 7 · **10** Exp 1 · **11** Exp 9 · **12** Exp 10.

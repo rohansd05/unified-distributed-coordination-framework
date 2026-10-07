@@ -222,6 +222,17 @@ java -cp target/classes com.udcf.demo.ElectionDemo
 
 ---
 
+## Team Workflow
+
+Phase 3 onwards runs across four parallel tracks with protected `main` (changes arrive through pull requests with automated backend and frontend CI checks; see [docs/tracks/README.md](docs/tracks/README.md)):
+
+- **Track A (Nidhi):** Experiment 2 (multithreading) → Experiment 6 (load balancing), plus the shared experiment-page kit.
+- **Track B (Swanand):** Experiment 4 (election) → Experiment 8 (fault tolerance), plus the shared failure detector and cluster roles API.
+- **Track C (Jai):** Experiment 5 (replication) → Experiment 1 (RMI) → Experiment 9 (MPI) → Experiment 10 (matrix multiplication).
+- **Track D (Rohan):** Experiment 3 (clock synchronization) → Experiment 7 (MapReduce), plus the event log exporter. Rohan reviews and merges all pull requests.
+
+---
+
 ## Where This Is Going
 
 The core platform (Phase 1) and the frontend shell (Phase 2) come first; Phases 3–9 port
