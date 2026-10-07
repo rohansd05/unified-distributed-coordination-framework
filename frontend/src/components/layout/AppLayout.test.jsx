@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, screen, within } from '@testing-library/react'
 import { renderRoute } from '@/test/renderRoute'
+import * as useModuleEventsModule from '@/hooks/useModuleEvents'
+import * as useMultithreadingModule from '@/modules/multithreading/useMultithreading'
+import overviewAfter from '@/test/fixtures/multithreading/overview-after-batch.json'
 
 afterEach(cleanup)
 
@@ -142,5 +145,50 @@ describe('AppLayout and TopBar', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Cluster')
     expect(sidebar().dataset.state).toBe('closed')
     expect(menuButton().getAttribute('aria-expanded')).toBe('false')
+  })
+})
+
+/*
+ * Guards the E2d fix: the document must never scroll. <main id="content"> is the scroll
+ * container AND position: relative, so every absolutely positioned element of a page
+ * (sr-only text, aria-live regions, tooltips) has <main> as its containing block and stays
+ * inside main's overflow. jsdom does no layout, so it cannot measure scrollHeight or
+ * containing blocks; these tests check the classes and the DOM placement that produce them,
+ * and the browser measurement in the step report is the real proof.
+ */
+describe('AppLayout keeps the document from scrolling', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('main is the positioned scroll container inside the full-height, overflow-hidden shell', () => {
+    renderRoute('/experiments/4-election')
+    const shell = screen.getByTestId('app-shell')
+    const main = document.getElementById('content')
+
+    expect(shell.classList.contains('h-dvh')).toBe(true)
+    expect(shell.classList.contains('overflow-hidden')).toBe(true)
+    expect(main.classList.contains('relative')).toBe(true)
+    expect(main.classList.contains('overflow-y-auto')).toBe(true)
+  })
+
+  it('every visually hidden element and live region of a module page is rendered inside main', () => {
+    vi.spyOn(useMultithreadingModule, 'useMultithreading').mockReturnValue({
+      overview: overviewAfter, requests: [], throughput: [], loading: false, error: null, active: false, refresh: vi.fn(),
+    })
+    vi.spyOn(useModuleEventsModule, 'useModuleEvents').mockReturnValue({ events: [], loading: false, error: null })
+
+    renderRoute('/experiments/2-multithreading')
+    const main = document.getElementById('content')
+    const shell = screen.getByTestId('app-shell')
+    const live = shell.querySelector('[aria-live="polite"]')
+
+    expect(live).toBeTruthy()
+    expect(main.contains(live)).toBe(true)
+    const pageHidden = [...shell.querySelectorAll('.sr-only, [role="tooltip"]')]
+      .filter((element) => !document.getElementById('sidebar').contains(element))
+      .filter((element) => element.textContent !== 'Skip to content')
+    expect(pageHidden.length).toBeGreaterThan(0)
+    for (const element of pageHidden) {
+      expect(main.contains(element), element.outerHTML.slice(0, 80)).toBe(true)
+    }
   })
 })
