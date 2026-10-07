@@ -10,8 +10,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Instances are written by the submitting thread and then by the worker thread that
  * picks the request up, while being read concurrently by dashboard polling. Fields are
- * therefore volatile and status transitions go through an AtomicReference, so a request
- * can never be observed in two states at once.</p>
+ * therefore volatile, the status is an AtomicReference, and every transition is checked
+ * under one lock, so a request is never observed in two states and ends exactly once.</p>
  *
  * <p>Durations are measured with {@link System#nanoTime()} because it is monotonic;
  * {@link Instant} values are carried separately purely for display.</p>
@@ -49,32 +49,68 @@ public class DistributedRequest {
         this.submittedAt = submittedAt;
     }
 
-    public void markStarted(String threadName) {
+    /*
+     * Transitions. A request moves QUEUED -> PROCESSING -> COMPLETED or FAILED, or straight
+     * from QUEUED to FAILED (aborted by a crash) or REJECTED. It ends exactly once: each
+     * transition checks the current state and writes its fields under one lock, and returns
+     * false, changing nothing, when the request is not in a state it may leave. Callers
+     * record metrics and events only when a transition returns true. The status is written
+     * last, so a reader that sees a state also sees the fields set with it.
+     */
+
+    /** QUEUED to PROCESSING. @return false if the request had already ended (for example aborted) */
+    public synchronized boolean markStarted(String threadName) {
+        if (status.get() != RequestStatus.QUEUED) {
+            return false;
+        }
         this.threadName = threadName;
         this.startedAtNanos = System.nanoTime();
         this.status.set(RequestStatus.PROCESSING);
+        return true;
     }
 
-    public void markCompleted(String resultSummary) {
+    /** PROCESSING to COMPLETED. @return false if the request was not processing */
+    public synchronized boolean markCompleted(String resultSummary) {
+        if (status.get() != RequestStatus.PROCESSING) {
+            return false;
+        }
         this.resultSummary = resultSummary;
-        this.completedAtNanos = System.nanoTime();
-        this.status.set(RequestStatus.COMPLETED);
+        return end(RequestStatus.COMPLETED);
     }
 
-    public void markFailed(String errorMessage) {
+    /** QUEUED or PROCESSING to FAILED. @return false if the request had already ended */
+    public synchronized boolean markFailed(String errorMessage) {
+        if (isEnded()) {
+            return false;
+        }
         this.errorMessage = errorMessage;
-        this.completedAtNanos = System.nanoTime();
-        this.status.set(RequestStatus.FAILED);
+        return end(RequestStatus.FAILED);
     }
 
     /**
-     * Refused before execution because the bounded queue was full.
+     * QUEUED to REJECTED: refused before execution because the bounded queue was full.
      * Never assigned a thread, so queue wait and processing time stay at zero.
+     *
+     * @return false if the request was not queued
      */
-    public void markRejected(String reason) {
+    public synchronized boolean markRejected(String reason) {
+        if (status.get() != RequestStatus.QUEUED) {
+            return false;
+        }
         this.errorMessage = reason;
+        return end(RequestStatus.REJECTED);
+    }
+
+    /** True once the request is COMPLETED, FAILED or REJECTED. */
+    public boolean isEnded() {
+        RequestStatus current = status.get();
+        return current != RequestStatus.QUEUED && current != RequestStatus.PROCESSING;
+    }
+
+    private boolean end(RequestStatus terminal) {
         this.completedAtNanos = System.nanoTime();
-        this.status.set(RequestStatus.REJECTED);
+        this.status.set(terminal);
+        return true;
     }
 
     /** Time spent waiting in the queue before a worker picked it up. */

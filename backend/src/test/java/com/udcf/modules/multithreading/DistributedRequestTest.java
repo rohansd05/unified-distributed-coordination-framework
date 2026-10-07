@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -105,5 +107,89 @@ class DistributedRequestTest {
         assertThat(result.threadName()).isEqualTo("udcf-worker-1");
         assertThat(result.resultSummary()).isEqualTo("hash=beef");
         assertThat(result.submittedAt()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("a request ends once: a second terminal transition is refused and changes nothing")
+    void endsExactlyOnce() {
+        DistributedRequest request = newRequest();
+        request.markStarted("udcf-worker-1");
+
+        assertThat(request.markCompleted("hash=beef")).isTrue();
+        assertThat(request.markFailed("too late")).isFalse();
+        assertThat(request.markRejected("too late")).isFalse();
+        assertThat(request.markCompleted("again")).isFalse();
+
+        assertThat(request.getStatus()).isEqualTo(RequestStatus.COMPLETED);
+        assertThat(request.getResultSummary()).isEqualTo("hash=beef");
+        assertThat(request.getErrorMessage()).isNull();
+        assertThat(request.isEnded()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a request aborted while queued can no longer start, complete or be rejected")
+    void abortedRequestCannotStart() {
+        DistributedRequest request = newRequest();
+
+        assertThat(request.markFailed("Node crashed")).isTrue();
+        assertThat(request.markStarted("udcf-worker-1")).isFalse();
+        assertThat(request.markCompleted("hash=beef")).isFalse();
+
+        assertThat(request.getStatus()).isEqualTo(RequestStatus.FAILED);
+        assertThat(request.getThreadName()).isNull();
+        assertThat(request.getErrorMessage()).isEqualTo("Node crashed");
+    }
+
+    @Test
+    @DisplayName("completing needs a started request, and only a queued request can be rejected")
+    void transitionsNeedTheRightState() {
+        DistributedRequest queued = newRequest();
+        assertThat(queued.markCompleted("hash=beef")).isFalse();
+        assertThat(queued.getStatus()).isEqualTo(RequestStatus.QUEUED);
+        assertThat(queued.isEnded()).isFalse();
+
+        DistributedRequest running = newRequest();
+        running.markStarted("udcf-worker-1");
+        assertThat(running.markRejected("Queue full")).isFalse();
+        assertThat(running.getStatus()).isEqualTo(RequestStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("when completion and failure race, exactly one wins")
+    void racingTransitionsHaveOneWinner() throws InterruptedException {
+        for (int round = 0; round < 200; round++) {
+            DistributedRequest request = newRequest();
+            request.markStarted("udcf-worker-1");
+            CountDownLatch start = new CountDownLatch(1);
+            AtomicInteger winners = new AtomicInteger();
+            Thread completer = new Thread(() -> {
+                awaitQuietly(start);
+                if (request.markCompleted("hash=beef")) {
+                    winners.incrementAndGet();
+                }
+            });
+            Thread failer = new Thread(() -> {
+                awaitQuietly(start);
+                if (request.markFailed("Node crashed")) {
+                    winners.incrementAndGet();
+                }
+            });
+            completer.start();
+            failer.start();
+            start.countDown();
+            completer.join();
+            failer.join();
+
+            assertThat(winners.get()).isEqualTo(1);
+            assertThat(request.getStatus()).isIn(RequestStatus.COMPLETED, RequestStatus.FAILED);
+        }
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

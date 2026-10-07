@@ -22,11 +22,16 @@ public class WorkloadExecutor {
     /** Milliseconds of simulated IO wait per unit of payload size. */
     private static final double IO_MILLIS_PER_UNIT = 0.4d;
 
+    /** CPU work checks for interruption once every this many hash rounds (a power of two). */
+    static final int INTERRUPT_CHECK_ROUNDS = 1024;
+
     /**
      * Runs the workload and returns a short human-readable summary for the UI.
      *
-     * @throws InterruptedException if the worker thread is interrupted during an IO wait;
-     *                              propagated so shutdown is not swallowed
+     * @throws InterruptedException if the worker thread is interrupted during an IO wait or
+     *                              between hash rounds (checked every
+     *                              {@value #INTERRUPT_CHECK_ROUNDS} rounds); propagated so a
+     *                              node crash really stops in-flight work
      */
     public String execute(WorkloadType type, int payloadSize) throws InterruptedException {
         int size = Math.max(1, payloadSize);
@@ -43,13 +48,18 @@ public class WorkloadExecutor {
     }
 
     /** Repeated SHA-256 over a growing digest. Returns the first bytes of the result. */
-    private String cpuWork(int size) {
+    private String cpuWork(int size) throws InterruptedException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] buffer = ("udcf-" + size).getBytes(StandardCharsets.UTF_8);
 
             int rounds = size * ROUNDS_PER_UNIT;
             for (int i = 0; i < rounds; i++) {
+                // Thread.interrupted() clears the flag, and throwing InterruptedException
+                // hands the interrupt to the caller, which restores it.
+                if ((i & (INTERRUPT_CHECK_ROUNDS - 1)) == 0 && Thread.interrupted()) {
+                    throw new InterruptedException("Interrupted after " + i + " of " + rounds + " hash rounds");
+                }
                 buffer = digest.digest(buffer);
             }
             return HexFormat.of().formatHex(buffer, 0, 4);

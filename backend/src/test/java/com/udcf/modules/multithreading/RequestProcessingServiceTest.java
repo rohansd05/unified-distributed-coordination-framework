@@ -8,11 +8,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -23,6 +31,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -178,5 +187,159 @@ class RequestProcessingServiceTest {
         assertThatIllegalArgumentException().isThrownBy(() ->
                 new RequestProcessingService(executor, new WorkloadExecutor(), registry,
                         throughputTracker, metrics, events, 1, 0));
+    }
+
+    @Test
+    @DisplayName("submitAsync returns at once and completes on a worker thread")
+    void submitAsyncCompletesOnAWorker() throws Exception {
+        CompletableFuture<RequestResult> future = service.submitAsync(WorkloadType.CPU_HASH, 5);
+
+        RequestResult result = future.get(10, TimeUnit.SECONDS);
+        assertThat(result.status()).isEqualTo(RequestStatus.COMPLETED);
+        assertThat(result.threadName()).startsWith("test-worker-")
+                .isNotEqualTo(Thread.currentThread().getName());
+    }
+
+    @Test
+    @DisplayName("submitAsync on a pool that cannot accept returns an already completed REJECTED result")
+    void submitAsyncRejectsAtOnce() {
+        executor.shutdown();
+
+        CompletableFuture<RequestResult> future = service.submitAsync(WorkloadType.CPU_HASH, 5);
+
+        assertThat(future).isDone();
+        assertThat(future.join().status()).isEqualTo(RequestStatus.REJECTED);
+        verify(metrics).recordRejected();
+    }
+
+    @Test
+    @DisplayName("shutdownNow ends every queued request FAILED with the reason and completes its future")
+    void shutdownNowAbortsQueuedRequests() {
+        occupyAllWorkers();
+        List<CompletableFuture<RequestResult>> queued = List.of(
+                service.submitAsync(WorkloadType.CPU_HASH, 5),
+                service.submitAsync(WorkloadType.CPU_HASH, 5),
+                service.submitAsync(WorkloadType.CPU_HASH, 5));
+
+        List<RequestResult> aborted = service.shutdownNow("Node crashed");
+
+        assertThat(aborted).hasSize(3).allSatisfy(result -> {
+            assertThat(result.status()).isEqualTo(RequestStatus.FAILED);
+            assertThat(result.errorMessage()).isEqualTo("Node crashed");
+            assertThat(result.threadName()).isNull();
+        });
+        assertThat(queued).allSatisfy(future -> {
+            assertThat(future).isDone();
+            assertThat(future.join().status()).isEqualTo(RequestStatus.FAILED);
+        });
+        assertThat(executor.isShutdown()).isTrue();
+    }
+
+    @Test
+    @DisplayName("shutdownNow interrupts running work, which ends FAILED, interrupted during processing")
+    void shutdownNowInterruptsRunningWork() {
+        List<CompletableFuture<RequestResult>> running = occupyAllWorkers();
+
+        service.shutdownNow("Node crashed");
+
+        CompletableFuture.allOf(running.toArray(CompletableFuture[]::new)).orTimeout(10, TimeUnit.SECONDS).join();
+        assertThat(running).allSatisfy(future -> {
+            assertThat(future.join().status()).isEqualTo(RequestStatus.FAILED);
+            assertThat(future.join().errorMessage()).isEqualTo("Interrupted during processing");
+        });
+    }
+
+    @Test
+    @DisplayName("a crash while many requests complete ends each exactly once: one status, one count, one event, one future")
+    void crashWhileCompletingEndsEachRequestOnce() {
+        int requests = 300;
+        int completedOverall = 0;
+        int abortedOverall = 0;
+
+        for (int round = 0; round < 20; round++) {
+            // Each request completes when it gets a permit; a releaser hands them out one at a
+            // time, so completions are still happening when the crash lands, whatever the JIT does.
+            Semaphore permits = new Semaphore(0);
+            WorkloadExecutor gated = new WorkloadExecutor() {
+                @Override
+                public String execute(WorkloadType type, int payloadSize) throws InterruptedException {
+                    permits.acquire();
+                    return "hash=gated";
+                }
+            };
+            Thread releaser = Thread.ofPlatform().daemon().start(() -> {
+                for (int i = 0; i < requests && !Thread.currentThread().isInterrupted(); i++) {
+                    permits.release();
+                    LockSupport.parkNanos(200_000);
+                }
+            });
+            ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 60, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(requests), new NamedThreadFactory("race-worker-"),
+                    new ThreadPoolExecutor.AbortPolicy());
+            RequestRegistry history = new RequestRegistry(requests);
+            ThreadPoolMetrics counted = mock(ThreadPoolMetrics.class);
+            Map<String, AtomicInteger> finishedEvents = new ConcurrentHashMap<>();
+            RequestEventPublisher publisher = new RequestEventPublisher() {
+                @Override
+                public void requestAccepted(RequestResult result) {
+                }
+
+                @Override
+                public void requestStarted(RequestResult result) {
+                }
+
+                @Override
+                public void requestFinished(RequestResult result) {
+                    finishedEvents.computeIfAbsent(result.id(), id -> new AtomicInteger()).incrementAndGet();
+                }
+            };
+            RequestProcessingService node = new RequestProcessingService(pool, gated, history,
+                    new ThroughputTracker(30), counted, publisher, 1, 1);
+            try {
+                List<CompletableFuture<RequestResult>> futures = new ArrayList<>();
+                for (int i = 0; i < requests; i++) {
+                    futures.add(node.submitAsync(WorkloadType.CPU_HASH, 1));
+                }
+                await().atMost(10, TimeUnit.SECONDS).pollInterval(Duration.ofMillis(1))
+                        .until(() -> history.countByStatus().get(RequestStatus.COMPLETED) >= 10);
+
+                List<RequestResult> aborted = node.shutdownNow("Node crashed");
+
+                CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).orTimeout(10, TimeUnit.SECONDS).join();
+                List<DistributedRequest> all = history.recent(0);
+                assertThat(all).hasSize(requests).allMatch(DistributedRequest::isEnded);
+                assertThat(finishedEvents).hasSize(requests)
+                        .allSatisfy((id, count) -> assertThat(count.get()).as("finished events for %s", id).isEqualTo(1));
+                verify(counted, times(requests)).recordAccepted();
+                verify(counted, times(requests)).recordFinished(any());
+                verify(counted, never()).recordRejected();
+                for (CompletableFuture<RequestResult> future : futures) {
+                    RequestResult result = future.join();
+                    assertThat(history.find(result.id())).get()
+                            .extracting(DistributedRequest::getStatus).isEqualTo(result.status());
+                }
+                assertThat(aborted).allMatch(result -> "Node crashed".equals(result.errorMessage()));
+                completedOverall += history.countByStatus().get(RequestStatus.COMPLETED);
+                abortedOverall += aborted.size();
+            } finally {
+                releaser.interrupt();
+                pool.shutdownNow();
+            }
+        }
+
+        // The race really happened: some requests finished and some were cut off by the crash.
+        assertThat(completedOverall).isPositive();
+        assertThat(abortedOverall).isPositive();
+    }
+
+    /** Blocks all 4 workers on long IO waits and returns their futures. */
+    private List<CompletableFuture<RequestResult>> occupyAllWorkers() {
+        List<CompletableFuture<RequestResult>> running = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            running.add(service.submitAsync(WorkloadType.IO_SIMULATED, 5000));   // 2 s each
+        }
+        await().atMost(5, TimeUnit.SECONDS)
+                .until(() -> registry.countByStatus().get(RequestStatus.PROCESSING) == 4L);
+        return running;
     }
 }

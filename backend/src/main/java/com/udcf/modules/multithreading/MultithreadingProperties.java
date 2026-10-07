@@ -19,6 +19,7 @@ import org.springframework.validation.annotation.Validated;
  * @param threadNamePrefix     base worker-thread prefix; node k's threads add {@code n<k>-}
  * @param metricsWindowSeconds sliding window for throughput and latency statistics
  * @param requestHistorySize   recent requests kept per node for the UI
+ * @param readTimeoutMillis    how long the requests service waits for a client's request line
  */
 @Validated
 @ConfigurationProperties("udcf.multithreading")
@@ -27,6 +28,7 @@ public record MultithreadingProperties(
         @Min(1) long keepAliveSeconds,
         @NotBlank String threadNamePrefix,
         @Min(1) int metricsWindowSeconds,
-        @Min(1) int requestHistorySize
+        @Min(1) int requestHistorySize,
+        @Min(1) int readTimeoutMillis
 ) {
 }

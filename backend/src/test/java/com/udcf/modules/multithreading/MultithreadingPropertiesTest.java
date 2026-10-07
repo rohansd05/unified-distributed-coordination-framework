@@ -26,10 +26,10 @@ class MultithreadingPropertiesTest {
             .withUserConfiguration(PropertiesRegistration.class);
 
     @Test
-    @DisplayName("application.yml binds queue 200, keep-alive 60, prefix udcf-worker-, window 30, history 500")
+    @DisplayName("application.yml binds queue 200, keep-alive 60, prefix udcf-worker-, window 30, history 500, read timeout 5000")
     void bindsDefaults() {
         runner.run(context -> assertThat(context.getBean(MultithreadingProperties.class))
-                .isEqualTo(new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500)));
+                .isEqualTo(new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 5000)));
     }
 
     @Test

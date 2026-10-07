@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NodeExecutorFactoryTest {
 
     private static final MultithreadingProperties PROPERTIES =
-            new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500);
+            new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 5000);
 
     private ThreadPoolExecutor executor;
 
@@ -89,7 +89,7 @@ class NodeExecutorFactoryTest {
     @DisplayName("a node's queue capacity and keep-alive come from the properties, with AbortPolicy")
     void nodeExecutorUsesProperties() {
         executor = NodeExecutorFactory.forNode(2, NodeCapacity.MEDIUM,
-                new MultithreadingProperties(7, 45, "udcf-worker-", 30, 500));
+                new MultithreadingProperties(7, 45, "udcf-worker-", 30, 500, 5000));
 
         assertThat(executor.getQueue().remainingCapacity()).isEqualTo(7);
         assertThat(executor.getKeepAliveTime(TimeUnit.SECONDS)).isEqualTo(45);
