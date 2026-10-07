@@ -26,7 +26,7 @@
 - **Special rules:** no private thread pool: dispatch into each node's Exp 2 executor over TCP (link L3); keep the key finding visible: Round Robin has the most even request counts and the worst finish time.
 
 ### Steps
-- [ ] E6a — strategies (Round Robin, smooth Weighted Round Robin, Least Connections, Least Response Time = EWMA latency x (in-flight + 1), alpha 0.3), `WorkerInfo`, `DispatchResult`, `PhaseReport`, circuit-breaker reroute, as pure classes. Needs: E2d.
+- [x] E6a — strategies (Round Robin, smooth Weighted Round Robin, Least Connections, Least Response Time = EWMA latency x (in-flight + 1), alpha 0.3), `WorkerInfo`, `DispatchResult`, `PhaseReport`, circuit-breaker reroute, as pure classes. Needs: E2d.
 - [ ] E6b — the balancer dispatching over TCP into each node's requests service, with reroute when a worker is down. Needs: E6a, E2b.
 - [ ] E6c — `LoadBalancingModule` (lab 6): run a strategy, "compare all four", crash a worker mid-run; events, metrics, fixtures. Needs: E6b.
 - [ ] E6d — page and end-to-end check. Needs: E6c.
@@ -158,6 +158,38 @@
     `services/api.js` is not edited; live data via one hook that refreshes on the module's
     events and polls only while something is active.
 
+- **Load balancer (E6a), package `com.udcf.modules.loadbalancing`.** Pure classes (no sockets,
+  threads or Spring). `new LoadBalancer(workers, transport[, nanoClock])` (workers kept in
+  node-id order); `dispatch(requestId >= 1, workUnits >= 1, Strategy)` returns a
+  `DispatchResult(requestId, nodeId, latencyMillis, succeeded, attempts)` with `rerouted()` =
+  attempts > 1; latency is end to end, from the first attempt to the final answer. Choosing a
+  worker and counting it in flight are one atomic step, so `dispatch` is safe from many client
+  threads. Each request tries each worker at most once; `resetForRun()` makes every worker
+  healthy again and clears counters, the round robin cursor and smooth weights (in-flight counts
+  are live and kept). A worker the circuit breaker removed stays out until `resetForRun()`, as
+  in the legacy demo, so E6b calls it at the start of each run. `WorkerInfo.of(nodeId, port,
+  NodeCapacity)` weights by thread count (static 4 : 2 : 1). Null arguments throw
+  NullPointerException, bad values IllegalArgumentException, throughout.
+  `new PhaseReport(strategy, nodeIds, results, makespanMillis)`: `requestsPerNode()` (every node,
+  zeros included), `averageLatencyByNode()`, `averageLatency()`, `p95Latency()` (nearest rank),
+  `maxLatency()` (served requests only, `OptionalDouble`, empty when none, never 0),
+  `loadSpread()`, `failures()`, `reroutes()`, `served()`, `total()`. The batch runner, concurrent
+  clients, makespan timing and the Lamport clock belong to E6b.
+- **`WorkerTransport` (E6a, for E6b).** `void send(WorkerInfo worker, int requestId, int
+  workUnits) throws IOException, WorkerDeclinedException`. Mapping E6b must make from the Exp 2
+  `RequestsClient`: COMPLETED reply = return normally; REJECTED and FAILED replies = throw
+  `WorkerDeclinedException` (reroute, worker stays healthy); `ConnectException`,
+  `SocketTimeoutException` and a connection closed without a reply (any other `IOException`) =
+  throw `IOException` (reroute and the circuit breaker marks the worker unhealthy). Only
+  `IOException` trips the breaker. A `RuntimeException` is a transport bug: it propagates after
+  the in-flight slot is released.
+- **Compare all four (E6a, rule for E6c and E6d).** `new StrategyComparison(reports)` gives
+  `fastest()`, `slowest()`, `mostEven()`, `gainOverRoundRobinPercent()`,
+  `roundRobinFinishedLast()` (strictly longer makespan than every other report) and
+  `roundRobinMostEven()`. The page may state "Round Robin finished last" only when
+  `roundRobinFinishedLast()` is true for the measured run, never as a fixed claim; likewise for
+  "most even" with `roundRobinMostEven()`.
+
 ---
 
 ## Known issues
@@ -262,3 +294,24 @@
   1280x800 and 375x740, at the top and with main scrolled to the bottom; "A SLOW node" became
   "A Slow node"; routes.test.jsx now mocks the page APIs (0 network calls); 2 regression tests in
   AppLayout.test.jsx; backend not changed, frontend 232 tests; deviations: none.
+- 2026-10-08 E6a done: Strategy, WorkerInfo, DispatchResult, PhaseReport, LoadBalancer
+  (selection, reroute and circuit breaker), WorkerTransport, WorkerDeclinedException and
+  StrategyComparison ported from legacy-demos/exp06-load-balancing as pure classes; pick sequences
+  for all four strategies checked against hand-derived legacy sequences; 5 new test classes, 53
+  tests; backend 429 tests (3 runs, all green), frontend not run (no frontend change);
+  deviations: none from the approved plan except `select` and the WorkerInfo mutators being
+  package-private, so that production code can reserve a worker only through `dispatch`'s atomic
+  pick. Deliberate differences from the legacy code: (1) choosing a worker and the in-flight
+  increment are one atomic step (legacy incremented after `select`); (2) workers kept in node-id
+  order; (3) ties in least response time go to the lower id (legacy kept list order, which is the
+  same on an id-ordered list); (4) a request never retries a worker it already tried; (5) an
+  answered-but-not-served attempt (WorkerDeclinedException) reroutes without tripping the circuit
+  breaker; (6) latency is end to end from the first attempt (legacy timed the last attempt) and a
+  failed request carries the time spent (legacy 0); (7) `rerouted` = attempts > 1 (legacy also
+  flagged a lone failed attempt); (8) a RuntimeException from the transport releases the in-flight
+  slot and propagates; (9) EWMA counts samples instead of using 0.0 as "none yet", and is updated
+  under a lock; (10) `resetCounters` keeps live in-flight counts; (11) PhaseReport no longer
+  counts failures under node 0, lists every node (zeros included) so loadSpread covers all, and
+  returns empty instead of 0 latency figures when nothing was served; (12) no rounding in the pure
+  classes; (13) WorkerNode's private pool, the Lamport clock and runBatch are not ported (L3 and
+  E6b).
