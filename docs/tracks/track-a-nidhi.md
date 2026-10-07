@@ -15,7 +15,7 @@
 ### Steps
 - [x] E2a — move the Exp 2 engine into `com.udcf.modules.multithreading` as pure classes sized per node; the 11 existing test classes are moved (never deleted) and pass. Needs: none.
 - [x] E2b — per-node "requests" NodeService on `ports().requests()` (720k) running work on that node's executor. Needs: E2a.
-- [ ] E2c — `MultithreadingModule` (lab 2) and `/api/modules/multithreading` endpoints (submit a batch to a node, per-node stats, a backpressure demo); events and metrics; retire the old `/api/multithreading` controller, the old Exp 2 packages and `udcf.node.id`, and list these removals in the Progress log for Rohan; fix registry-dependent tests if this is the first module to register; contract fixtures. Needs: E2b.
+- [x] E2c — `MultithreadingModule` (lab 2) and `/api/modules/multithreading` endpoints (submit a batch to a node, per-node stats, a backpressure demo); events and metrics; retire the old `/api/multithreading` controller, the old Exp 2 packages and `udcf.node.id`, and list these removals in the Progress log for Rohan; fix registry-dependent tests if this is the first module to register; contract fixtures. Needs: E2b.
 - [ ] E2d — build the shared experiment-page kit exactly as in README section 7, then the Multithreading page; verify HANDOFF Section 7 Exp 2 "done when". Needs: E2c.
 
 ---
@@ -81,32 +81,53 @@
   `REQUEST_REJECTED`; data `requestId`, `receiveLamport`, `workload`, `payloadSize`,
   `threadName` (absent when no worker ran it), `totalMillis`. A node that crashes mid-request
   sends no reply and publishes no event.
+- **Multithreading API (E2c, for E2d).** Under `/api/modules/multithreading`:
+  `GET` returns the overview `{status, actionInProgress, capacityNote, workloads[], nodes[]}`;
+  `POST /nodes/{nodeId}/batches` with `{count 1-1000, type, payloadSize 1-5000}` returns 202 and
+  a batch `{batchId, nodeId, kind, workload, payloadSize, requested, accepted, rejected,
+  requestIds[]}`; `POST /nodes/{nodeId}/backpressure` returns 202 and a batch (kind
+  BACKPRESSURE), or 409 "Module busy" while a demo runs; `GET /nodes/{nodeId}/requests?limit=`
+  (1 to 500, default 50) returns `RequestResult[]` newest first `{id, nodeId, type, status,
+  threadName, submittedAt, queueWaitMillis, processingMillis, totalMillis, resultSummary,
+  errorMessage}`. Workload `{type, description, simulated, simulatedReason}` (IO_SIMULATED and
+  MIXED simulated, CPU_HASH not); node `{nodeId, nodeStatus, capacity, capacityConfigured,
+  threads, workMultiplier, port, serviceRunning, stats}`, where `stats` is the ThreadPoolStats
+  object or null while the node's service is not running (never NaN). Enums are their names.
+  Errors are ProblemDetail: 404 "Unknown node" (+nodeId), 409 "Node down" (+nodeId), 409
+  "Module busy" (+moduleId, actionInProgress), 400 "Invalid request parameters" (+errors
+  {field: message}). Real JSON for each: `frontend/src/test/fixtures/multithreading/`.
+- **Batch events (E2c).** Per HTTP burst, never per request, module `multithreading`, the
+  node's own Lamport clock, no peer: `BATCH_SUBMITTED` data `{batchId, kind, requested,
+  accepted, rejected, workload, payloadSize}`; `BATCH_FINISHED` when every accepted request has
+  ended, data `{batchId, kind, completed, failed, threads, elapsedMillis}`, and not published
+  if the node is down by then. With the TCP `REQUEST_*` events (E2b) these are all
+  `module=multithreading` events; Phase 9A's global timeline gets them like any other module's.
+- **Getting a node's requests service (for Jai's E10b).** Inject `Cluster`,
+  `MultithreadingProperties`, `MeterRegistry` and `ClusterEventBus`, then
+  `RequestsNodeService.on(cluster.node(k), properties, meterRegistry, bus).execute(task)`.
+  `RequestsNodeService.find(node)` returns the service only if it has started, and never starts it.
+- **Exception handler (E2c, shared web code).** `web/GlobalExceptionHandler` now advises every
+  controller under `com.udcf` (was `com.udcf.web`), so each module's controller in
+  `com.udcf.modules.<moduleId>` gets the same ProblemDetail bodies. An invalid `@Valid`
+  request body now gets the same 400 shape as a bad parameter: title "Invalid request
+  parameters", `errors: {field: message}`. Existing `com.udcf.web` behaviour is unchanged.
 
 ---
 
 ## Known issues
 
-- E2b must not bind per-node metric gauges while `config/LegacyMultithreadingConfig` exists:
-  Micrometer would silently return node 1's existing gauge, still bound to the legacy executor
-  (R7). Gauge binding for per-node executors moves to E2c. (E2b binds none.) E2c must bind each
-  gauge to something that survives recovery (for example `RequestsNodeService`, reading the
-  current executor), not to an executor: after a recover the old executor is dead, and Micrometer
-  would keep returning the gauge bound to it.
-- Events for in-process submissions (`RequestsNodeService.processing()`, E2c's HTTP batches) are
-  decided in E2c; E2b publishes events only for requests that arrive over TCP.
-- A request submitted in-process in the instant a node crashes (after `processing()` returned,
-  before the executor shut down) ends REJECTED with the existing message "Queue full - node at
-  capacity", which is not the real reason. The message is kept because existing tests assert it;
-  E2c can map it when it builds its API.
 - Socket binding was checked on Windows only (probe: a second bind on a port in use is refused
   with SO_REUSEADDR on, and an immediate rebind after a crash succeeds). Linux behaviour is
   verified by CI running RequestsNodeServiceTest (port-in-use and crash-then-recover tests).
-- E2c must retire `config/LegacyMultithreadingConfig`, `controller/MultithreadingController`,
-  `config/ThreadPoolProperties`, `udcf.threadpool` (application.yml and application-public.yml)
-  and `udcf.node.id`, and must update `PrometheusScrapeTest` and `PublicProfileTest`, which
-  depend on them.
-- E2c must move or replace `controller/MultithreadingControllerTest` and
-  `UdcfBackendApplicationTests` (they still test the old controller and its wiring).
+- Resolved in E2c (kept here for the record): per-node gauges now bind once per node to the
+  `ClusterNode` and read the current executor; in-process batches publish BATCH_* events; a
+  request rejected because the node is down now says "Node is down"; the legacy wiring and both
+  old Exp 2 test classes are retired or replaced (see the E2c Progress log line).
+- `web/TestModuleConfig`'s fake module uses lab 10, which will clash with the real Matrix module
+  (Track C, E10c). `ModuleControllerTest` (shared context with that fake) now finds modules by id,
+  so other tracks' modules do not break it.
+- The fixtures under `frontend/src/test/fixtures/multithreading/` were captured under the local
+  profile (5 nodes, ports 7201 to 7205); their README lists the values that change per capture.
 - E2d's manual-check table should use the FAST node (node 1) to show several distinct worker
   threads; the SLOW node has only one.
 
@@ -138,3 +159,24 @@
   chosen from a Windows probe (Linux checked by CI only); (4) the exactly-once race test uses a
   gated workload, because with a warm JIT a timing-based version finished all work before the
   crash.
+- 2026-10-07 E2c done: MultithreadingModule (lab 2) with batches, per-node overview and a
+  deterministic backpressure demo (bursts held at a gate until fully submitted; guard released
+  when the demo ends, also on a crash), MultithreadingController under
+  /api/modules/multithreading, BATCH_SUBMITTED/BATCH_FINISHED events, MultithreadingMetrics
+  (6 gauges per node bound once to the ClusterNode, NaN without an executor), reset clears
+  history only, GlobalExceptionHandler widened to com.udcf plus the @Valid body errors map,
+  registry tests now find modules by id, contract fixtures captured; backend 339 tests, frontend
+  126 tests; deviations: (1) CorsIntegrationTest's probe endpoint changed from the retired
+  /api/multithreading/stats to /api/cluster (one line; not in the plan); (2) ThreadPoolMetrics
+  also lost its now-unused executor and tracker constructor arguments; (3) RequestRegistry
+  register/clear made atomic so a reset during a batch cannot leave it inconsistent; (4) all HTTP
+  batches, not only the demo, are held at the gate, so their accepted and rejected counts are
+  exact. Removed for Rohan: com.udcf.config.LegacyMultithreadingConfig,
+  com.udcf.config.ThreadPoolProperties, com.udcf.controller.MultithreadingController (and the
+  empty config/ and controller/ packages), the old /api/multithreading endpoints (including
+  requests/sync), udcf.node.id and udcf.threadpool (application.yml, application-public.yml),
+  ThreadPoolMetrics.bindGauges(), and test/com/udcf/controller/MultithreadingControllerTest
+  (replaced by modules/multithreading/MultithreadingControllerTest). Note for Rohan: the CLAUDE.md
+  Known-issues lines about the Exp 2 app beside core/ (com.udcf.threadpool, udcf.node.id: 1) and
+  anything naming LegacyMultithreadingConfig, ThreadPoolProperties, udcf.threadpool or
+  udcf.node.id are now obsolete.

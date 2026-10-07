@@ -1,10 +1,10 @@
 package com.udcf;
 
-import com.udcf.config.ThreadPoolProperties;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.NodeCapacity;
 import com.udcf.core.events.EventProperties;
+import com.udcf.modules.multithreading.MultithreadingProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,7 +43,7 @@ class PublicProfileTest {
     private EventProperties eventProperties;
 
     @Autowired
-    private ThreadPoolProperties threadPoolProperties;
+    private MultithreadingProperties multithreadingProperties;
 
     @Test
     @DisplayName("the cluster has 3 nodes, FAST, MEDIUM, SLOW, and the event buffer holds 1500")
@@ -55,11 +55,9 @@ class PublicProfileTest {
     }
 
     @Test
-    @DisplayName("the thread pool is core 2, max 4, queue 100")
+    @DisplayName("each node's Exp 2 queue holds 100 (threads come from the node's capacity)")
     void smallerThreadPool() {
-        assertThat(threadPoolProperties.getCorePoolSize()).isEqualTo(2);
-        assertThat(threadPoolProperties.getMaxPoolSize()).isEqualTo(4);
-        assertThat(threadPoolProperties.getQueueCapacity()).isEqualTo(100);
+        assertThat(multithreadingProperties.queueCapacity()).isEqualTo(100);
     }
 
     @Test

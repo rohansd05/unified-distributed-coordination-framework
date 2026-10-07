@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class CorsIntegrationTest {
 
-    private static final String ENDPOINT = "/api/multithreading/stats";
+    private static final String ENDPOINT = "/api/cluster";
 
     @Autowired
     private MockMvc mockMvc;

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -37,6 +38,12 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class RequestProcessingService {
 
     private static final Logger log = LoggerFactory.getLogger(RequestProcessingService.class);
+
+    /** Why a request was rejected: the bounded queue was full. */
+    public static final String QUEUE_FULL = "Queue full - node at capacity";
+
+    /** Why a request was rejected: the node's executor is shut down because the node is down. */
+    public static final String NODE_DOWN = "Node is down";
 
     private final ThreadPoolExecutor executor;
     private final WorkloadExecutor workloadExecutor;
@@ -118,7 +125,42 @@ public class RequestProcessingService {
      * {@link #shutdownNow(String)} aborts the request first.</p>
      */
     public CompletableFuture<RequestResult> submitAsync(WorkloadType type, int payloadSize) {
-        return enqueue(newRequest(type, payloadSize)).future;
+        return enqueue(newRequest(type, payloadSize), null).future;
+    }
+
+    /**
+     * Submits {@code count} requests as one burst and returns their futures, in order.
+     *
+     * <p>Every accepted request waits at a gate before its work starts, and the gate opens
+     * only once the whole burst has been submitted. While submitting, no worker can finish a
+     * request and free a slot, so at most {@code threads + queue capacity} requests are
+     * accepted and the rest are REJECTED, deterministically. A request that is interrupted
+     * at the gate (a crash) ends FAILED, "Interrupted during processing". Each future
+     * completes exactly once, as with {@link #submitAsync}; a rejected request's future is
+     * already complete when this returns.</p>
+     *
+     * @return one submission per request, in submission order
+     */
+    public List<Submission> submitTogether(WorkloadType type, int payloadSize, int count) {
+        CountDownLatch gate = new CountDownLatch(1);
+        List<Submission> submissions = new ArrayList<>(count);
+        try {
+            for (int i = 0; i < count; i++) {
+                QueuedRequest task = enqueue(newRequest(type, payloadSize), gate);
+                submissions.add(new Submission(task.request.getId(), task.future));
+            }
+        } finally {
+            gate.countDown();
+        }
+        return submissions;
+    }
+
+    /**
+     * One request of a burst: its id at once, and its result when it ends.
+     *
+     * <p>No dedicated test: a record. RequestProcessingServiceTest covers submitTogether.</p>
+     */
+    public record Submission(String requestId, CompletableFuture<RequestResult> result) {
     }
 
     /**
@@ -152,13 +194,13 @@ public class RequestProcessingService {
      * Returns the same instance so the caller can inspect the resulting status.
      */
     DistributedRequest submit(DistributedRequest request) {
-        enqueue(request);
+        enqueue(request, null);
         return request;
     }
 
-    private QueuedRequest enqueue(DistributedRequest request) {
+    private QueuedRequest enqueue(DistributedRequest request, CountDownLatch gate) {
         registry.register(request);
-        QueuedRequest task = new QueuedRequest(request);
+        QueuedRequest task = new QueuedRequest(request, gate);
 
         try {
             executor.execute(task);
@@ -170,12 +212,14 @@ public class RequestProcessingService {
         return task;
     }
 
+    /** A full queue and a shut-down executor (the node is down) both reject; the reason says which. */
     private RequestResult reject(DistributedRequest request) {
-        request.markRejected("Queue full - node at capacity");
+        String reason = executor.isShutdown() ? NODE_DOWN : QUEUE_FULL;
+        request.markRejected(reason);
         metrics.recordRejected();
         RequestResult result = request.toResult();
         events.requestFinished(result);
-        log.warn("Request {} rejected on node {}: queue full", request.getId(), nodeId);
+        log.warn("Request {} rejected on node {}: {}", request.getId(), nodeId, reason);
         return result;
     }
 
@@ -222,12 +266,24 @@ public class RequestProcessingService {
         private final DistributedRequest request;
         private final CompletableFuture<RequestResult> future = new CompletableFuture<>();
 
-        private QueuedRequest(DistributedRequest request) {
+        private final CountDownLatch gate;   // null: start at once
+
+        private QueuedRequest(DistributedRequest request, CountDownLatch gate) {
             this.request = request;
+            this.gate = gate;
         }
 
         @Override
         public void run() {
+            if (gate != null) {
+                try {
+                    gate.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();   // never swallow: a crash is in progress
+                    abort("Interrupted during processing");
+                    return;
+                }
+            }
             future.complete(process(request));
         }
 
