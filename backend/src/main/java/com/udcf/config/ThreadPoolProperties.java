@@ -9,8 +9,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * each node instance can be given a different pool shape, which is what makes
  * load-balancing differences between nodes observable in Experiment 6.</p>
  *
+ * <p>Since Step E2a it only sizes the node behind the old {@code /api/multithreading}
+ * endpoints (LegacyMultithreadingConfig); E2c retires it. Per-node executors are sized by
+ * NodeCapacity and {@code udcf.multithreading}.</p>
+ *
  * <p>No dedicated test file: this is a behaviourless configuration holder. Its binding
- * is exercised by ThreadPoolConfigTest, which loads it from real properties.</p>
+ * is exercised by UdcfBackendApplicationTests and PublicProfileTest.</p>
  */
 @ConfigurationProperties(prefix = "udcf.threadpool")
 public class ThreadPoolProperties {
