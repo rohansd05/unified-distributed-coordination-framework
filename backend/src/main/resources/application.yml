@@ -66,6 +66,16 @@ udcf:
       5:
         initial-offset-millis: -20
         drift-rate-ms-per-sec: -0.5
+  # Experiment 4 (lab 4). Bully and Ring election over UDP 700k (Appendix B timings). The same socket
+  # carries the shared failure detector's heartbeats (link L2).
+  election:
+    ok-timeout-millis: 900
+    coordinator-timeout-millis: 2200
+    probe-timeout-millis: 300
+    # Not in Appendix B. Worst case with 2 of 5 nodes alive is about 1.8 s (3 skips x 300 ms, on both passes).
+    ring-completion-timeout-millis: 5000
+    heartbeat-interval-millis: 700
+    heartbeat-timeout-millis: 2500
   # Experiment 5 (lab 5). Replication over TCP 710k; the primary is the lowest live node until Phase 9A (L1).
   replication:
     # SIMULATED (R7): stands in for wide-area latency on asynchronous pushes only (Appendix B: 450 ms).
