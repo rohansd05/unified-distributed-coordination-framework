@@ -29,7 +29,7 @@
 - [x] E6a — strategies (Round Robin, smooth Weighted Round Robin, Least Connections, Least Response Time = EWMA latency x (in-flight + 1), alpha 0.3), `WorkerInfo`, `DispatchResult`, `PhaseReport`, circuit-breaker reroute, as pure classes. Needs: E2d.
 - [x] E6b — the balancer dispatching over TCP into each node's requests service, with reroute when a worker is down. Needs: E6a, E2b.
 - [x] E6c — `LoadBalancingModule` (lab 6): run a strategy, "compare all four", crash a worker mid-run; events, metrics, fixtures. Needs: E6b.
-- [ ] E6d — page and end-to-end check. Needs: E6c.
+- [x] E6d — page and end-to-end check. Needs: E6c.
 
 ---
 
@@ -322,6 +322,24 @@
   `TcpWorkerTransport(client, clock, bus, runId)`; `LoadBalancingGateway.resetWorkers()`;
   `LoadBalancingProperties` gained `defaults` and `limits`. Without an observer or run id the
   behaviour is unchanged.
+- **Load Balancing page (E6d).** `/experiments/6-loadbalancing`, `frontend/src/modules/loadbalancing/`.
+  Nothing another track needs to call. Kit usage, as a second worked example after Multithreading:
+  `index.jsx` exports `{ id: 'loadbalancing', Page }`; the page passes `howItWorks` (paragraphs),
+  `controls`, `visualisation` (the bold element, `BalancerFlow`), `measurements` (a divided
+  `MetricCard` strip plus `ComparisonTable`) and `whatToNotice` (three strings) to
+  `ExperimentLayout`; the event log comes from the kit. Patterns worth reusing: a pure view model
+  (`flowModel.js`) that turns any overview, including null, empty, running, failed or partly
+  filled ones, into what is drawn, so the edge cases are tested without rendering; a hook
+  (`useLoadBalancing`) that refreshes on the module's own event prefixes and on cluster events,
+  polls (500 ms) only while active, and lets only the newest refresh update state; claim
+  sentences built in their own module (`finding.js`) and gated on backend flags; the live summary
+  through `usePoliteAnnouncement` inside a `relative` figure; enums only through label functions,
+  with a page test that scans the rendered text for all-caps words. The catalog entry for lab 6
+  has a `concept` line; `routes.test.jsx` mocks `loadBalancingApi.getOverview`.
+- **E6b probe table (for reference; measured 2026-10-08 on a 12-core machine, 60 requests, 12
+  clients, 5 nodes, makespan in ms, round robin against the slowest other strategy):** payload 25:
+  56.4 against 47.2; payload 100: 53.6 against 51.2; payload 400: 131.8 against 119.5; payload 900:
+  235.8 against 191.5. Round robin finished last at all four, by the widest margin (23%) at 900.
 
 ---
 
@@ -378,6 +396,17 @@
 - A comparison always runs the strategies in the same order (round robin first). The unreported
   warm-up removes the cold-JIT handicap, but other order effects on a shared machine are not
   removed; the finding reports what was measured, with no claim beyond it.
+- After a node is recovered, its lane on the Load Balancing page keeps showing the last run's
+  report ("Taken out by the breaker", with its refused attempts) until the next run: the lane
+  describes that run, not the node's current state, which the node status and the Cluster page
+  show. Checked in the browser on 2026-10-08.
+- After a cluster reset the Load Balancing page's event log is empty: CLUSTER_RESET is a cluster
+  event (module `cluster`) and shows on the Overview event stream, not in the module's log.
+- In PowerShell, `npm run dev -- --port 5173` loses the `--`, so Vite takes `5173` as its root
+  folder and answers every page with 404. Use plain `npm run dev` (5173 is the default).
+- The layout check in E6d used a same-origin iframe at exactly 1280x800 and 375x740, because the
+  Chrome window available was maximised (1536x816 CSS px at device pixel ratio 1.25) and could
+  not be resized to those sizes; the page's own document was measured inside the iframe.
 
 ---
 
@@ -502,3 +531,21 @@
   CRASH_SKIPPED event, and the `totalWork` errors key; (3) public max-total-work is 120000, not
   the 40000 given as an example, because a default comparison is 5 x 60 x 400 = 120000 and the
   defaults must fit the cap.
+- 2026-10-08 E6d done: Load Balancing page (BalancerFlow lanes with per-worker share, latency,
+  in-flight, crashed and breaker states and a phase picker; run and compare controls with the
+  backend's limits, the total-work line, a crash option defaulting to node 1 after a third of the
+  requests and disabled with a reason below 2 requests, Recover buttons for crashed nodes;
+  measurement strip and ComparisonTable with finding sentences gated on the measured flags), live
+  through /topic/modules/loadbalancing with 500 ms polling only while active, contract test on the
+  E6c fixtures (unedited), concept line in the catalog, registry and routes tests updated; browser
+  check against the real backend: run (12 per node, 0 failed), comparison (round robin slowest
+  1066 ms, least connections fastest 384 ms, the finding stated with its numbers), crash run (6
+  reroutes, 0 failed, node 3 Crashed), recover and reset all worked, the document never scrolled
+  at 1280x800 or 375x740 before a run, after a run and after a comparison, no console errors;
+  backend 502 tests, 1 skipped (the opt-in probe; no backend change), frontend 296 tests (3 runs);
+  deviations: (1) flowModel.js (pure view model) and finding.js (the finding sentences, split out
+  so ComparisonTable.jsx exports only components, as the react-refresh lint rule requires) added
+  beside the planned files; (2) the page's URL is /experiments/6-loadbalancing (the plan said
+  6-load-balancing); (3) the layout was measured in a same-origin iframe of the exact sizes (see
+  Known issues); (4) the manual row for a cluster reset expects an empty module event log, not a
+  reset entry (see Known issues).
