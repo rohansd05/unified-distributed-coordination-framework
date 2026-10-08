@@ -35,7 +35,7 @@
 
 ## Interfaces for other tracks
 
-- **Reserved test port range:** `48100–48899` (Track D clock synchronization test sockets). Base port 48100, clock UDP ports 48201–48205 (service tests), 48401–48405 (module tests), 48601–48605 (controller tests), squatter test port 48801. Avoids other tracks' reserved ranges (41xxx, 42xxx, 43xxx, 47xxx).
+- **Reserved test port range:** `24100–24899` (Track D clock synchronization test sockets, Linux-safe below 32768). Base port 24100, clock UDP ports 24201–24205 (service tests), 24401–24405 (module tests), 24601–24605 (controller tests), squatter test port 24801. Avoids other tracks' reserved ranges (21xxx Nidhi, 26xxx Swanand, 28xxx Jai).
 - **Service Factory API:** `ClockNodeService.on(ClusterNode node, Cluster cluster, ClockEventLog eventLog, ClockDriftModel driftModel, EventBus bus, ClockSyncProperties properties, Clock wallClock)` registers and starts or retrieves the `clock` `NodeService` bound to `127.0.0.1:ports().clock()`.
 - **Wire Protocol:** Text-based UDP datagrams (`MAX_DATAGRAM_SIZE = 1024` bytes, UTF-8):
   - `LAMPORT|<senderId>|<lamportTime>|<messageId>|<payload>`
@@ -70,6 +70,12 @@
 ## Known issues
 
 (none yet)
+
+---
+
+## Lessons learned
+
+- start the listener thread only after running is true; a service whose listener thread died must not report itself as running
 
 ---
 

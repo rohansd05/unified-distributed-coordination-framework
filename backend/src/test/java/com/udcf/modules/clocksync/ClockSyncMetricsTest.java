@@ -24,7 +24,7 @@ class ClockSyncMetricsTest {
     private static final ClusterProperties CLUSTER_PROPS = new ClusterProperties(
             3,
             List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(48100, 48200, 48300, 48400, 48500, 48600)
+            new ClusterProperties.Ports(24100, 24200, 24300, 24400, 24500, 24600)
     );
 
     private SimpleMeterRegistry registry;
