@@ -40,6 +40,7 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 8. Never print or commit secrets. .env stays gitignored.
 9. After each completed step, update your own track file (docs/tracks/). AI agents never
    run any git command.
+10. Test ports must be Linux-safe: every fixed port used in a TEST (Java tests, test YAML/properties, test configs) must be below 32768, because Linux hands out outgoing ports from 32768-60999 (Windows 49152-65535) and a test that binds inside that range can collide with the OS. Production ports (1101.., 6001.., 7001..) are already fine. Port blocks: Nidhi 21000-21999, Rohan 24100-24899, Swanand 26100-26899, Jai 28100-28899.
 
 ## Layout
 backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.udcf.web)

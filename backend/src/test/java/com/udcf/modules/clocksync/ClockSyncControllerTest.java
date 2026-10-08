@@ -27,10 +27,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * End-to-end web tests for /api/modules/clocksync endpoints.
  *
- * <p>Uses test-isolated clock ports (48200 base) within the reserved Track D range (48100-48899).</p>
+ * <p>Uses test-isolated clock ports (24600 base) within the reserved Track D range (24100-24899).</p>
  */
 @SpringBootTest(properties = {
-        "udcf.cluster.ports.clock-base=48600"
+        "udcf.cluster.ports.clock-base=24600"
 })
 @AutoConfigureMockMvc
 class ClockSyncControllerTest {
