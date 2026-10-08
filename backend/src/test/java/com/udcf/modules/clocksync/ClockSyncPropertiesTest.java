@@ -28,6 +28,11 @@ class ClockSyncPropertiesTest {
             ClockSyncProperties props = context.getBean(ClockSyncProperties.class);
             assertThat(props.pollTimeoutMillis()).isEqualTo(1000L);
             assertThat(props.outlierThresholdMillis()).isEqualTo(500L);
+            assertThat(props.defaultTrafficSeconds()).isEqualTo(5);
+            assertThat(props.maxTrafficSeconds()).isEqualTo(30);
+            assertThat(props.defaultMessagesPerSecond()).isEqualTo(4);
+            assertThat(props.maxMessagesPerSecond()).isEqualTo(20);
+            assertThat(props.retainedEventsCapacity()).isEqualTo(2000);
             assertThat(props.nodes()).hasSize(5);
             assertThat(props.configFor(2).initialOffsetMillis()).isEqualTo(40L);
             assertThat(props.configFor(2).driftRateMsPerSec()).isEqualTo(1.5);
@@ -35,14 +40,19 @@ class ClockSyncPropertiesTest {
     }
 
     @Test
-    @DisplayName("the public profile inherits the clocksync configuration")
-    void publicProfileInherits() {
+    @DisplayName("the public profile overrides clocksync limits")
+    void publicProfileOverridesLimits() {
         runner.withPropertyValues("spring.profiles.active=public")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     ClockSyncProperties props = context.getBean(ClockSyncProperties.class);
                     assertThat(props.pollTimeoutMillis()).isEqualTo(1000L);
                     assertThat(props.outlierThresholdMillis()).isEqualTo(500L);
+                    assertThat(props.defaultTrafficSeconds()).isEqualTo(5);
+                    assertThat(props.maxTrafficSeconds()).isEqualTo(15);
+                    assertThat(props.defaultMessagesPerSecond()).isEqualTo(4);
+                    assertThat(props.maxMessagesPerSecond()).isEqualTo(10);
+                    assertThat(props.retainedEventsCapacity()).isEqualTo(1000);
                 });
     }
 
@@ -52,5 +62,16 @@ class ClockSyncPropertiesTest {
         runner.withPropertyValues("udcf.clocksync.poll-timeout-millis=5")
                 .run(context -> assertThat(context).hasFailed()
                         .getFailure().hasStackTraceContaining("pollTimeoutMillis"));
+    }
+
+    @Test
+    @DisplayName("maxTrafficSeconds below defaultTrafficSeconds fails validation")
+    void invalidTrafficLimitFails() {
+        runner.withPropertyValues(
+                        "udcf.clocksync.default-traffic-seconds=10",
+                        "udcf.clocksync.max-traffic-seconds=5"
+                )
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasStackTraceContaining("maxTrafficSeconds"));
     }
 }

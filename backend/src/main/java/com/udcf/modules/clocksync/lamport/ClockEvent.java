@@ -13,6 +13,7 @@ import java.util.Objects;
  * @param type         LOCAL, SEND or RECV
  * @param lamportTime  the Lamport timestamp resulting from the event (&gt;= 0)
  * @param peerId       the peer node involved, or 0 for a local event
+ * @param messageId    the unique message id linking send and receive events; 0 for local events
  * @param causedByTime for a RECV, the timestamp carried by the incoming message;
  *                     -1 otherwise. Allows proving that receive is ordered strictly
  *                     after the send that caused it.
@@ -24,6 +25,7 @@ public record ClockEvent(
         ClockEventType type,
         long lamportTime,
         int peerId,
+        long messageId,
         long causedByTime,
         String description,
         Instant wallTime
@@ -44,16 +46,36 @@ public record ClockEvent(
         Objects.requireNonNull(description, "description must not be null");
     }
 
+    public ClockEvent(
+            int nodeId,
+            ClockEventType type,
+            long lamportTime,
+            int peerId,
+            long causedByTime,
+            String description,
+            Instant wallTime
+    ) {
+        this(nodeId, type, lamportTime, peerId, 0L, causedByTime, description, wallTime);
+    }
+
     public static ClockEvent local(int nodeId, long lamportTime, String description, Instant wallTime) {
-        return new ClockEvent(nodeId, ClockEventType.LOCAL, lamportTime, 0, -1L, description, wallTime);
+        return new ClockEvent(nodeId, ClockEventType.LOCAL, lamportTime, 0, 0L, -1L, description, wallTime);
     }
 
     public static ClockEvent send(int nodeId, long lamportTime, int peerId, String description, Instant wallTime) {
-        return new ClockEvent(nodeId, ClockEventType.SEND, lamportTime, peerId, -1L, description, wallTime);
+        return new ClockEvent(nodeId, ClockEventType.SEND, lamportTime, peerId, 0L, -1L, description, wallTime);
+    }
+
+    public static ClockEvent send(int nodeId, long lamportTime, int peerId, long messageId, String description, Instant wallTime) {
+        return new ClockEvent(nodeId, ClockEventType.SEND, lamportTime, peerId, messageId, -1L, description, wallTime);
     }
 
     public static ClockEvent receive(int nodeId, long lamportTime, int peerId, long causedByTime, String description, Instant wallTime) {
-        return new ClockEvent(nodeId, ClockEventType.RECV, lamportTime, peerId, causedByTime, description, wallTime);
+        return new ClockEvent(nodeId, ClockEventType.RECV, lamportTime, peerId, 0L, causedByTime, description, wallTime);
+    }
+
+    public static ClockEvent receive(int nodeId, long lamportTime, int peerId, long messageId, long causedByTime, String description, Instant wallTime) {
+        return new ClockEvent(nodeId, ClockEventType.RECV, lamportTime, peerId, messageId, causedByTime, description, wallTime);
     }
 
     public boolean isLocal() {

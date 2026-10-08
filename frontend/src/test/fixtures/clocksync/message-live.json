@@ -1,0 +1,1 @@
+{"from":1,"to":2,"messageId":1,"lamportTime":3,"payload":"Lamport ping to node 2","deliveryStatus":"SENT","deliveryNote":"Datagram sent via UDP to port 6002; delivery is unacknowledged.","wallTime":"2026-10-08T12:02:48.835288400Z"}

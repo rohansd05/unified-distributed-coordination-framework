@@ -1,0 +1,1 @@
+{"totalEventsChecked":20,"receiveEventsChecked":9,"violationsCount":0,"passed":true,"summary":"PASS - Causal invariant preserved across all 20 events (9 receive events checked, 0 violations).","violations":[],"retainedEventsCount":20,"droppedEventsCount":0,"retainedWindowNote":"Log within capacity of 2000 events. All recorded events verified."}

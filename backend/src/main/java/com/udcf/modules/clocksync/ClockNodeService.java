@@ -23,6 +23,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ProtocolException;
+import java.util.Optional;
 import java.net.SocketException;
 import java.time.Clock;
 import java.time.Duration;
@@ -110,7 +111,7 @@ public class ClockNodeService implements NodeService {
         this.peerPortResolver = Objects.requireNonNull(peerPortResolver, "peerPortResolver must not be null");
         this.eventLog = Objects.requireNonNull(eventLog, "eventLog must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
-        this.properties = properties != null ? properties : new ClockSyncProperties(1000L, 500L, Map.of());
+        this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.wallClock = wallClock != null ? wallClock : Clock.systemUTC();
 
         if (driftModel != null) {
@@ -147,6 +148,11 @@ public class ClockNodeService implements NodeService {
                 eventLog, driftModel, bus, properties, wallClock);
     }
 
+    /** Returns the node's clock service if it is registered, without starting it. */
+    public static Optional<ClockNodeService> find(ClusterNode node) {
+        return node.service(NAME).map(ClockNodeService.class::cast);
+    }
+
     @Override
     public String name() {
         return NAME;
@@ -158,7 +164,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -187,7 +192,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -199,7 +203,8 @@ public class ClockNodeService implements NodeService {
 
     @Override
     public boolean isRunning() {
-        return running && socket != null && !socket.isClosed();
+        return running && socket != null && !socket.isClosed()
+                && listenerThread != null && listenerThread.isAlive();
     }
 
     public ClusterNode node() {
@@ -257,7 +262,7 @@ public class ClockNodeService implements NodeService {
         long stamped;
         synchronized (node.clock()) {
             stamped = node.clock().tick();
-            eventLog.record(ClockEvent.send(node.id(), stamped, targetNodeId, payload, wallClock.instant()));
+            eventLog.record(ClockEvent.send(node.id(), stamped, targetNodeId, messageId, payload, wallClock.instant()));
             bus.publish(EventDraft.of(MODULE, node.id(), "CLOCK_MESSAGE_SENT", stamped)
                     .withPeer(targetNodeId)
                     .withMessage(payload)
@@ -468,6 +473,7 @@ public class ClockNodeService implements NodeService {
             throw new IllegalStateException("Clock UDP socket failed to bind on port " + bindPort, e);
         }
 
+        running = true;
         listenerThread = new Thread(this::listenLoop, "clock-" + node.id() + "-listener");
         listenerThread.setDaemon(true);
         listenerThread.start();
@@ -493,7 +499,10 @@ public class ClockNodeService implements NodeService {
                 handleDatagram(packet);
             } catch (SocketException e) {
                 // Expected when socket is closed during crash or shutdown
-                break;
+                if (!running || socket == null || socket.isClosed()) {
+                    break;
+                }
+                log.warn("Node {}: UDP socket exception in receive loop: {}", node.id(), e.getMessage());
             } catch (Exception e) {
                 if (running) {
                     log.warn("Node {}: UDP receive loop error: {}", node.id(), e.getMessage());
@@ -518,7 +527,7 @@ public class ClockNodeService implements NodeService {
                 synchronized (node.clock()) {
                     updated = node.clock().update(msg.lamportTime());
                     eventLog.record(ClockEvent.receive(
-                            node.id(), updated, msg.senderId(), msg.lamportTime(), msg.textPayload(), wallClock.instant()));
+                            node.id(), updated, msg.senderId(), msg.id(), msg.lamportTime(), msg.textPayload(), wallClock.instant()));
                     bus.publish(EventDraft.of(MODULE, node.id(), "CLOCK_MESSAGE_RECEIVED", updated)
                             .withPeer(msg.senderId())
                             .withMessage(msg.textPayload())

@@ -1,0 +1,1 @@
+{"nodeId":2,"offsetMillis":95,"driftRateMsPerSec":1.8,"simulatedTime":1791460974191,"simulated":true,"simulatedReason":"Physical clock drift is simulated mathematically; all network operations are real UDP."}

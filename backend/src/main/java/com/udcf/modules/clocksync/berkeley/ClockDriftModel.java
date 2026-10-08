@@ -112,8 +112,15 @@ public class ClockDriftModel {
      * Resets offset and drift back to 0.
      */
     public synchronized void reset(Instant referenceTime) {
-        this.baseOffsetMillis = 0L;
-        this.driftRateMsPerSec = 0.0;
+        reset(0L, 0.0, referenceTime);
+    }
+
+    /**
+     * Resets offset and drift back to specified configured values.
+     */
+    public synchronized void reset(long initialOffsetMillis, double driftRateMsPerSec, Instant referenceTime) {
+        this.baseOffsetMillis = initialOffsetMillis;
+        this.driftRateMsPerSec = driftRateMsPerSec;
         this.lastAnchorTime = Objects.requireNonNull(referenceTime, "referenceTime must not be null");
     }
 }
