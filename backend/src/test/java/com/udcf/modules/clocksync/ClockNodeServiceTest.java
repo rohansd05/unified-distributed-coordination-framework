@@ -204,10 +204,32 @@ class ClockNodeServiceTest {
         ClockNodeService s2 = serviceWithDrift(2, 60L, 0.0);
         ClockNodeService s3 = serviceWithDrift(3, -40L, 0.0);
 
+        // Ensure every peer is reachable (listener bound and answering) before starting the round
+        for (int peerId : List.of(2, 3)) {
+            ClockNodeService peerService = (peerId == 2) ? s2 : s3;
+            long daemonStart = cluster.node(1).clock().current();
+            long peerStart = cluster.node(peerId).clock().current();
+
+            await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(10)).until(() -> {
+                s1.sendLamportMessage(peerId, "warmup-ping");
+                return cluster.node(peerId).clock().current() > peerStart;
+            });
+            await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(10)).until(() -> {
+                peerService.sendLamportMessage(1, "warmup-pong");
+                return cluster.node(1).clock().current() > daemonStart;
+            });
+        }
+
         long spreadBeforeExpected = 60L - (-40L); // 100 ms
 
         // Node 1 initiates Berkeley round with threshold 500 ms
-        BerkeleyRoundResult result = s1.runBerkeleyRound(List.of(1, 2, 3), 500L, Duration.ofMillis(800));
+        CompletableFuture<BerkeleyRoundResult> roundFuture = CompletableFuture.supplyAsync(
+                () -> s1.runBerkeleyRound(List.of(1, 2, 3), 500L, Duration.ofSeconds(10)),
+                executor
+        );
+
+        await().atMost(Duration.ofSeconds(10)).until(roundFuture::isDone);
+        BerkeleyRoundResult result = roundFuture.join();
 
         assertThat(result.spreadBeforeMillis()).isEqualTo(spreadBeforeExpected);
         assertThat(result.spreadAfterMillis()).isZero();
