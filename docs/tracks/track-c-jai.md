@@ -16,7 +16,7 @@
 - [x] E5a — `DataItem`, `DataStore`, last-writer-wins, anti-entropy, out-of-order injection, epochs and `ReplicationStats` as pure classes. Needs: none.
 - [x] E5b — replication NodeService on `ports().replication()` (710k): sync and async writes, anti-entropy; document its public API under "Interfaces for other tracks" (Track B builds Exp 8 on it). Needs: E5a.
 - [x] E5c — `ReplicationModule` (lab 5): write (sync/async), read per replica, crash or recover a backup, anti-entropy, inject a stale update; the health table; metrics; fixtures. Needs: E5b.
-- [ ] E5d — page and end-to-end check. Needs: E5c, E2d.
+- [x] E5d — page and end-to-end check. Needs: E5c, E2d.
 
 ---
 
@@ -437,6 +437,41 @@ it."
 **Fixtures:** `frontend/src/test/fixtures/replication/` (captured from the running backend; see its
 README).
 
+### E5d — replication page (`/experiments/5-replication`, `frontend/src/modules/replication/`)
+
+Nothing another track needs to call. Notes for other "d" steps and for Phase 9A:
+- **Kit usage.** `index.jsx` exports `{ id: 'replication', Page }`. The page passes `howItWorks`
+  (four paragraphs), `controls`, `visualisation`, `measurements` and `whatToNotice` to
+  `ExperimentLayout`.
+  - `visualisation` holds `PendingWindow`, then `ReplicaGrid` (the bold element), then
+    `TakeoverTimeline`.
+  - `measurements` holds a divided `MetricCard` strip and `HealthTable`.
+  - `whatToNotice` is two page strings plus the backend's `conflictRuleNote`, verbatim.
+
+  The page reuses `usePoliteAnnouncement`, `formatMillis` and `moduleStatusLabel` from
+  multithreading, `isNodeCrashed` from `lib/clusterStatus`, and `formatRelativeTime` from the
+  events formatters.
+- **Pure view models.** `replicaModel.js` provides `gridModel(replicasDto)` (the reference column
+  first), `gridSummary`, `timelineModel(events, overview)` (PRIMARY_SELECTED events plus
+  lastTakeover, with a pending marker), `pendingWindow(overview)` (open exactly while
+  `latestWrite.replicationState` is PENDING, never on a timer) and `liveBackups(overview)`.
+- **Live data.** `useReplication({ api })` reads the overview and `/replicas` together. It refreshes
+  on any `/topic/modules/replication` event, on `/topic/cluster` and on a reconnect, coalesced to
+  at most one read in flight plus one queued. It polls every 300 ms only while BUSY, RUNNING or a
+  PENDING write. The timeline reads up to 500 module events through the shared `useModuleEvents`.
+- **States on screen.** Every `ReplicaState` (CURRENT, STALE, MISSING, AHEAD, CONFLICT,
+  UNREACHABLE, ABSENT, plus null as "Not compared") has a word and a distinct SVG shape, and a
+  legend explains them. A null figure is "—" with an accessible label ("Not available" in
+  `MetricCard`, "Not measured yet" in the health table), never 0.
+- **Actions.**
+  - Crash has no confirmation, as on the Cluster and Overview pages. After a crash or recover,
+    focus moves to the counterpart button, or to the node's own label when a recovered node comes
+    back as the primary (which has no crash button, only the Cluster-page link).
+  - The other actions move focus to their result panel, or to the error alert.
+  - Every result is announced politely. A 400's `errors` appear beside the fields.
+- **Shared files touched (approved):** `frontend/src/routes.test.jsx` (add-only: one import and two
+  spies on `replicationApi`) and `frontend/src/lib/experiments.js` (a `concept` line for lab 5 only).
+
 ---
 
 ## Known issues
@@ -495,6 +530,19 @@ README).
 - E5c: `ReplicationModule.reset()` takes the module guard. If an action starts between the cluster
   reset's BUSY check and this module's reset, the reset throws `ModuleBusyException` (409) after the
   nodes were recovered and earlier modules were reset. That window is very small.
+- E5d: the kit's event log shows the backend's own event messages verbatim, and E5b's `WRITE` and
+  `WRITE_CONFIRMED` messages end in "[SYNCHRONOUS]" or "[ASYNCHRONOUS]" (all caps). The page's
+  all-caps test therefore covers every section except the event log. Changing the message text is
+  a backend follow-up (E5b's events), not done here.
+- E5d: the derived states ABSENT, AHEAD and CONFLICT are tested on copies of a real fixture with
+  only `state` and `item` changed (Q4). The captured fixtures contain CURRENT, STALE, MISSING and
+  UNREACHABLE.
+- E5d: the browser check was run in Chrome with the tab in the background, where timers are
+  throttled to about 1 s. The window, STALE cells and convergence were still seen through a
+  MutationObserver. The Chrome window could not be resized below the screen size, so the 375×740
+  and 1280×800 measurements were taken in a same-origin iframe of exactly that size.
+- E5d: `npm run build` warns that the main chunk is above 500 kB (530.29 kB). Code-splitting is a
+  shared-build decision, not part of this step.
 
 ---
 
@@ -537,3 +585,14 @@ README).
   updates are labelled honestly; (3) `PRIMARY_SELECTED` is also published on the first selection;
   (4) the recover action runs a pending takeover only when one is pending, and crash never changes
   the selection; (5) ReplicationRecordsTest gained tests for the two new records.
+- 2026-10-09 E5d done: Replication page at /experiments/5-replication on the E2d kit: replica grid
+  (every state as a word plus a shape), takeover timeline (catch-up per peer, pending marker),
+  asynchronous window opened and closed by the backend's replicationState with the Simulated
+  badge, health table with honest dashes, write/read/crash/recover/anti-entropy/stale-update
+  controls with focus management and polite announcements, contract test on the 24 E5c fixtures;
+  checked against the real backend at 1280x800 and 375x740 (done-when 1-3 seen live), servers
+  stopped, 8080 and 5173 free; backend not changed (736 tests at E5c), frontend 388 tests (3 runs,
+  baseline 296); deviations: (1) the focus target after a recover falls back to the node's label
+  when it comes back as the primary (found in the live check, test added); (2) the all-caps test
+  excludes the kit's event log (backend message text); (3) approved shared edits:
+  routes.test.jsx (add-only) and the lab 5 concept line in experiments.js.
