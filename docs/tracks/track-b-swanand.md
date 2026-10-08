@@ -14,7 +14,7 @@
 
 ### Steps
 - [x] E4a — Bully and Ring as pure classes, plus the consensus check. Needs: none.
-- [ ] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
+- [x] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
 - [ ] E4c — `ElectionModule` (lab 4): start Bully or Ring from node X, the current leader, the consensus check, automatic re-election when the leader crashes; add the cluster roles API (roles on `ClusterNode`, `NodeDto.roles`, "LEADER" shown in the top bar); metrics `distributed_leader_elections_total` and `distributed_election_duration`; fixtures. Needs: E4b.
 - [ ] E4d — page and end-to-end check. Needs: E4c, E2d.
 
@@ -35,13 +35,32 @@
 
 ## Interfaces for other tracks
 
-### E4b APIs:
-- **Constructors:** `BullyAlgorithm` and `RingAlgorithm` both accept (`nodeId`, `allNodes`/`ringOrder`, `config`, `messenger`, `eventListener`, `timer`, `nanoClock`/`prober`, `wallClock`).
-- **Threading:** The algorithms are fully callback-driven and thread-safe. There is no `Executor` needed. The transport must call `onReceive` and `onProbeAck`; these methods will **never** block and may be safely called directly on the listener thread.
-- **ElectionTimer:** The transport must implement the `ElectionTimer` interface to schedule tasks. A node crash cancels all ongoing tasks.
-- **Clocks & Messenger:** The `nanoClock` (or `prober`) and `wallClock` are injected for testability. The `ElectionMessenger` interface handles all outbound messages.
-- **Config:** Expects `udcf.election` prefixed configuration keys (validated positive numbers, probe timeout must be strictly shorter than OK timeout, and ring completion timeout is required).
-- **Wire Format:** Messages are serialized as strings separated by `|`. Max length is 1024 characters.
+### E4b APIs: election transport and the shared FailureDetector (link L2)
+
+**`com.udcf.modules.election.ElectionNodeService`** (`NodeService` named `"election"`, also an `ElectionParticipant`)
+- `ElectionNodeService.on(ClusterNode node, Cluster cluster, ElectionProperties properties, ClusterEventBus bus)`: the node's service, created and started on first use through `ClusterNode.ensureService`. `ElectionNodeService.find(node)` returns it only if registered.
+- One UDP socket on `127.0.0.1:ports().election()` (700k) carries Bully, Ring and heartbeats.
+- `startBully()`, `startRing()`: queued on the node's election worker; `NodeDownException` if the service is not running.
+- `coordinatorId()` (also `getCoordinatorId()`): the coordinator this node most recently learned from either algorithm (`ELECTED` or `COORDINATOR_ACCEPTED`); `null` if none, and after a crash. `ConsensusChecker.check(services)` works directly on a list of services (a crashed service counts as crashed).
+- `addElectionListener(ElectionEventListener)` returns a `Registration` (`close()` removes it): every Bully and Ring event of this node.
+- `failureDetector()`: this node's `FailureDetector`.
+- **Threading (hard rule 7):** the listener thread only reads, decodes and hands off. Every algorithm step (Bully, Ring, `PROBE`/`PROBE_ACK`), every `ElectionTimer` task and the heartbeat tick run on one worker thread per node, `udcf-election-n<k>-worker`. The transport never calls `onReceive` on the listener thread. Listeners run on the worker: they must not block and must not crash or recover this node (crash joins the worker).
+- **Lifecycle:** crash and stop close the socket, then join the listener and the worker (5 s each, `IllegalStateException` if one is still alive), then crash both algorithms (`CRASH` events, crash only). Recover rebinds and calls both algorithms' `recover()`; Bully's starts an election (E4a), so a recovered highest node reclaims leadership.
+- **Events** (module `election`, node-clock Lamport):
+  - every `ElectionEventType` by name, with data `{algorithm: BULLY|RING}`;
+  - `MESSAGE_SENT` and `MESSAGE_RECEIVED` (peer, data `{messageType}`, and on receive `causedByTime`), only for `ELECTION`, `OK`, `COORDINATOR`, `RING_ELECTION` and `RING_COORDINATOR`; never for `PROBE`, `PROBE_ACK` or `HEARTBEAT`.
+- **Lamport (L4):** election messages and probes carry `node.clock().tick()` on send; the receiver calls `node.clock().update(t)`. Heartbeats are exempt (see Deviations).
+- **Config:** `udcf.election.*` (`ElectionProperties`): `ok-timeout-millis` 900, `coordinator-timeout-millis` 2200, `probe-timeout-millis` 300, `ring-completion-timeout-millis` 5000, `heartbeat-interval-millis` 700, `heartbeat-timeout-millis` 2500. `toElectionConfig()` and `toFailureDetectorConfig()` convert them.
+- **Wire format:** `TYPE|senderId|lamportTime|payload`, UTF-8, at most 1024 bytes. Oversize, malformed, unknown-sender and self-sent datagrams are dropped and logged.
+
+**`com.udcf.core.failure.FailureDetector`** (one per node, owned by that node's election service; Exp 8 uses it in E8b)
+- Get it with `ElectionNodeService.on(node, cluster, properties, bus).failureDetector()`.
+- `addListener(FailureListener)` returns a `Registration`. `FailureListener.onSuspected(int peerId, long silentMillis)` and `onAlive(int peerId, long silentMillis)` are called on the election worker thread and must not block.
+- `isSuspected(peerId)`, `suspectedPeers()`, and `peers()`, a list of `PeerHealth(peerId, suspected, Long millisSinceLastHeartbeat)`, where `millisSinceLastHeartbeat` is `null` if never heard since start.
+- Every interval it sends a heartbeat to every peer. A peer silent for more than the timeout, counted from its last heartbeat or from start, is suspected; a heartbeat from it makes it alive again.
+- Each node has its own view. Only changes are published: `PEER_SUSPECTED` and `PEER_ALIVE` (module `election`, peer, data `{silentMillis, timeoutMillis}`).
+- A node's detector stops on crash and restarts with a fresh view (no suspicions) on recover.
+- It has no threads of its own: the owner drives `tick()` and `onHeartbeat(peerId)`. A new owner would build it with `new FailureDetector(node, peerIds, config, module, heartbeatSender, bus, nanoClock)`.
 
 ### E4a: Election Events
 The `ElectionEventType` enum exposes these algorithm-level statuses:
@@ -111,9 +130,40 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 ---
 
+## Requirements Coverage (E4b)
+
+| Requirement | Implementation / Rule | Test |
+|---|---|---|
+| Election UDP service on `ports().election()`, bound to 127.0.0.1 | `ElectionNodeService.open()`; no `SO_REUSEADDR`, so a collision fails loudly | `ElectionNodeServiceTest.startBindsLoopbackElectionPort`, `portCollisionFailsStartLoudly` |
+| Crash and stop join every thread and free the port | Close socket, join listener, `shutdownNow` and await the worker, join its thread (5 s each) | `ElectionNodeServiceTest.crashClosesSocketJoinsListenerAndFreesPort`, `stopJoinsThreadsAndReleasesPort` |
+| Recover rebinds; lifecycle idempotent; follows the node (R10) | `recover()` reopens and recovers both algorithms | `ElectionNodeServiceTest.recoverRebindsAndRunsAgain`, `crashAndRecoverAreIdempotent`, `lifecycleFollowsClusterNodeCrashAndRecover` |
+| Elections refused on a node that is down | `NodeDownException` | `ElectionNodeServiceTest.startElectionOnCrashedServiceThrowsNodeDown` |
+| Listener survives malformed, oversize, unknown-sender datagrams and ICMP refusals | Log and continue while the socket is open | `ElectionNodeServiceTest.listenerSurvivesMalformedAndOversizeDatagrams`, `listenerSurvivesPortUnreachable` |
+| Hard rule 7: no algorithm work on the listener thread | Listener reads, decodes, hands off to `udcf-election-n<k>-worker` | `ElectionNodeServiceTest.algorithmWorkRunsOnWorkerNeverOnListenerThread` |
+| L4 on election messages | Send stamps `node.clock().tick()`, receive calls `update(t)` | `ElectionNodeServiceTest.receivedMessageAdvancesReceiverClockPastSenderStamp`, `ElectionOverUdpTest.everyElectionMessageEmitsSentAndReceivedEvents` |
+| Heartbeats exempt from L4 (deviation) | Heartbeat sent with 0, never applied | `ElectionNodeServiceTest.heartbeatsDoNotTouchNodeClock`, `ElectionMessageTest.testHeartbeatRoundTrip` |
+| Bully over real UDP; highest live node wins; recovered highest reclaims | E4a `BullyAlgorithm` on the transport | `ElectionOverUdpTest.bullyElectsHighestLiveNodeAndConsensusHolds`, `bullyWithHighestCrashedElectsNextHighest`, `recoveredHighestNodeReclaimsLeadership` |
+| Ring over real UDP skips a dead node | E4a `RingAlgorithm` and callback prober | `ElectionOverUdpTest.ringElectsHighestAndSkipsCrashedSuccessor` |
+| MESSAGE_SENT/RECEIVED only for the five election types | `PUBLISHED_TYPES` | `ElectionOverUdpTest.everyElectionMessageEmitsSentAndReceivedEvents` |
+| Failure detector: heartbeats, suspect after timeout, alive again (L2) | `FailureDetector.tick()` / `onHeartbeat()` | `FailureDetectorTest` (12 tests), `ElectionOverUdpTest.detectorOnEveryLiveNodeSuspectsCrashedPeerThenSeesItAlive` |
+| Config from YAML (Appendix B, ring completion 5000 ms) | `ElectionProperties`, `udcf.election` block | `ElectionPropertiesTest` (3 tests) |
+
+---
+
+## Deviations
+
+- L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: ~11 ticks per second per node at 5 nodes would inflate Experiment 3 values and break the fresh-backend all-zero state. Awaiting Rohan's sign-off at PR review.
+
+---
+
 ## Known issues
 
 - `MultithreadingModuleTest.backpressureIsDeterministicAndGuarded` (Track A's test) failed once in one of three runs (expected 5, was 9). Not edited, as it is unrelated to the election module and our tests are completely pure without static state, threads, or sleep loops.
+- E4b: nothing in production starts `ElectionNodeService` yet; E4c's `ElectionModule` will start it on every node. A node whose election service is not running is indistinguishable from a dead one, so every node's service must start together, or the started ones suspect the others after 2500 ms.
+- E4b: the E4a algorithms still keep a private Lamport counter. The transport replaces it on the wire and in every event with the node clock, so the private value is never published (no E4a edit, by decision).
+- E4b: E4a's `getCoordinatorId()` reads a non-volatile field. The transport only reads it on the worker thread and exposes its own volatile `coordinatorId()`; other code should use that (no E4a edit, by decision).
+- E4b: a Ring election started when every other node is dead never elects anyone (E4a ring-of-one behaviour): it ends in `ELECTION_TIMEOUT` after 5000 ms. E4c should use Bully for automatic re-election.
+- E4b: verified on Windows only (three full runs). The five Linux (Docker, 2 CPUs) runs of the new classes are still to be done by Swanand.
 
 ---
 
@@ -121,3 +171,4 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 - 2026-10-07 track file created.
 - 2026-10-08 E4a completed (baseline 525, total 579; 54 election tests covering all scenarios including stale timers, crash safety, 1024-char limit, probe event absence, and action loop crash guards).
+- 2026-10-09 E4b done: election UDP transport (`ElectionNodeService`, worker-only algorithm work, joined lifecycle) and the shared `core/failure/FailureDetector` (700/2500 ms heartbeats, PEER_SUSPECTED/PEER_ALIVE); backend 852 tests (baseline 817 + 35), frontend not run (no frontend change); deviations: heartbeats exempt from L4 (awaiting Rohan's sign-off), `HEARTBEAT` added to E4a's `ElectionMessageType` (approved).

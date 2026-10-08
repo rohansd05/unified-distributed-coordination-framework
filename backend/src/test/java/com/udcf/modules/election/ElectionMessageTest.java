@@ -36,4 +36,12 @@ class ElectionMessageTest {
         assertTrue(sb.length() > 1024);
         assertThrows(IllegalArgumentException.class, () -> ElectionMessage.fromWire(sb.toString()));
     }
+
+    @Test
+    void testHeartbeatRoundTrip() {
+        ElectionMessage heartbeat = new ElectionMessage(ElectionMessageType.HEARTBEAT, 3, 0, "");
+        String wire = heartbeat.toWire();
+        assertEquals("HEARTBEAT|3|0|", wire);
+        assertEquals(heartbeat, ElectionMessage.fromWire(wire));
+    }
 }
