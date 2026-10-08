@@ -273,4 +273,55 @@ class RingAlgorithmTest {
         long newSendTime = messenger.sent.get(0).lamportTime();
         assertTrue(newSendTime > 100);
     }
+
+    @Test
+    void testOldCompletionTimeoutFiredAfterNewElectionStartedDoesNothing() {
+        MockProber prober = new MockProber();
+        RingAlgorithm node1 = createNode(1, List.of(1, 2, 3), prober);
+        node1.startElection();
+        Runnable oldCompletionTimeout = timer.tasks.get(timer.tasks.size() - 1).action;
+
+        // Completion timeout fires normally, clearing in-progress flag
+        timer.fire(config.ringCompletionTimeoutMs());
+        listener.clear();
+
+        // Node starts a new election (generation 2)
+        node1.startElection();
+        listener.clear();
+
+        // Now fire the OLD completion timeout from generation 1:
+        oldCompletionTimeout.run();
+
+        // Should do nothing: no timeout event emitted
+        assertEquals(0, listener.events.stream().filter(e -> e.type() == ElectionEventType.ELECTION_TIMEOUT).count());
+    }
+
+    @Test
+    void testCrashBetweenCollectingAndSendingSendsNothingFurther() {
+        MockProber prober = new MockProber();
+        RingAlgorithm[] nodeRef = new RingAlgorithm[1];
+        ElectionEventListener crashOnStartListener = event -> {
+            if (event.type() == ElectionEventType.ELECTION_START) {
+                nodeRef[0].crash();
+            }
+        };
+        nodeRef[0] = new RingAlgorithm(1, List.of(1, 2, 3), config, messenger, crashOnStartListener, timer, wallClock, prober);
+        nodeRef[0].startElection();
+
+        assertTrue(nodeRef[0].isCrashed());
+        assertEquals(0, messenger.sent.size());
+        assertEquals(0, timer.tasks.size());
+    }
+
+    @Test
+    void testNoEventForProbeOrProbeAck() {
+        MockProber prober = new MockProber();
+        RingAlgorithm node1 = createNode(1, List.of(1, 2, 3), prober);
+        listener.clear();
+
+        node1.onReceive(new ElectionMessage(ElectionMessageType.PROBE, 2, 10, ""));
+        node1.onReceive(new ElectionMessage(ElectionMessageType.PROBE_ACK, 2, 11, ""));
+
+        assertEquals(0, listener.events.size(), "No election events should be emitted for PROBE or PROBE_ACK");
+    }
 }
