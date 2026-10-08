@@ -33,15 +33,15 @@ import static com.udcf.core.cluster.NodeCapacity.SLOW;
  * cd backend; .\mvnw.cmd test -Dtest=LoadBalancingProbeTest -Dudcf.loadbalancing.probe=true
  * </pre>
  *
- * <p>Test-only port bases 47120 to 47620 (requests ports 47521 to 47525), inside the Exp 6
- * test range 47100 to 47899.</p>
+ * <p>Test-only port bases 21500 to 21550 (requests ports 21541 to 21545), below 32768, outside
+ * the Linux and Windows ephemeral ranges.</p>
  */
 @EnabledIfSystemProperty(named = "udcf.loadbalancing.probe", matches = "true")
 class LoadBalancingProbeTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(5,
             List.of(FAST, MEDIUM, SLOW, MEDIUM, FAST),
-            new ClusterProperties.Ports(47120, 47220, 47320, 47420, 47520, 47620));
+            new ClusterProperties.Ports(21500, 21510, 21520, 21530, 21540, 21550));
     private static final MultithreadingProperties MULTITHREADING =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));

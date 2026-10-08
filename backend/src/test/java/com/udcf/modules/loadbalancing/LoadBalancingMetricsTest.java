@@ -26,13 +26,13 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * The Experiment 6 meters against a SimpleMeterRegistry. The cluster is only a list of nodes
- * here: no service is started and no socket is opened (port bases 47140 to 47640, inside the
- * Exp 6 test range, are never bound).
+ * here: no service is started and no socket is opened (port bases 21700 to 21750, below 32768
+ * and outside the Linux and Windows ephemeral ranges, are never bound).
  */
 class LoadBalancingMetricsTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(47140, 47240, 47340, 47440, 47540, 47640));
+            new ClusterProperties.Ports(21700, 21710, 21720, 21730, 21740, 21750));
 
     private ClusterEventBus bus;
     private Cluster cluster;
@@ -53,8 +53,8 @@ class LoadBalancingMetricsTest {
     }
 
     private static List<WorkerInfo> workers() {
-        return List.of(new WorkerInfo(1, 47541, "FAST", 4), new WorkerInfo(2, 47542, "MEDIUM", 2),
-                new WorkerInfo(3, 47543, "SLOW", 1));
+        return List.of(new WorkerInfo(1, 21741, "FAST", 4), new WorkerInfo(2, 21742, "MEDIUM", 2),
+                new WorkerInfo(3, 21743, "SLOW", 1));
     }
 
     private double dispatches(int nodeId, Strategy strategy, String outcome) {

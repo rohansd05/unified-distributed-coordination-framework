@@ -35,11 +35,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * names and types (a rename breaks a test), no NaN anywhere, the error bodies, the 202, 400,
  * 404 and 409 mapping, and the meters as Prometheus scrapes them.
  *
- * <p>Crashes nodes, so it has its own context: test-only requests ports 47701 to 47705, inside
- * the Exp 6 test range 47100 to 47899. Each test starts with the module idle and reset, and
- * every crashed node recovered.</p>
+ * <p>Crashes nodes, so it has its own context: test-only requests ports 21881 to 21885, below
+ * 32768 and outside the Linux and Windows ephemeral ranges. Each test starts with the module
+ * idle and reset, and every crashed node recovered.</p>
  */
-@SpringBootTest(properties = "udcf.cluster.ports.requests-base=47700")
+@SpringBootTest(properties = "udcf.cluster.ports.requests-base=21880")
 @AutoConfigureMockMvc
 @AutoConfigureObservability
 class LoadBalancingControllerTest {
@@ -163,7 +163,7 @@ class LoadBalancingControllerTest {
                 "healthy", "inFlight", "completed", "failed", "declined", "ewmaLatencyMillis", "averageLatencyMillis");
         assertThat(worker.get("nodeStatus").asText()).isEqualTo("UP");
         assertThat(worker.get("capacity").asText()).isEqualTo("FAST");
-        assertThat(worker.get("port").asInt()).isEqualTo(47701);
+        assertThat(worker.get("port").asInt()).isEqualTo(21881);
         assertThat(worker.get("ewmaLatencyMillis").isNull()).isTrue();
         assertThat(worker.get("averageLatencyMillis").isNull()).isTrue();
     }

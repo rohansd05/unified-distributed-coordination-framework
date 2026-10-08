@@ -31,9 +31,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * executor and a number while it has one.
  *
  * <p>{@code @AutoConfigureObservability} turns the Prometheus exporter on, and the test-only
- * requests base (44300) gives this class its own context, since it crashes a node.</p>
+ * requests base (21840; ports below 32768, outside the Linux and Windows ephemeral ranges)
+ * gives this class its own context, since it crashes a node.</p>
  */
-@SpringBootTest(properties = "udcf.cluster.ports.requests-base=44300")
+@SpringBootTest(properties = "udcf.cluster.ports.requests-base=21840")
 @AutoConfigureMockMvc
 @AutoConfigureObservability
 class MultithreadingPrometheusTest {
