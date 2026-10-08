@@ -39,14 +39,14 @@ import static org.awaitility.Awaitility.await;
  * The module on a standalone three-node cluster (FAST, MEDIUM, SLOW) with real sockets. No
  * Spring context, so its crashes never disturb other tests.
  *
- * <p>Test-only port bases 45100 to 45600 (requests on 4550k): below the Windows dynamic
- * range and apart from every other test class. Queue capacity 20 and a backpressure demo of
- * 5 extra IO requests keep the demos short.</p>
+ * <p>Test-only port bases 21100 to 21150 (node k's requests port is 21140 + k): below 32768,
+ * outside the Linux and Windows ephemeral ranges, and apart from every other test class.
+ * Queue capacity 20 and a backpressure demo of 5 extra IO requests keep the demos short.</p>
  */
 class MultithreadingModuleTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(45100, 45200, 45300, 45400, 45500, 45600));
+            new ClusterProperties.Ports(21100, 21110, 21120, 21130, 21140, 21150));
     private static final MultithreadingProperties PROPERTIES = new MultithreadingProperties(20, 60,
             "udcf-worker-", 30, 500, 2000,
             new MultithreadingProperties.Backpressure(5, WorkloadType.IO_SIMULATED, 100));
@@ -284,7 +284,7 @@ class MultithreadingModuleTest {
         assertThat(fast.serviceRunning()).isTrue();
         assertThat(fast.stats()).isNotNull();
         assertThat(fast.stats().maxPoolSize()).isEqualTo(4);
-        assertThat(fast.port()).isEqualTo(45501);
+        assertThat(fast.port()).isEqualTo(21141);
         assertThat(slow.capacity()).isEqualTo(NodeCapacity.SLOW);
         assertThat(slow.threads()).isEqualTo(1);
         assertThat(slow.workMultiplier()).isEqualTo(4);

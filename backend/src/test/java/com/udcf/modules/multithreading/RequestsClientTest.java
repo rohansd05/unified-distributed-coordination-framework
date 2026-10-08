@@ -23,17 +23,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Drives RequestsClient against scripted one-shot servers on real 127.0.0.1 sockets.
  *
- * <p>Test-only ports 42001 to 42010 (below the Windows dynamic range, 49152 and up, and
- * apart from every other test class).</p>
+ * <p>Test-only ports 21801 to 21810 (below 32768, outside the Linux and Windows ephemeral
+ * ranges, and apart from every other test class).</p>
  */
 class RequestsClientTest {
 
     // One port per scripted test, so a connection left open by one test never meets the next bind.
-    private static final int LAMPORT_PORT = 42001;
-    private static final int ERROR_PORT = 42002;
-    private static final int SILENT_PORT = 42003;
-    private static final int CLOSING_PORT = 42004;
-    private static final int UNUSED_PORT = 42010;
+    private static final int LAMPORT_PORT = 21801;
+    private static final int ERROR_PORT = 21802;
+    private static final int SILENT_PORT = 21803;
+    private static final int CLOSING_PORT = 21804;
+    private static final int UNUSED_PORT = 21810;
 
     private ServerSocket server;
 

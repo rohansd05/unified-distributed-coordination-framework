@@ -44,19 +44,19 @@ import static org.awaitility.Awaitility.await;
  * The TCP transport on real 127.0.0.1 sockets: one real three-node cluster, no Spring
  * context, and scripted one-line servers for the replies a healthy node never sends on demand.
  *
- * <p>Test-only ports: cluster bases 47110 to 47610 (requests ports 47511 to 47513) and scripted
- * servers 47801 to 47806; 47809 is never bound (nothing listening). All inside the Exp 6 test
- * range 47100 to 47899, apart from every other test class.</p>
+ * <p>Test-only ports: cluster bases 21400 to 21450 (requests ports 21441 to 21443) and scripted
+ * servers 21481 to 21486; 21489 is never bound (nothing listening). All below 32768, outside
+ * the Linux and Windows ephemeral ranges, and apart from every other test class.</p>
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class TcpWorkerTransportTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(47110, 47210, 47310, 47410, 47510, 47610));
+            new ClusterProperties.Ports(21400, 21410, 21420, 21430, 21440, 21450));
     private static final MultithreadingProperties MULTITHREADING =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
-    private static final int NOTHING_LISTENING = 47809;
+    private static final int NOTHING_LISTENING = 21489;
 
     /** A one-line server: replies with a fixed line, closes without replying, or never replies. */
     private static final class ScriptedServer implements AutoCloseable {
@@ -175,13 +175,13 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("REJECTED and FAILED replies decline the request (node alive) and publish DISPATCH_DECLINED")
     void rejectedAndFailedDecline() throws Exception {
-        server(47801, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-9;;0.0;0.0;0.0;Queue full");
-        server(47802, ScriptedServer.Mode.REPLY, "FAILED|2|6|r-10;udcf-worker-n2-1;1.0;2.0;3.0;Work failed");
+        server(21481, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-9;;0.0;0.0;0.0;Queue full");
+        server(21482, ScriptedServer.Mode.REPLY, "FAILED|2|6|r-10;udcf-worker-n2-1;1.0;2.0;3.0;Work failed");
 
-        assertThatThrownBy(() -> transport.send(worker(1, 47801), 7, 5))
+        assertThatThrownBy(() -> transport.send(worker(1, 21481), 7, 5))
                 .isInstanceOf(WorkerDeclinedException.class)
                 .hasMessageContaining("REJECTED").hasMessageContaining("Queue full");
-        assertThatThrownBy(() -> transport.send(worker(2, 47802), 8, 5))
+        assertThatThrownBy(() -> transport.send(worker(2, 21482), 8, 5))
                 .isInstanceOf(WorkerDeclinedException.class)
                 .hasMessageContaining("FAILED").hasMessageContaining("Work failed");
 
@@ -200,12 +200,12 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("an ERROR reply or a malformed reply (ProtocolException) declines the request: the node is alive")
     void protocolErrorsDecline() throws Exception {
-        server(47803, ScriptedServer.Mode.REPLY, "ERROR|1|5|Invalid request: bad");
-        server(47804, ScriptedServer.Mode.REPLY, "COMPLETED|1|5|garbage");
+        server(21483, ScriptedServer.Mode.REPLY, "ERROR|1|5|Invalid request: bad");
+        server(21484, ScriptedServer.Mode.REPLY, "COMPLETED|1|5|garbage");
 
-        assertThatThrownBy(() -> transport.send(worker(1, 47803), 1, 5))
+        assertThatThrownBy(() -> transport.send(worker(1, 21483), 1, 5))
                 .isInstanceOf(WorkerDeclinedException.class).hasMessageContaining("Invalid request: bad");
-        assertThatThrownBy(() -> transport.send(worker(1, 47804), 2, 5))
+        assertThatThrownBy(() -> transport.send(worker(1, 21484), 2, 5))
                 .isInstanceOf(WorkerDeclinedException.class);
 
         assertThat(events("DISPATCH_DECLINED")).hasSize(2)
@@ -230,9 +230,9 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("a connection closed without a reply (a crash mid-request): a plain IOException")
     void closedWithoutReply() throws Exception {
-        server(47805, ScriptedServer.Mode.CLOSE, null);
+        server(21485, ScriptedServer.Mode.CLOSE, null);
 
-        assertThatThrownBy(() -> transport.send(worker(1, 47805), 1, 5))
+        assertThatThrownBy(() -> transport.send(worker(1, 21485), 1, 5))
                 .isInstanceOf(IOException.class)
                 .isNotInstanceOf(SocketTimeoutException.class).isNotInstanceOf(ProtocolException.class);
         assertThat(events("DISPATCH_FAILED")).singleElement()
@@ -242,11 +242,11 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("a node that never answers: SocketTimeoutException after the configured timeout")
     void silentNode() throws Exception {
-        server(47806, ScriptedServer.Mode.HOLD, null);
+        server(21486, ScriptedServer.Mode.HOLD, null);
         TcpWorkerTransport shortTimeout =
                 new TcpWorkerTransport(new RequestsClient(200), cluster.clusterClock(), bus);
 
-        assertThatThrownBy(() -> shortTimeout.send(worker(1, 47806), 1, 5))
+        assertThatThrownBy(() -> shortTimeout.send(worker(1, 21486), 1, 5))
                 .isInstanceOf(SocketTimeoutException.class);
         assertThat(events("DISPATCH_FAILED")).singleElement()
                 .satisfies(e -> assertThat(e.data()).containsEntry("reason", "SocketTimeoutException"));
@@ -255,23 +255,23 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("work units outside the Exp 2 payload range 1-5000 are refused before any connection")
     void workUnitsRange() throws Exception {
-        ScriptedServer s = server(47801, ScriptedServer.Mode.REPLY, "COMPLETED|1|5|r-1;t;0.0;0.0;0.0;ok");
+        ScriptedServer s = server(21481, ScriptedServer.Mode.REPLY, "COMPLETED|1|5|r-1;t;0.0;0.0;0.0;ok");
         long clockBefore = cluster.clusterClock().current();
 
-        assertThatThrownBy(() -> transport.send(worker(1, 47801), 1, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> transport.send(worker(1, 47801), 1, 5001)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> transport.send(worker(1, 21481), 1, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> transport.send(worker(1, 21481), 1, 5001)).isInstanceOf(IllegalArgumentException.class);
 
         assertThat(s.accepted()).isZero();
         assertThat(cluster.clusterClock().current()).isEqualTo(clockBefore);
-        transport.send(worker(1, 47801), 1, 5000);   // the upper bound itself is fine
+        transport.send(worker(1, 21481), 1, 5000);   // the upper bound itself is fine
         assertThat(s.accepted()).isEqualTo(1);
     }
 
     @Test
     @DisplayName("events are capped at 20 per worker per transport; the balancer's counters keep the true totals")
     void eventCap() throws Exception {
-        server(47801, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-1;;0.0;0.0;0.0;Queue full");
-        WorkerInfo w1 = worker(1, 47801);
+        server(21481, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-1;;0.0;0.0;0.0;Queue full");
+        WorkerInfo w1 = worker(1, 21481);
         LoadBalancer lb = new LoadBalancer(List.of(w1), transport);
 
         for (int id = 1; id <= 100; id++) {
@@ -305,10 +305,10 @@ class TcpWorkerTransportTest {
     @Test
     @DisplayName("given a run id, every event carries it; without one, none does")
     void runIdOnEvents() throws Exception {
-        server(47801, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-1;;0.0;0.0;0.0;Queue full");
+        server(21481, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-1;;0.0;0.0;0.0;Queue full");
         TcpWorkerTransport tagged = new TcpWorkerTransport(new RequestsClient(5000), cluster.clusterClock(), bus, "abc12345");
 
-        assertThatThrownBy(() -> tagged.send(worker(1, 47801), 1, 5)).isInstanceOf(WorkerDeclinedException.class);
+        assertThatThrownBy(() -> tagged.send(worker(1, 21481), 1, 5)).isInstanceOf(WorkerDeclinedException.class);
         assertThatThrownBy(() -> tagged.send(worker(2, NOTHING_LISTENING), 2, 5)).isInstanceOf(ConnectException.class);
         assertThatThrownBy(() -> transport.send(worker(3, NOTHING_LISTENING), 3, 5)).isInstanceOf(ConnectException.class);
 

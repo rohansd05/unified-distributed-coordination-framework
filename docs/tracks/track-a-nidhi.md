@@ -241,12 +241,31 @@
   -Dudcf.loadbalancing.probe=true`. Runs all four strategies on FAST, MEDIUM, SLOW, MEDIUM, FAST
   at 60 requests and 12 clients for payloads 25, 100, 400 and 900 and prints a table; it asserts
   nothing about which strategy wins.
-- **Test ports (E6b): 47100 to 47899 are Track A's Exp 6 test range.** Cluster bases 47100-47600
-  (LoadBalancingGatewayTest), 47110-47610 (TcpWorkerTransportTest), 47120-47620 (the probe);
-  scripted servers 47801-47806; 47809 is kept unbound. Other tracks: please avoid this range.
-  E6c adds: 47130-47630 (LoadBalancingModuleTest, requests ports 47531-47533), 47140-47640
-  (LoadBalancingMetricsTest, never bound) and `requests-base=47700` (LoadBalancingControllerTest,
-  requests ports 47701-47705).
+- **Test ports (hard rule 10, README Section 10): Track A's block is 21000 to 21999.** Every
+  fixed test port is below 32768, outside the Linux and Windows ephemeral ranges. The old ranges
+  (41xxx to 47xxx) are retired. A six-base `Ports(...)` uses S, S+10, ..., S+50 (rmi, clock,
+  election, replication, requests, mapreduce), so node k's requests port is S+40+k. Final mapping
+  (2026-10-09):
+
+  | Sub-block | Test class | Ports (old -> new) |
+  |---|---|---|
+  | 21000-21099 | RequestsNodeServiceTest | Ports(41100..41600) -> Ports(21000..21050); 41501 -> 21041, 41502 -> 21042 |
+  | 21100-21199 | MultithreadingModuleTest | Ports(45100..45600) -> Ports(21100..21150); 45501 -> 21141 |
+  | 21200-21299 | MultithreadingMetricsTest | Ports(46100..46600) -> Ports(21200..21250) |
+  | 21300-21399 | LoadBalancingGatewayTest | Ports(47100..47600) -> Ports(21300..21350); 47501-47503 -> 21341-21343 |
+  | 21400-21499 | TcpWorkerTransportTest | Ports(47110..47610) -> Ports(21400..21450); scripted 47801-47806 -> 21481-21486; unbound 47809 -> 21489 |
+  | 21500-21599 | LoadBalancingProbeTest (opt-in, 5 nodes) | Ports(47120..47620) -> Ports(21500..21550); requests 21541-21545 |
+  | 21600-21699 | LoadBalancingModuleTest | Ports(47130..47630) -> Ports(21600..21650); 47531-47533 -> 21641-21643 |
+  | 21700-21799 | LoadBalancingMetricsTest (never bound) | Ports(47140..47640) -> Ports(21700..21750); WorkerInfo 47541-47543 -> 21741-21743 |
+  | 21800-21819 | RequestsClientTest | 42001-42004 -> 21801-21804; unbound 42010 -> 21810 |
+  | 21820-21839 | MultithreadingControllerTest | requests-base 43200 -> 21820 (ports 21821-21825); 43205 -> 21825 |
+  | 21840-21859 | MultithreadingPrometheusTest | requests-base 44300 -> 21840 (ports 21841-21845) |
+  | 21860-21879 | core/metrics/PrometheusScrapeTest | requests-base 44200 -> 21860; 44201 -> 21861 |
+  | 21880-21899 | LoadBalancingControllerTest | requests-base 47700 -> 21880 (ports 21881-21885); 47701 -> 21881 |
+  | 21900-21999 | spare | - |
+
+  The four `@SpringBootTest` classes override only `requests-base`; their other bases stay at the
+  defaults (1100, 6000, 7000, 7100, 7300), at least 10 away from every 218xx base.
 - **Load Balancing API (E6c, for E6d).** Module `loadbalancing`, lab 6, title "Load Balancing";
   status BUSY while a run or comparison executes, otherwise IDLE. Under `/api/modules/loadbalancing`:
   - `GET` overview `{status, actionInProgress, defaults{requestCount, workUnits, concurrency},
@@ -567,3 +586,15 @@
   RequestsNodeServiceTest 19 tests: 10 local runs and 5 Linux runs (maven:3.9-eclipse-temurin-21,
   --cpus=2) all green; backend 527 tests, 1 skipped (3 runs); frontend not run (no frontend
   change); deviations: none.
+- 2026-10-09 Test ports moved into Track A's block 21000-21999 (hard rule 10): every fixed port
+  in the 13 Track A test classes (multithreading, loadbalancing, core/metrics/PrometheusScrapeTest),
+  including javadoc and comments, now follows the mapping table under "Interfaces for other
+  tracks"; the base + k patterns are kept, with Ports(...) bases 10 apart. Test files only: no
+  production code, pom, JVM flags or sleeps. Backend baseline after merging main 763 tests, 0
+  failures, 1 skipped (LoadBalancingProbeTest); after the change 3 runs of 763 tests, 0 failures,
+  0 errors, 1 skipped. A scan for numbers 32768-65535 over the Track A tests finds only "32768" in
+  the new comment text. Left unchanged (validation values, not ports): ClusterPropertiesTest
+  65526/65527 and WorkerInfoTest 65_536. Frontend not run (no frontend change). Deviation
+  (approved): 13 classes do not fit ten 100-wide sub-blocks, so the eight Ports(...) classes have
+  100 each and the five single-base or fixed-port classes have 20 each (21800-21899); 21900-21999
+  is spare.

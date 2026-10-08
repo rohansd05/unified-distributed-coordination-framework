@@ -56,14 +56,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the test decides when the background work runs, so BUSY and IDLE are checked without
  * timing.
  *
- * <p>Test-only port bases 47130 to 47630 (requests ports 47531 to 47533), inside the Exp 6
- * test range 47100 to 47899.</p>
+ * <p>Test-only port bases 21600 to 21650 (requests ports 21641 to 21643), below 32768, outside
+ * the Linux and Windows ephemeral ranges.</p>
  */
 @Timeout(value = 90, unit = TimeUnit.SECONDS)
 class LoadBalancingModuleTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(47130, 47230, 47330, 47430, 47530, 47630));
+            new ClusterProperties.Ports(21600, 21610, 21620, 21630, 21640, 21650));
     private static final MultithreadingProperties MULTITHREADING =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
@@ -153,7 +153,7 @@ class LoadBalancingModuleTest {
         assertThat(overview.defaults()).isEqualTo(PROPERTIES.defaults());
         assertThat(overview.limits()).isEqualTo(PROPERTIES.limits());
         assertThat(overview.workers()).extracting(WorkerDto::weight).containsExactly(4, 2, 1);
-        assertThat(overview.workers()).extracting(WorkerDto::port).containsExactly(47531, 47532, 47533);
+        assertThat(overview.workers()).extracting(WorkerDto::port).containsExactly(21641, 21642, 21643);
         assertThat(overview.workers()).allSatisfy(w -> {
             assertThat(w.healthy()).isTrue();
             assertThat(w.inFlight()).isZero();

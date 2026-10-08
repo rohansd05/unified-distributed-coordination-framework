@@ -30,11 +30,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * field names and types (so a rename breaks a test), the error bodies, and the 202/400/404/409
  * mapping. Replaces the pre-E2c test of the retired /api/multithreading controller.
  *
- * <p>Crashes nodes, so it has its own context: test-only requests ports 43201 to 43205, queue
- * capacity 20, and a short IO backpressure demo.</p>
+ * <p>Crashes nodes, so it has its own context: test-only requests ports 21821 to 21825 (below
+ * 32768, outside the Linux and Windows ephemeral ranges), queue capacity 20, and a short IO
+ * backpressure demo.</p>
  */
 @SpringBootTest(properties = {
-        "udcf.cluster.ports.requests-base=43200",
+        "udcf.cluster.ports.requests-base=21820",
         "udcf.multithreading.queue-capacity=20",
         "udcf.multithreading.backpressure.extra-requests=5",
         "udcf.multithreading.backpressure.workload=IO_SIMULATED",
@@ -122,7 +123,7 @@ class MultithreadingControllerTest {
         assertType(node, "workMultiplier", JsonNode::isInt);
         assertType(node, "port", JsonNode::isInt);
         assertType(node, "serviceRunning", JsonNode::isBoolean);
-        assertThat(node.get("port").asInt()).isEqualTo(43205);
+        assertThat(node.get("port").asInt()).isEqualTo(21825);
         assertThat(node.get("stats").isNull()).as("node 5 has never been used").isTrue();
         assertThat(node.get("capacityConfigured").asBoolean()).isTrue();
     }
