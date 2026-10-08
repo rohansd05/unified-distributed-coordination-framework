@@ -1,0 +1,1 @@
+{"runId":"9099548f","state":"RUNNING","strategy":"ROUND_ROBIN","requestCount":60,"workUnits":400,"concurrency":12,"crash":{"nodeId":3,"afterServed":20,"crashed":false},"startedAt":"2026-10-07T22:06:07.041132Z","finishedAt":null,"report":null,"error":null}

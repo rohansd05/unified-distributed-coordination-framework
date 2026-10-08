@@ -179,6 +179,42 @@ class BatchRunnerTest {
     }
 
     @Test
+    @DisplayName("the observer sees every result exactly once, on the client thread that dispatched it")
+    void observerSeesEveryResultOnce() {
+        Set<Integer> seen = ConcurrentHashMap.newKeySet();
+        AtomicInteger calls = new AtomicInteger();
+        List<Boolean> onClientThread = new CopyOnWriteArrayList<>();
+        LoadBalancer lb = new LoadBalancer(workers(3), (w, id, units) -> { });
+
+        PhaseReport report = new BatchRunner().run(lb, Strategy.LEAST_CONNECTIONS, 40, 1, 6, result -> {
+            calls.incrementAndGet();
+            seen.add(result.requestId());
+            onClientThread.add(Thread.currentThread().getName().startsWith(BatchRunner.CLIENT_THREAD_PREFIX));
+        });
+
+        assertThat(report.served()).isEqualTo(40);
+        assertThat(calls).hasValue(40);
+        assertThat(seen).hasSize(40);
+        assertThat(onClientThread).hasSize(40).containsOnly(true);
+    }
+
+    @Test
+    @DisplayName("an exception from the observer ends the run like a transport bug and is rethrown")
+    void observerExceptionRethrown() {
+        IllegalStateException boom = new IllegalStateException("observer failed");
+        LoadBalancer lb = new LoadBalancer(workers(2), (w, id, units) -> { });
+
+        assertThatThrownBy(() -> new BatchRunner().run(lb, Strategy.ROUND_ROBIN, 100, 1, 4, result -> {
+            if (result.requestId() == 3) {
+                throw boom;
+            }
+        })).isSameAs(boom);
+        assertThat(lb.workers()).allMatch(w -> w.inFlight() == 0);
+        assertThatThrownBy(() -> new BatchRunner().run(lb, Strategy.ROUND_ROBIN, 1, 1, 1, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     @DisplayName("rejects null arguments with NullPointerException and counts below 1 with IllegalArgumentException")
     void validation() {
         LoadBalancer lb = new LoadBalancer(workers(1), (w, id, units) -> { });

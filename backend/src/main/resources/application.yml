@@ -45,6 +45,17 @@ udcf:
   loadbalancing:
     # Connect and read timeout per attempt; the read also covers the worker's queue wait.
     request-timeout-millis: 10000
+    # Appendix B: 60 requests and 12 concurrent clients; 400 work units (Exp 2 payload) from the E6b probe.
+    defaults:
+      request-count: 60
+      work-units: 400
+      concurrency: 12
+    # max-total-work caps requestCount x workUnits per run, and 5 x that for a comparison (4 phases + warm-up).
+    limits:
+      max-request-count: 1000
+      max-work-units: 5000
+      max-concurrency: 50
+      max-total-work: 500000
 
 management:
   endpoints:

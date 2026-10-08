@@ -28,7 +28,7 @@
 ### Steps
 - [x] E6a — strategies (Round Robin, smooth Weighted Round Robin, Least Connections, Least Response Time = EWMA latency x (in-flight + 1), alpha 0.3), `WorkerInfo`, `DispatchResult`, `PhaseReport`, circuit-breaker reroute, as pure classes. Needs: E2d.
 - [x] E6b — the balancer dispatching over TCP into each node's requests service, with reroute when a worker is down. Needs: E6a, E2b.
-- [ ] E6c — `LoadBalancingModule` (lab 6): run a strategy, "compare all four", crash a worker mid-run; events, metrics, fixtures. Needs: E6b.
+- [x] E6c — `LoadBalancingModule` (lab 6): run a strategy, "compare all four", crash a worker mid-run; events, metrics, fixtures. Needs: E6b.
 - [ ] E6d — page and end-to-end check. Needs: E6c.
 
 ---
@@ -238,6 +238,90 @@
 - **Test ports (E6b): 47100 to 47899 are Track A's Exp 6 test range.** Cluster bases 47100-47600
   (LoadBalancingGatewayTest), 47110-47610 (TcpWorkerTransportTest), 47120-47620 (the probe);
   scripted servers 47801-47806; 47809 is kept unbound. Other tracks: please avoid this range.
+  E6c adds: 47130-47630 (LoadBalancingModuleTest, requests ports 47531-47533), 47140-47640
+  (LoadBalancingMetricsTest, never bound) and `requests-base=47700` (LoadBalancingControllerTest,
+  requests ports 47701-47705).
+- **Load Balancing API (E6c, for E6d).** Module `loadbalancing`, lab 6, title "Load Balancing";
+  status BUSY while a run or comparison executes, otherwise IDLE. Under `/api/modules/loadbalancing`:
+  - `GET` overview `{status, actionInProgress, defaults{requestCount, workUnits, concurrency},
+    limits{maxRequestCount, maxWorkUnits, maxConcurrency, maxTotalWork}, capacityNote,
+    workUnitsNote, deliveryNote, warmUpNote, crashNote, strategies[{strategy, description,
+    informationUsed}], workers[{nodeId, nodeStatus, capacity, threads, workMultiplier, weight,
+    port, healthy, inFlight, completed, failed, declined, ewmaLatencyMillis, averageLatencyMillis}],
+    latestRun, latestComparison}`. Workers carry the current or last run's live counters (poll
+    while BUSY to animate); `healthy` is false when the node is down or the breaker took it out.
+  - `POST /runs` `{strategy, requestCount, workUnits, concurrency, crash?: {nodeId, afterServed}}`
+    returns 202 and a RunDto `{runId, state RUNNING|FINISHED|FAILED, strategy, requestCount,
+    workUnits, concurrency, crash{nodeId, afterServed, crashed}|null, startedAt, finishedAt|null,
+    report|null, error|null}`.
+  - `POST /comparisons` `{requestCount, workUnits, concurrency}` returns 202 and a ComparisonDto
+    `{comparisonId, state, requestCount, workUnits, concurrency, warmUpRequests, startedAt,
+    finishedAt|null, phases[], finding|null, error|null}`; phases fill in Strategy order as they
+    finish.
+  - PhaseReportDto `{runId, strategy, requestCount, served, failures, reroutes, makespanMillis,
+    averageLatencyMillis|null, p95LatencyMillis|null, maxLatencyMillis|null, loadSpread,
+    nodes[{nodeId, capacity, requests, averageLatencyMillis|null, failedAttempts,
+    declinedAttempts, healthy}]}`; FindingDto `{fastest, slowest, mostEven,
+    roundRobinFinishedLast, roundRobinMostEven, gainOverRoundRobinPercent|null}`. Milliseconds
+    rounded to 2 decimals; a figure that does not exist is null, never 0 or NaN. Enums are names.
+  - Errors (ProblemDetail): 400 "Invalid request parameters" with `errors` keyed `strategy`,
+    `requestCount`, `workUnits`, `concurrency`, `totalWork` or `crash.afterServed`; 404 "Unknown
+    node" (+nodeId) for a crash plan's node; 409 "Node down" (+nodeId) when that node is already
+    crashed; 409 "Module busy" (+moduleId, actionInProgress). An unknown strategy name is a 400.
+    Real JSON for each: `frontend/src/test/fixtures/loadbalancing/` (see its README).
+  - **Rule for E6d:** the page may state "Round Robin finished last" only when
+    `finding.roundRobinFinishedLast` is true for the measured comparison (likewise "most even"
+    with `roundRobinMostEven`), and must show the measured numbers, never a fixed claim.
+- **Limits and the total-work cap (E6c).** Defaults 60 requests, 400 work units, 12 clients
+  (Appendix B counts; 400 from the E6b probe, where the round robin gap was clear). Local limits
+  1000 / 5000 / 50 and max-total-work 500000; public limits 200 / 500 / 24 and max-total-work
+  120000. The cap applies to requestCount x workUnits for a run and to 5 x that (four phases plus
+  the warm-up) for a comparison; a violation is a 400 with an `errors.totalWork` entry, and
+  startup fails if the defaults break a limit or a default comparison breaks the cap. Why these
+  numbers: the probe's round robin run of 60 x 900 = 54000 took 235.8 ms locally, so a 500000
+  run is roughly 2 s here; on the public profile a default comparison is exactly 120000 (the
+  smallest cap that allows it), estimated at about 10 s on Render's 0.1 CPU (local CPU time
+  times ten, not measured there). Re-measure both in Phase 16.
+- **Crash plan semantics (E6c).** A run may carry `crash {nodeId, afterServed}` (afterServed in
+  1..requestCount-1; the node must exist and be up). The module injects the crash itself, exactly
+  once, on the client thread that serves the afterServed-th request (an atomic counter picks it),
+  through `Cluster.crash(nodeId)`: a real crash on every protocol (R10). The node stays down after
+  the run until someone recovers it. `crash.crashed` is true only if that call crashed the node
+  (false if it was already down then; the run still completes). It is never automatic and never
+  the balancer's doing, so the page must present it as a crash the user asked for. Comparisons
+  have no crash plan. "Zero failed requests" still holds only while another worker is healthy.
+- **Guard and race rules (E6c).** The ModuleActionGuard is taken before the background thread
+  starts and released in that thread's `finally`; if the thread cannot start
+  (RejectedExecutionException) the guard is released, nothing is left RUNNING and the request
+  fails. All checks (strategy, limits, total-work cap, crash node exists and is up, afterServed
+  range) run before the guard and before any event, so a rejected request changes nothing. One
+  action at a time; a cluster reset is refused while BUSY (ClusterResetService). Module reset
+  forgets the latest run and comparison and gives fresh worker counters.
+- **Load-balancing events (E6c).** Module `loadbalancing`, node 0, the cluster clock
+  (`clusterClock().tick()`), each carrying `runId` or `comparisonId` (so E6d can group them):
+  `RUN_STARTED {runId, comparisonId?, kind RUN|COMPARISON, strategy, requestCount, workUnits,
+  concurrency, crashNodeId?, crashAfterServed?}`; `CRASH_INJECTED {runId, nodeId, afterServed}`
+  (peer = the node; the cluster's own NODE_CRASHED follows) or `CRASH_SKIPPED {..., reason}`;
+  `RUN_FINISHED {runId, comparisonId?, kind, strategy, served, failures, reroutes,
+  makespanMillis, loadSpread, requestsPerNode {"1": n, ...}}`; `RUN_FAILED {runId or
+  comparisonId, kind, error}`; `COMPARISON_STARTED {comparisonId, requestCount, workUnits,
+  concurrency, warmUpRequests}`; `COMPARISON_FINISHED {comparisonId, fastest, slowest, mostEven,
+  roundRobinFinishedLast, roundRobinMostEven, gainOverRoundRobinPercent?}`. The warm-up publishes
+  no RUN_* events; its DISPATCH_* events carry `runId` `<comparisonId>-warm-up`. The transport's
+  DISPATCH_* events now carry `runId` too.
+- **Load-balancing metrics (E6c).** `distributed_balancer_dispatches_total {node_id (worker),
+  strategy, outcome served|failed|declined}`, added from each worker's counters once when a run
+  ends (also a failed run, with what it counted; warm-up included, as its dispatches are real);
+  `distributed_balancer_makespan` timer `{node_id "0", strategy}` per finished run;
+  `distributed_balancer_in_flight {node_id}` gauge reading the live worker, 0 when idle, never
+  NaN. Constants in `MetricNames` (`BALANCER_*`). Re-creating the module on one registry
+  replaces the gauges instead of duplicating them.
+- **E6b API additions (E6c).** `BatchRunner.run(..., Consumer<DispatchResult> onResult)` and
+  `LoadBalancingGateway.run(..., String runId, Consumer<DispatchResult> onResult)` (called on the
+  client thread after each request; an exception from it ends the run like a transport bug);
+  `TcpWorkerTransport(client, clock, bus, runId)`; `LoadBalancingGateway.resetWorkers()`;
+  `LoadBalancingProperties` gained `defaults` and `limits`. Without an observer or run id the
+  behaviour is unchanged.
 
 ---
 
@@ -285,6 +369,15 @@
 - The balancer's timeout also covers the worker's queue wait; on Render's 0.1 CPU a long queue
   could exceed it and trip the breaker on a live worker. Re-measure in Phase 16 and size E6c's
   defaults so the worst-case queue wait stays well below the timeout.
+- The public profile's limits (200 / 500 / 24) and total-work cap (120000) are estimates from
+  local measurements scaled for Render's 0.1 CPU, not measured on Render. Re-measure in Phase 16.
+- `.\mvnw.cmd spring-boot:run` starts the JVM with `-XX:TieredStopAtLevel=1` (quick start, no
+  optimising compiler), so runs there are slower than in tests or the Docker image: the fixtures'
+  long busy run (200 x 2000, one client) took about 18 s. The fixtures' measured figures come
+  from that mode.
+- A comparison always runs the strategies in the same order (round robin first). The unreported
+  warm-up removes the cold-JIT handicap, but other order effects on a shared machine are not
+  removed; the finding reports what was measured, with no claim beyond it.
 
 ---
 
@@ -390,3 +483,22 @@
   declined() == 0), not that some came back FAILED "Node crashed": E2b sends no reply after a crash,
   so such replies cannot occur without changing multithreading (out of scope); the FAILED-reply
   path is covered with a scripted server instead.
+- 2026-10-08 E6c done: LoadBalancingModule (lab 6; runs, "compare all four" with an unreported
+  warm-up, crash plan injected once via CrashTrigger and Cluster.crash; guard taken before the
+  background thread and released in its finally; all checks before the guard and before any
+  event), LoadBalancingController (/api/modules/loadbalancing: GET, POST /runs, POST
+  /comparisons), DTO records, LoadBalancingMetrics (3 new MetricNames constants, node_id on every
+  meter, counts added once per run, live in-flight gauge, safe re-registration), defaults and
+  limits with a total-work cap in application.yml and application-public.yml, events with runId
+  or comparisonId, the E6b observer and runId overloads, CoreContextTest and ModuleControllerTest
+  now count loadbalancing (additions only), 12 contract fixtures plus README captured from the
+  running backend; no virtual-thread pinning under -Djdk.tracePinnedThreads=full; backend 502
+  tests, 1 skipped (the opt-in probe), 3 runs all green; frontend 232 tests (no frontend source
+  change); deviations: (1) LoadBalancingMetrics is a plain class owned by the module, not a
+  @Component (it reads the module's gateway; avoids a circular bean and makes re-registration
+  safe); (2) beyond the plan: TcpWorkerTransport's runId constructor and the gateway's runId
+  parameter (so DISPATCH_* events carry a runId, requirement 7), LoadBalancingGateway.resetWorkers()
+  (module reset), the package-private CrashTrigger, the overview's warmUpNote and crashNote, a
+  CRASH_SKIPPED event, and the `totalWork` errors key; (3) public max-total-work is 120000, not
+  the 40000 given as an example, because a default comparison is 5 x 60 x 400 = 120000 and the
+  defaults must fit the cap.
