@@ -56,6 +56,12 @@
   `requests`) on 127.0.0.1:`node.ports().requests()` (720k). Crash closes the port and every open
   connection and shuts the executor down; recover rebinds on a fresh executor. The request
   history (`registry()`) survives both.
+- **Closing a listener (rule for every TCP NodeService).** stop() and crash() must not return
+  until the listener/accept thread has exited and the port is closed. On Linux, closing a
+  ServerSocket while another thread is blocked in accept() leaves the port listening until that
+  thread wakes (seen as 'closed the connection without replying' on CI). Join the accept thread
+  (bounded) in close(). Windows hides this. `RequestsNodeService` joins with a 5 s bound and
+  throws `IllegalStateException` if the thread is still alive.
 - **`RequestsClient` (for E6b).** `new RequestsClient(timeoutMillis).send(port, senderId,
   senderClock, type, payloadSize)` returns a `WorkReply` (nodeId, lamportTime, requestId, status
   COMPLETED/FAILED/REJECTED, threadName, queueWaitMillis, processingMillis, totalMillis, detail).
@@ -549,3 +555,15 @@
   6-load-balancing); (3) the layout was measured in a same-origin iframe of the exact sizes (see
   Known issues); (4) the manual row for a cluster reset expects an empty module event log, not a
   reset entry (see Known issues).
+- 2026-10-08 E2b fix (Linux CI flake in RequestsNodeServiceTest, recoverServesAgain and
+  stopClosesThePort on port 41501): RequestsNodeService.close() returned while its accept thread
+  was still blocked in accept(), and on Linux that keeps the port listening until the thread
+  wakes, so a connection was accepted and dropped without a reply, and a recover in that window
+  failed to rebind (recorded in NODE_RECOVERED failures, not thrown). close() now joins the accept
+  thread (ACCEPT_EXIT_TIMEOUT 5 s; IllegalStateException if still alive or interrupted).
+  recoverServesAgain now asserts empty recovery failures and isRunning() before sending; new tests
+  stopAndCrashJoinTheAcceptThread and crashRefusesAtOnceThenRecoverServes. The HELLO log line seen
+  before the failures comes from malformedLineIsRefused, which runs last in the class (not a cause).
+  RequestsNodeServiceTest 19 tests: 10 local runs and 5 Linux runs (maven:3.9-eclipse-temurin-21,
+  --cpus=2) all green; backend 527 tests, 1 skipped (3 runs); frontend not run (no frontend
+  change); deviations: none.

@@ -268,9 +268,11 @@ class RequestsNodeServiceTest {
 
         cluster.crash(1);
         assertThat(cluster.recover(1)).isTrue();
+        // ClusterNode.recover() records a failed rebind instead of throwing, so check both.
+        assertThat(lastRecoveryFailures(1)).isEmpty();
+        assertThat(service.isRunning()).isTrue();
         WorkReply after = send(1, WorkloadType.CPU_HASH, 5);
 
-        assertThat(service.isRunning()).isTrue();
         assertThat(after.status()).isEqualTo(RequestStatus.COMPLETED);
         assertThat(service.processing()).isNotSameAs(firstEngine);
         assertThat(service.registry().find(before.requestId())).isPresent();
@@ -359,6 +361,72 @@ class RequestsNodeServiceTest {
 
         assertThat(service.isRunning()).isFalse();
         assertThatThrownBy(() -> send(1, WorkloadType.CPU_HASH, 5)).isInstanceOf(ConnectException.class);
+    }
+
+    @Test
+    @DisplayName("stop and crash return only after this service's accept thread has exited")
+    void stopAndCrashJoinTheAcceptThread() {
+        // Cached Spring contexts from other test classes may run their own node 1 with a
+        // thread of the same name, so only threads that were not alive before count.
+        Set<Thread> before = liveAcceptThreads(1);
+        RequestsNodeService service = service(1);
+        Set<Thread> started = newAcceptThreads(1, before);
+        assertThat(started).as("starting the service starts one accept thread").hasSize(1);
+
+        cluster.crash(1);
+        assertThat(newAcceptThreads(1, before)).as("alive after crash() returned").isEmpty();
+
+        assertThat(cluster.recover(1)).isTrue();
+        Set<Thread> recovered = newAcceptThreads(1, before);
+        assertThat(recovered).as("recover starts a fresh accept thread").hasSize(1).doesNotContainAnyElementsOf(started);
+
+        service.stop();
+        assertThat(newAcceptThreads(1, before)).as("alive after stop() returned").isEmpty();
+        assertThat(recovered.iterator().next().isAlive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("after crash() returns a new connection is refused at once; after recover() it is served")
+    void crashRefusesAtOnceThenRecoverServes() throws IOException {
+        RequestsNodeService service = service(1);
+        assertThat(send(1, WorkloadType.CPU_HASH, 5).status()).isEqualTo(RequestStatus.COMPLETED);
+
+        assertThat(cluster.crash(1)).isTrue();
+        assertThatThrownBy(() -> send(1, WorkloadType.CPU_HASH, 5)).isInstanceOf(ConnectException.class);
+
+        assertThat(cluster.recover(1)).isTrue();
+        assertThat(lastRecoveryFailures(1)).isEmpty();
+        assertThat(service.isRunning()).isTrue();
+        assertThat(send(1, WorkloadType.CPU_HASH, 5).status()).isEqualTo(RequestStatus.COMPLETED);
+    }
+
+    /** The failures listed by the node's latest NODE_RECOVERED event. */
+    private List<?> lastRecoveryFailures(int nodeId) {
+        List<ClusterEvent> recoveries = bus.query("cluster", nodeId, 1000).stream()
+                .filter(event -> event.type().equals("NODE_RECOVERED"))
+                .toList();
+        assertThat(recoveries).as("NODE_RECOVERED events for node %d", nodeId).isNotEmpty();
+        Object failures = recoveries.get(recoveries.size() - 1).data().get("failures");
+        assertThat(failures).isInstanceOf(List.class);
+        return (List<?>) failures;
+    }
+
+    /** Live threads with node {@code nodeId}'s accept-thread name, compared by identity. */
+    private static Set<Thread> liveAcceptThreads(int nodeId) {
+        String name = "udcf-requests-n" + nodeId + "-accept";
+        Set<Thread> live = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.isAlive() && thread.getName().equals(name)) {
+                live.add(thread);
+            }
+        }
+        return live;
+    }
+
+    private static Set<Thread> newAcceptThreads(int nodeId, Set<Thread> before) {
+        Set<Thread> fresh = liveAcceptThreads(nodeId);
+        fresh.removeAll(before);
+        return fresh;
     }
 
     @Test
