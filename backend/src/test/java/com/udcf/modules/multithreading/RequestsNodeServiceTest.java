@@ -49,14 +49,15 @@ import static org.awaitility.Awaitility.await;
  * The requests service on real 127.0.0.1 sockets, on a standalone three-node cluster
  * (FAST, MEDIUM, SLOW). No Spring context, so crashes here never disturb other tests.
  *
- * <p>Test-only port bases 41100 to 41600, so node k's requests port is 4150k: below the
- * Windows dynamic range (49152 and up), apart from every other test class, and away from
- * the production ports, so the suite runs while a local backend or legacy demo is up.</p>
+ * <p>Test-only port bases 21000 to 21050, so node k's requests port is 21040 + k: below
+ * 32768, outside the Linux and Windows ephemeral ranges, apart from every other test class,
+ * and away from the production ports, so the suite runs while a local backend or legacy demo
+ * is up.</p>
  */
 class RequestsNodeServiceTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(41100, 41200, 41300, 41400, 41500, 41600));
+            new ClusterProperties.Ports(21000, 21010, 21020, 21030, 21040, 21050));
     private static final MultithreadingProperties PROPERTIES =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
@@ -131,7 +132,7 @@ class RequestsNodeServiceTest {
         RequestsNodeService service = service(1);
         WorkReply reply = send(1, WorkloadType.CPU_HASH, 5);
 
-        assertThat(service.port()).isEqualTo(41501);
+        assertThat(service.port()).isEqualTo(21041);
         assertThat(reply.status()).isEqualTo(RequestStatus.COMPLETED);
         assertThat(reply.nodeId()).isEqualTo(1);
         assertThat(reply.detail()).startsWith("hash=");
@@ -315,7 +316,7 @@ class RequestsNodeServiceTest {
     void malformedLineIsRefused() throws IOException {
         service(1);
 
-        List<String> exchange = exchangeRaw(41501, "HELLO\n");
+        List<String> exchange = exchangeRaw(21041, "HELLO\n");
 
         assertThat(exchange.get(0)).startsWith("ERROR|1|");
         assertThat(send(1, WorkloadType.CPU_HASH, 5).status()).isEqualTo(RequestStatus.COMPLETED);
@@ -327,7 +328,7 @@ class RequestsNodeServiceTest {
         service(1);
         String tooLong = "WORK|0|1|CPU_HASH;5" + "x".repeat(RequestsProtocol.MAX_LINE_LENGTH);
 
-        List<String> exchange = exchangeRaw(41501, tooLong + "\n");
+        List<String> exchange = exchangeRaw(21041, tooLong + "\n");
 
         assertThat(exchange.get(0)).startsWith("ERROR|1|").contains("1024");
         assertThat(exchange.get(1)).isEqualTo("closed");
@@ -338,7 +339,7 @@ class RequestsNodeServiceTest {
     @DisplayName("a port already in use fails the start cleanly; once it is free, the next use starts")
     void portInUseFailsCleanly() throws IOException {
         try (ServerSocket squatter = new ServerSocket()) {
-            squatter.bind(new InetSocketAddress(RequestsProtocol.LOOPBACK, 41502));
+            squatter.bind(new InetSocketAddress(RequestsProtocol.LOOPBACK, 21042));
 
             assertThatThrownBy(() -> service(2)).isInstanceOf(IllegalStateException.class);
             assertThat(cluster.node(2).runningServices()).isEmpty();

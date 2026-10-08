@@ -28,9 +28,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>{@code @AutoConfigureObservability} turns the Prometheus exporter back on (Spring Boot
  * disables exporters in tests), which also gives this class its own context. It only
  * reads state, apart from one Exp 2 batch of one request on node 1 so the request counter
- * and timer exist; that starts node 1's requests service on a test-only port (44201).</p>
+ * and timer exist; that starts node 1's requests service on a test-only port (21861, in the
+ * Track A block 21000 to 21999: below 32768, outside the Linux and Windows ephemeral ranges).</p>
  */
-@SpringBootTest(properties = "udcf.cluster.ports.requests-base=44200")
+@SpringBootTest(properties = "udcf.cluster.ports.requests-base=21860")
 @AutoConfigureMockMvc
 @AutoConfigureObservability
 class PrometheusScrapeTest {

@@ -37,14 +37,14 @@ import static org.awaitility.Awaitility.await;
  * other tests. No sleeps: a crash mid-run waits for the node's executor to report work in
  * flight and queued.
  *
- * <p>Test-only port bases 47100 to 47600 (requests ports 47501 to 47503), inside the Exp 6
- * test range 47100 to 47899, apart from every other test class.</p>
+ * <p>Test-only port bases 21300 to 21350 (requests ports 21341 to 21343), below 32768, outside
+ * the Linux and Windows ephemeral ranges, and apart from every other test class.</p>
  */
 @Timeout(value = 90, unit = TimeUnit.SECONDS)
 class LoadBalancingGatewayTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(47100, 47200, 47300, 47400, 47500, 47600));
+            new ClusterProperties.Ports(21300, 21310, 21320, 21330, 21340, 21350));
     private static final MultithreadingProperties MULTITHREADING =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
@@ -85,7 +85,7 @@ class LoadBalancingGatewayTest {
     @DisplayName("before any run, every cluster node is a worker on its requests port, weighted 4 : 2 : 1")
     void workersFromCluster() {
         assertThat(gateway.workers()).extracting(WorkerInfo::nodeId).containsExactly(1, 2, 3);
-        assertThat(gateway.workers()).extracting(WorkerInfo::port).containsExactly(47501, 47502, 47503);
+        assertThat(gateway.workers()).extracting(WorkerInfo::port).containsExactly(21341, 21342, 21343);
         assertThat(gateway.workers()).extracting(WorkerInfo::label).containsExactly("FAST", "MEDIUM", "SLOW");
         assertThat(gateway.workers()).extracting(WorkerInfo::weight).containsExactly(4, 2, 1);
     }

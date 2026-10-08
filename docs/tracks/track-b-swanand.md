@@ -13,8 +13,8 @@
 - **Special rules:** hard rule 7 (ring election messages are never handled on the listener thread; keep the comment explaining the deadlock); `compareAndSet` prevents overlapping elections.
 
 ### Steps
-- [ ] E4a — Bully and Ring as pure classes, plus the consensus check. Needs: none.
-- [ ] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
+- [x] E4a — Bully and Ring as pure classes, plus the consensus check. Needs: none.
+- [x] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
 - [ ] E4c — `ElectionModule` (lab 4): start Bully or Ring from node X, the current leader, the consensus check, automatic re-election when the leader crashes; add the cluster roles API (roles on `ClusterNode`, `NodeDto.roles`, "LEADER" shown in the top bar); metrics `distributed_leader_elections_total` and `distributed_election_duration`; fixtures. Needs: E4b.
 - [ ] E4d — page and end-to-end check. Needs: E4c, E2d.
 
@@ -35,16 +35,140 @@
 
 ## Interfaces for other tracks
 
-(none yet)
+### E4b APIs: election transport and the shared FailureDetector (link L2)
+
+**`com.udcf.modules.election.ElectionNodeService`** (`NodeService` named `"election"`, also an `ElectionParticipant`)
+- `ElectionNodeService.on(ClusterNode node, Cluster cluster, ElectionProperties properties, ClusterEventBus bus)`: the node's service, created and started on first use through `ClusterNode.ensureService`. `ElectionNodeService.find(node)` returns it only if registered.
+- One UDP socket on `127.0.0.1:ports().election()` (700k) carries Bully, Ring and heartbeats.
+- `startBully()`, `startRing()`: queued on the node's election worker; `NodeDownException` if the service is not running.
+- `coordinatorId()` (also `getCoordinatorId()`): the coordinator this node most recently learned from either algorithm (`ELECTED` or `COORDINATOR_ACCEPTED`); `null` if none, and after a crash. `ConsensusChecker.check(services)` works directly on a list of services (a crashed service counts as crashed).
+- `addElectionListener(ElectionEventListener)` returns a `Registration` (`close()` removes it): every Bully and Ring event of this node.
+- `failureDetector()`: this node's `FailureDetector`.
+- **Threading (hard rule 7):** the listener thread only reads, decodes and hands off. Every algorithm step (Bully, Ring, `PROBE`/`PROBE_ACK`), every `ElectionTimer` task and the heartbeat tick run on one worker thread per node, `udcf-election-n<k>-worker`. The transport never calls `onReceive` on the listener thread. Listeners run on the worker: they must not block and must not crash or recover this node (crash joins the worker).
+- **Lifecycle:** crash and stop close the socket, then join the listener and the worker (5 s each, `IllegalStateException` if one is still alive), then crash both algorithms (`CRASH` events, crash only). Recover rebinds and calls both algorithms' `recover()`; Bully's starts an election (E4a), so a recovered highest node reclaims leadership.
+- **Events** (module `election`, node-clock Lamport):
+  - every `ElectionEventType` by name, with data `{algorithm: BULLY|RING}`;
+  - `MESSAGE_SENT` and `MESSAGE_RECEIVED` (peer, data `{messageType}`, and on receive `causedByTime`), only for `ELECTION`, `OK`, `COORDINATOR`, `RING_ELECTION` and `RING_COORDINATOR`; never for `PROBE`, `PROBE_ACK` or `HEARTBEAT`.
+- **Lamport (L4):** election messages and probes carry `node.clock().tick()` on send; the receiver calls `node.clock().update(t)`. Heartbeats are exempt (see Deviations).
+- **Config:** `udcf.election.*` (`ElectionProperties`): `ok-timeout-millis` 900, `coordinator-timeout-millis` 2200, `probe-timeout-millis` 300, `ring-completion-timeout-millis` 5000, `heartbeat-interval-millis` 700, `heartbeat-timeout-millis` 2500. `toElectionConfig()` and `toFailureDetectorConfig()` convert them.
+- **Wire format:** `TYPE|senderId|lamportTime|payload`, UTF-8, at most 1024 bytes. Oversize, malformed, unknown-sender and self-sent datagrams are dropped and logged.
+
+**`com.udcf.core.failure.FailureDetector`** (one per node, owned by that node's election service; Exp 8 uses it in E8b)
+- Get it with `ElectionNodeService.on(node, cluster, properties, bus).failureDetector()`.
+- `addListener(FailureListener)` returns a `Registration`. `FailureListener.onSuspected(int peerId, long silentMillis)` and `onAlive(int peerId, long silentMillis)` are called on the election worker thread and must not block.
+- `isSuspected(peerId)`, `suspectedPeers()`, and `peers()`, a list of `PeerHealth(peerId, suspected, Long millisSinceLastHeartbeat)`, where `millisSinceLastHeartbeat` is `null` if never heard since start.
+- Every interval it sends a heartbeat to every peer. A peer silent for more than the timeout, counted from its last heartbeat or from start, is suspected; a heartbeat from it makes it alive again.
+- Each node has its own view. Only changes are published: `PEER_SUSPECTED` and `PEER_ALIVE` (module `election`, peer, data `{silentMillis, timeoutMillis}`).
+- A node's detector stops on crash and restarts with a fresh view (no suspicions) on recover.
+- It has no threads of its own: the owner drives `tick()` and `onHeartbeat(peerId)`. A new owner would build it with `new FailureDetector(node, peerIds, config, module, heartbeatSender, bus, nanoClock)`.
+
+### E4a: Election Events
+The `ElectionEventType` enum exposes these algorithm-level statuses:
+- `ELECTION_START`: The node began its own election.
+- `ELECTION_RESTART`: The node restarted an ongoing election.
+- `OK_RECEIVED`: Bully node received an OK and is waiting for a coordinator.
+- `WAITING_FOR_COORDINATOR`: The node is waiting for the result.
+- `ELECTED`: The node elected itself as coordinator.
+- `COORDINATOR_ACCEPTED`: The node accepted another node as coordinator.
+- `TOKEN_FORWARDED`: Ring node forwarded an election token.
+- `DEAD_NODE_SKIPPED`: Ring node successfully skipped an unreachable successor.
+- `ELECTION_TIMEOUT`: An election timed out without concluding.
+- `CRASH`: The node was explicitly crashed.
+- `RECOVER`: The node recovered from a crash.
+- `UNKNOWN_SENDER`: An unrecognized message was received.
+- `LATE_MESSAGE`: A message for a stale election was safely ignored.
+
+---
+
+## Deliberate differences from the legacy code
+
+- **Legacy deviation (Lower-ID Coordinator Acceptance):** When a Bully node receives a `COORDINATOR` announcement, it unconditionally accepts it, even if the announcing node has a lower ID than itself. This faithfully ports a quirk from the legacy `exp04-election` demo.
+- **Callback-Driven Probing (No Executor, flat package, no threads):** To prevent deadlocks, the Ring liveness prober is entirely asynchronous. Unlike the legacy demo which blocked the listener thread, it uses an exactly-once callback mechanism. This allows the removal of executors entirely, making the algorithms completely unthreaded. We use a flat package (`com.udcf.modules.election`) to easily share common interfaces among these highly-cohesive primitives.
+
+---
+
+## Requirements Coverage (E4a)
+
+| Requirement | Implementation / Rule | Test |
+|---|---|---|
+| Bully election start & message sequence | Sends `ELECTION` to higher nodes, schedules OK timeout | `BullyAlgorithmTest.testLegacyMessageSequence` |
+| Bully output order preserved | Emits `ELECTION_START` before sending outbound messages | `BullyAlgorithmTest.testOutputOrderPreserved` |
+| Bully highest node self-promotes | Immediate victory when no higher nodes exist | `BullyAlgorithmTest.testHighestNodeStartsAndWins` |
+| Bully OK response handling | Stand down from self-promotion, wait for coordinator | `BullyAlgorithmTest.testOkMeansStandDownAndCoordinatorTimeoutRestarts` |
+| Bully OK timeout expiration | Self-promotes to coordinator if no OK received | `BullyAlgorithmTest.testNoOkMeansSelfPromotion` |
+| Bully coordinator timeout restart | Restarts election if coordinator announcement times out | `BullyAlgorithmTest.testOkMeansStandDownAndCoordinatorTimeoutRestarts` |
+| Bully lower-ID coordinator quirk | Unconditionally accepts lower ID coordinator (legacy demo quirk) | `BullyAlgorithmTest.testLegacyLowerIdCoordinator`, `testLowerIdCoordinatorQuirk` |
+| Bully late OK ignored | Late OK when not in progress emits `LATE_MESSAGE` | `BullyAlgorithmTest.testLateOkIgnored` |
+| Bully stale OK timer does nothing | Old OK timeout fired after receiving OK or after new election does nothing | `BullyAlgorithmTest.testStaleTimers`, `testOldOkTimeoutFiredAfterNewElectionStartedDoesNothing` |
+| Bully timer after crash does nothing | OK timer and coordinator timer do nothing after crash | `BullyAlgorithmTest.testTimerAfterCrashDoesNothing` |
+| Bully crash & recovery | Crash clears state; recover starts election clean | `BullyAlgorithmTest.testCrashClearsState`, `testHighestNodeRecovers` |
+| Bully crash between collecting and sending | Actions loop aborts if crashed; sends nothing further | `BullyAlgorithmTest.testCrashBetweenCollectingAndSendingSendsNothingFurther` |
+| Bully Lamport clock usage | Lamport clock ticks on send/event and updates on receive | `BullyAlgorithmTest.testLamportUsage` |
+| Bully concurrent election guard | `compareAndSet` prevents overlapping elections | `BullyAlgorithmTest.testConcurrentStartElection` |
+| Bully in-progress flag release | Flag released on completion, timeout, crash, and exceptions | `BullyAlgorithmTest.testInProgressFlagReleased` |
+| Bully unknown sender | Unknown message type handled safely without crashing | `BullyAlgorithmTest.testUnknownSenderIgnored` |
+| Bully lock reentrancy & action collection | Collect actions under lock, execute outside lock | `ReentrancyTest.testReentrancyAndCrashDuringExecution` |
+| Ring single node ring | Ring of one node times out safely without infinite loop | `RingAlgorithmTest.testRingOfOne` |
+| Ring two node token exchange | Token passed between two nodes elects coordinator | `RingAlgorithmTest.testRingOfTwo` |
+| Ring legacy token forwarding | Appends node ID and forwards to successor | `RingAlgorithmTest.testLegacyTokenSequence` |
+| Ring full circle completion | Full circle detected when ID in token; highest wins | `RingAlgorithmTest.testHighestWinsAfterFullCircle`, `testTokenAlreadyContainsReceiver` |
+| Ring coordinator circulation stop | Result token circulating stops at originator node | `RingAlgorithmTest.testRingCoordinatorStopsAtOriginator` |
+| Ring concurrent originators | Multiple concurrent tokens resolve to highest node | `RingAlgorithmTest.testTwoOriginatorsHighestWins` |
+| Ring dead successor skip | Probe timeout skips dead node and tries next in ring | `RingAlgorithmTest.testSingleThreadedListenerCompletesWithDeadSuccessor`, `testAllOtherDead` |
+| Ring callback liveness prober (Hard rule 7) | Non-blocking probe completes callback exactly once | `DefaultLivenessProberTest.testAckBeforeTimeout`, `testTimeoutBeforeAck` |
+| Ring no event for PROBE/PROBE_ACK | PROBE and PROBE_ACK emit no election events | `RingAlgorithmTest.testNoEventForProbeOrProbeAck` |
+| Ring lost token completion timeout | Completion timeout clears in-progress flag and allows restart | `RingAlgorithmTest.testLostToken` |
+| Ring stale completion timer does nothing | Old completion timer fired after new election does nothing | `RingAlgorithmTest.testOldCompletionTimeoutFiredAfterNewElectionStartedDoesNothing` |
+| Ring timer after crash does nothing | Completion timer fired after crash does nothing | `RingAlgorithmTest.testTimerAfterCrashDoesNothing` |
+| Ring in-progress flag release | Flag released on coordinator, timeout, crash, and exceptions | `RingAlgorithmTest.testInProgressFlagReleased` |
+| Ring Lamport clock tracking | Lamport clock ticks on forward and updates on receive | `RingAlgorithmTest.testLamportClock` |
+| Ring crash between collecting and sending | Actions loop aborts if crashed; sends nothing further | `RingAlgorithmTest.testCrashBetweenCollectingAndSendingSendsNothingFurther` |
+| Ring reentrancy safety | Reentrant delivery does not deadlock | `ReentrancyTest.testRingReentrancyNoDeadlock` |
+| Consensus checker | Agreement, disagreement, dead leader, unassigned, all crashed | `ConsensusCheckerTest` (8 tests) |
+| Message wire format & limit | Pipe-delimited; datagrams > 1024 characters rejected | `ElectionMessageTest.testWireFormat`, `testMalformed`, `testMessageOver1024CharactersRejected` |
+| Election config validation | Positive timeouts required, probe timeout < ok timeout | `ElectionConfigTest` (3 tests) |
+
+---
+
+## Requirements Coverage (E4b)
+
+| Requirement | Implementation / Rule | Test |
+|---|---|---|
+| Election UDP service on `ports().election()`, bound to 127.0.0.1 | `ElectionNodeService.open()`; no `SO_REUSEADDR`, so a collision fails loudly | `ElectionNodeServiceTest.startBindsLoopbackElectionPort`, `portCollisionFailsStartLoudly` |
+| Crash and stop join every thread and free the port | Close socket, join listener, `shutdownNow` and await the worker, join its thread (5 s each) | `ElectionNodeServiceTest.crashClosesSocketJoinsListenerAndFreesPort`, `stopJoinsThreadsAndReleasesPort` |
+| Recover rebinds; lifecycle idempotent; follows the node (R10) | `recover()` reopens and recovers both algorithms | `ElectionNodeServiceTest.recoverRebindsAndRunsAgain`, `crashAndRecoverAreIdempotent`, `lifecycleFollowsClusterNodeCrashAndRecover` |
+| Elections refused on a node that is down | `NodeDownException` | `ElectionNodeServiceTest.startElectionOnCrashedServiceThrowsNodeDown` |
+| Listener survives malformed, oversize, unknown-sender datagrams and ICMP refusals | Log and continue while the socket is open | `ElectionNodeServiceTest.listenerSurvivesMalformedAndOversizeDatagrams`, `listenerSurvivesPortUnreachable` |
+| Hard rule 7: no algorithm work on the listener thread | Listener reads, decodes, hands off to `udcf-election-n<k>-worker` | `ElectionNodeServiceTest.algorithmWorkRunsOnWorkerNeverOnListenerThread` |
+| L4 on election messages | Send stamps `node.clock().tick()`, receive calls `update(t)` | `ElectionNodeServiceTest.receivedMessageAdvancesReceiverClockPastSenderStamp`, `ElectionOverUdpTest.everyElectionMessageEmitsSentAndReceivedEvents` |
+| Heartbeats exempt from L4 (deviation) | Heartbeat sent with 0, never applied | `ElectionNodeServiceTest.heartbeatsDoNotTouchNodeClock`, `ElectionMessageTest.testHeartbeatRoundTrip` |
+| Bully over real UDP; highest live node wins; recovered highest reclaims | E4a `BullyAlgorithm` on the transport | `ElectionOverUdpTest.bullyElectsHighestLiveNodeAndConsensusHolds`, `bullyWithHighestCrashedElectsNextHighest`, `recoveredHighestNodeReclaimsLeadership` |
+| Ring over real UDP skips a dead node | E4a `RingAlgorithm` and callback prober | `ElectionOverUdpTest.ringElectsHighestAndSkipsCrashedSuccessor` |
+| MESSAGE_SENT/RECEIVED only for the five election types | `PUBLISHED_TYPES` | `ElectionOverUdpTest.everyElectionMessageEmitsSentAndReceivedEvents` |
+| Failure detector: heartbeats, suspect after timeout, alive again (L2) | `FailureDetector.tick()` / `onHeartbeat()` | `FailureDetectorTest` (12 tests), `ElectionOverUdpTest.detectorOnEveryLiveNodeSuspectsCrashedPeerThenSeesItAlive` |
+| Config from YAML (Appendix B, ring completion 5000 ms) | `ElectionProperties`, `udcf.election` block | `ElectionPropertiesTest` (3 tests) |
+
+---
+
+## Deviations
+
+- L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: ~11 ticks per second per node at 5 nodes would inflate Experiment 3 values and break the fresh-backend all-zero state. Awaiting Rohan's sign-off at PR review.
 
 ---
 
 ## Known issues
 
-(none yet)
+- `MultithreadingModuleTest.backpressureIsDeterministicAndGuarded` (Track A's test) failed once in one of three runs (expected 5, was 9). Not edited, as it is unrelated to the election module and our tests are completely pure without static state, threads, or sleep loops.
+- E4b: nothing in production starts `ElectionNodeService` yet; E4c's `ElectionModule` will start it on every node. A node whose election service is not running is indistinguishable from a dead one, so every node's service must start together, or the started ones suspect the others after 2500 ms.
+- E4b: the E4a algorithms still keep a private Lamport counter. The transport replaces it on the wire and in every event with the node clock, so the private value is never published (no E4a edit, by decision).
+- E4b: E4a's `getCoordinatorId()` reads a non-volatile field. The transport only reads it on the worker thread and exposes its own volatile `coordinatorId()`; other code should use that (no E4a edit, by decision).
+- E4b: a Ring election started when every other node is dead never elects anyone (E4a ring-of-one behaviour): it ends in `ELECTION_TIMEOUT` after 5000 ms. E4c should use Bully for automatic re-election.
+- E4b: verified on Windows only (three full runs). The five Linux (Docker, 2 CPUs) runs of the new classes are still to be done by Swanand.
 
 ---
 
 ## Progress log
 
 - 2026-10-07 track file created.
+- 2026-10-08 E4a completed (baseline 525, total 579; 54 election tests covering all scenarios including stale timers, crash safety, 1024-char limit, probe event absence, and action loop crash guards).
+- 2026-10-09 E4b done: election UDP transport (`ElectionNodeService`, worker-only algorithm work, joined lifecycle) and the shared `core/failure/FailureDetector` (700/2500 ms heartbeats, PEER_SUSPECTED/PEER_ALIVE); backend 852 tests (baseline 817 + 35), frontend not run (no frontend change); deviations: heartbeats exempt from L4 (awaiting Rohan's sign-off), `HEARTBEAT` added to E4a's `ElectionMessageType` (approved).

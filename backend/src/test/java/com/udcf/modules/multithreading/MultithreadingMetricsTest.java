@@ -28,12 +28,13 @@ import static org.awaitility.Awaitility.await;
  * and recovery, NaN while there is no executor. Includes the two gauge tests that moved here
  * from ThreadPoolMetricsTest with the gauges (E2c).
  *
- * <p>Standalone three-node cluster; test-only port bases 46100 to 46600 (requests on 4650k).</p>
+ * <p>Standalone three-node cluster; test-only port bases 21200 to 21250 (node k's requests
+ * port is 21240 + k), below 32768, outside the Linux and Windows ephemeral ranges.</p>
  */
 class MultithreadingMetricsTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(46100, 46200, 46300, 46400, 46500, 46600));
+            new ClusterProperties.Ports(21200, 21210, 21220, 21230, 21240, 21250));
     private static final MultithreadingProperties PROPERTIES = new MultithreadingProperties(200, 60,
             "udcf-worker-", 30, 500, 2000,
             new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
