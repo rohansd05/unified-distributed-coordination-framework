@@ -8,12 +8,20 @@ package com.udcf.modules.clocksync.berkeley;
  */
 public record NodeClockReading(
         int nodeId,
-        long offsetMillis
+        long offsetMillis,
+        double rttMillis
 ) {
 
     public NodeClockReading {
         if (nodeId < 1) {
             throw new IllegalArgumentException("nodeId must be >= 1, was " + nodeId);
         }
+        if (rttMillis < 0) {
+            throw new IllegalArgumentException("rttMillis must be >= 0, was " + rttMillis);
+        }
+    }
+
+    public NodeClockReading(int nodeId, long offsetMillis) {
+        this(nodeId, offsetMillis, 0.0);
     }
 }

@@ -14,12 +14,20 @@ public record NodeAdjustment(
         long beforeOffsetMillis,
         long adjustmentMillis,
         long afterOffsetMillis,
-        boolean outlier
+        boolean outlier,
+        double rttMillis
 ) {
 
     public NodeAdjustment {
         if (nodeId < 1) {
             throw new IllegalArgumentException("nodeId must be >= 1, was " + nodeId);
         }
+        if (rttMillis < 0) {
+            throw new IllegalArgumentException("rttMillis must be >= 0, was " + rttMillis);
+        }
+    }
+
+    public NodeAdjustment(int nodeId, long beforeOffsetMillis, long adjustmentMillis, long afterOffsetMillis, boolean outlier) {
+        this(nodeId, beforeOffsetMillis, adjustmentMillis, afterOffsetMillis, outlier, 0.0);
     }
 }
