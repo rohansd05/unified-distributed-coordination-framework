@@ -15,7 +15,13 @@ export const EXPERIMENTS = [
     arrivesIn: 3,
     concept: 'Many requests, a few worker threads: how one node shares out work and pushes back when it is full.',
   },
-  { lab: 3, id: 'clocksync', title: 'Clock Synchronization', arrivesIn: 4 },
+  {
+    lab: 3,
+    id: 'clocksync',
+    title: 'Clock Synchronization',
+    arrivesIn: 4,
+    concept: 'Independent hardware clocks drift: how logical clocks order events and a time daemon pulls physical clocks together.',
+  },
   { lab: 4, id: 'election', title: 'Bully and Ring Election', arrivesIn: 5 },
   {
     lab: 5,
