@@ -57,6 +57,14 @@ import java.util.function.IntUnaryOperator;
  * <p><b>Anti-deadlock Listener Rule:</b> The UDP listener loop never blocks waiting for
  * replies that only it can deliver. Rounds execute on calling/orchestrating threads, and
  * the listener merely hands replies over via {@link CompletableFuture}s keyed by round id.</p>
+ *
+ * <p><b>Lifecycle invariants.</b> When {@link #start()} or {@link #recover()} returns, the
+ * socket is bound and its listener is running: the listener serves the socket it was given
+ * until that socket closes, so it never reads a stale running flag and exits early. When
+ * {@link #crash()} or {@link #stop()} returns, the listener has left {@code receive()}. On
+ * Linux a socket closed while another thread is blocked in {@code receive()} stays bound
+ * until that thread wakes, so without this wait a crashed node could still take datagrams,
+ * and a recovery could bind a second socket beside the old one.</p>
  */
 public class ClockNodeService implements NodeService {
 
@@ -65,6 +73,9 @@ public class ClockNodeService implements NodeService {
 
     private static final Logger log = LoggerFactory.getLogger(ClockNodeService.class);
     private static final InetAddress LOOPBACK = loopback();
+
+    /** Upper bound on waiting for the listener to leave {@code receive()} after its socket closes. */
+    private static final long LISTENER_EXIT_TIMEOUT_MILLIS = 2_000L;
 
     private final ClusterNode node;
     private final IntUnaryOperator peerPortResolver;
@@ -158,7 +169,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -187,7 +197,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -199,7 +208,8 @@ public class ClockNodeService implements NodeService {
 
     @Override
     public boolean isRunning() {
-        return running && socket != null && !socket.isClosed();
+        DatagramSocket current = socket;
+        return running && current != null && !current.isClosed();
     }
 
     public ClusterNode node() {
@@ -359,15 +369,17 @@ public class ClockNodeService implements NodeService {
                 }
             }
 
-            // 3. Await poll replies until timeout
+            // 3. Await poll replies until one deadline shared by every peer: all polls are
+            //    already out, so the round waits at most `timeout` in total, not per peer
             long timeoutMillis = timeout.toMillis();
+            long pollDeadline = System.nanoTime() + timeout.toNanos();
             for (int peerId : targets) {
                 if (peerId == node.id()) {
                     continue;
                 }
                 CompletableFuture<NodeClockReading> future = round.pollFutures.get(peerId);
                 try {
-                    NodeClockReading reading = future.get(timeoutMillis, TimeUnit.MILLISECONDS);
+                    NodeClockReading reading = future.get(remainingNanos(pollDeadline), TimeUnit.NANOSECONDS);
                     round.readings.add(reading);
                 } catch (TimeoutException | ExecutionException | InterruptedException e) {
                     unresponsiveNodes.add(peerId);
@@ -408,10 +420,11 @@ public class ClockNodeService implements NodeService {
                 }
             }
 
-            // 6. Await ACKs briefly (ignore failures)
+            // 6. Await ACKs briefly, again against one shared deadline (ignore failures)
+            long ackDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.min(timeoutMillis, 200));
             for (Map.Entry<Integer, CompletableFuture<Long>> entry : round.adjustFutures.entrySet()) {
                 try {
-                    entry.getValue().get(Math.min(timeoutMillis, 200), TimeUnit.MILLISECONDS);
+                    entry.getValue().get(remainingNanos(ackDeadline), TimeUnit.NANOSECONDS);
                 } catch (Exception ignored) {
                     // Non-blocking: unacknowledged adjust is logged but does not stop round
                 }
@@ -437,6 +450,11 @@ public class ClockNodeService implements NodeService {
         }
     }
 
+    /** Time left until {@code deadlineNanos} (a {@link System#nanoTime()} value), never negative. */
+    private static long remainingNanos(long deadlineNanos) {
+        return Math.max(0L, deadlineNanos - System.nanoTime());
+    }
+
     private void publishAdjustmentEvent(long roundId, NodeAdjustment adj) {
         bus.publish(EventDraft.of(MODULE, adj.nodeId(), "BERKELEY_NODE_ADJUSTED", node.clock().current())
                 .withPeer(node.id())
@@ -455,41 +473,75 @@ public class ClockNodeService implements NodeService {
     // UDP Socket and Listener Loop
     // -------------------------------------------------------------------------
 
+    /**
+     * Binds the socket, marks the service running, then starts the listener on that socket.
+     * Running is set before the listener starts, and the listener loops on its own socket
+     * rather than on the shared fields, so it cannot see a stale flag and exit before the
+     * first datagram arrives.
+     */
     private void bindAndListen() {
         int bindPort = node.ports().clock();
+        DatagramSocket bound = null;
         try {
-            socket = new DatagramSocket(null);
-            socket.setReuseAddress(true);
-            socket.bind(new InetSocketAddress(LOOPBACK, bindPort));
+            bound = new DatagramSocket(null);
+            bound.setReuseAddress(true);
+            bound.bind(new InetSocketAddress(LOOPBACK, bindPort));
         } catch (SocketException e) {
+            if (bound != null) {
+                bound.close();
+            }
             bus.publish(EventDraft.of(MODULE, node.id(), "SERVICE_START_FAILED", node.clock().tick())
                     .withMessage("Failed to bind clock UDP socket on port " + bindPort)
                     .withData(Map.of("port", bindPort, "error", e.getMessage())));
             throw new IllegalStateException("Clock UDP socket failed to bind on port " + bindPort, e);
         }
 
-        listenerThread = new Thread(this::listenLoop, "clock-" + node.id() + "-listener");
-        listenerThread.setDaemon(true);
-        listenerThread.start();
+        socket = bound;
+        running = true;
+        DatagramSocket served = bound;
+        Thread listener = new Thread(() -> listenLoop(served), "clock-" + node.id() + "-listener");
+        listener.setDaemon(true);
+        listenerThread = listener;
+        listener.start();
     }
 
+    /**
+     * Closes the socket and waits, bounded, for its listener to leave {@code receive()}, so
+     * the port is really released when crash or stop returns (see the class Javadoc).
+     */
     private void closeSocket() {
-        if (listenerThread != null) {
-            listenerThread.interrupt();
-            listenerThread = null;
+        Thread listener = listenerThread;
+        listenerThread = null;
+        DatagramSocket current = socket;
+        socket = null;
+        if (current != null) {
+            current.close();
         }
-        if (socket != null && !socket.isClosed()) {
-            socket.close();
-            socket = null;
+        if (listener != null && listener != Thread.currentThread()) {
+            listener.interrupt();
+            awaitExit(listener);
         }
     }
 
-    private void listenLoop() {
+    private void awaitExit(Thread listener) {
+        try {
+            listener.join(LISTENER_EXIT_TIMEOUT_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (listener.isAlive()) {
+            log.warn("Node {}: clock listener did not exit within {} ms of its socket closing",
+                    node.id(), LISTENER_EXIT_TIMEOUT_MILLIS);
+        }
+    }
+
+    private void listenLoop(DatagramSocket served) {
         byte[] buffer = new byte[ClockProtocol.MAX_DATAGRAM_SIZE];
-        while (running && socket != null && !socket.isClosed()) {
+        while (!served.isClosed()) {
             try {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                socket.receive(packet);
+                served.receive(packet);
                 handleDatagram(packet);
             } catch (SocketException e) {
                 // Expected when socket is closed during crash or shutdown
@@ -599,12 +651,13 @@ public class ClockNodeService implements NodeService {
     }
 
     private void sendUdp(int targetPort, ClockMessage msg) throws IOException {
-        if (!running || socket == null || socket.isClosed()) {
+        DatagramSocket current = socket;
+        if (!running || current == null || current.isClosed()) {
             throw new NodeDownException(node.id());
         }
         byte[] data = ClockProtocol.encode(msg);
         DatagramPacket packet = new DatagramPacket(data, data.length, LOOPBACK, targetPort);
-        socket.send(packet);
+        current.send(packet);
     }
 
     private void checkRunning() {

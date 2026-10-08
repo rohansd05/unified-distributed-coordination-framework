@@ -114,7 +114,16 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 ## Known issues
 
 - `MultithreadingModuleTest.backpressureIsDeterministicAndGuarded` (Track A's test) failed once in one of three runs (expected 5, was 9). Not edited, as it is unrelated to the election module and our tests are completely pure without static state, threads, or sleep loops.
-- `ClockNodeServiceTest.berkeleyRoundReducesSpread` and `daemonReceivesRepliesUnderLoadWithoutDeadlock` (Track D's test) flaked once in GitHub Actions CI under runner scheduling contention (UDP round timed out before peer reply). Unrelated to election module (all 54 election tests passed in CI); not edited per cross-track rule.
+- Resolved 2026-10-09: the CI failures in `ClockNodeServiceTest.berkeleyRoundReducesSpread` (spread 0 or 60 instead of 100) and `RequestsNodeServiceTest.stopClosesThePort` / `recoverServesAgain` ("closed the connection without replying" instead of `ConnectException`) were lifecycle races in the services, not runner slowness. See the deviation below.
+
+---
+
+## Deviations
+
+- 2026-10-09, cross-track fix (Track D `clocksync`, Track A `multithreading`), made on this branch at Swanand's request because these failures block this track's CI. Needs Rohan's and Nidhi's review in the pull request.
+  - `ClockNodeService`: the UDP listener checked `running` before `start()`/`recover()` had set it, so on a busy runner it could exit at once while the socket stayed bound, and that node never answered. Now `running` is set before the listener starts, and the listener loops on its own socket until that socket closes. `crash()`/`stop()` wait (bounded, 2 s) for the listener to leave `receive()`, because on Linux a socket closed under a blocked `receive()` stays bound until that thread wakes. A Berkeley round now waits against one shared deadline (poll and ack), not `timeout` per peer.
+  - `RequestsNodeService`: on Linux, a `ServerSocket` closed while the accept thread is blocked in `accept()` keeps listening until that thread wakes. A client connecting in that window was accepted and dropped. `crash()`/`stop()` now wait (bounded, 2 s) for the accept thread to exit, so a crashed or stopped node refuses connections (`ConnectException`) and recovery never meets the old listener. `RequestsClient` is unchanged.
+  - Tests: added `ClockNodeServiceTest.everyRecoverLeavesAnAnsweringListener` (40 crash/recover cycles) and `RequestsNodeServiceTest.crashAndRecoverCyclesTakeEffectAtOnce` (30 cycles). `crashWhileManyComplete` now crashes only after all 40 requests are accepted. It and `crashTakesTheServiceDown` wait, bounded, for interrupted workers to end their requests, because `crash()` returns before they do. Their assertions are unchanged.
 
 ---
 
@@ -122,3 +131,4 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 - 2026-10-07 track file created.
 - 2026-10-08 E4a completed (baseline 525, total 579; 54 election tests covering all scenarios including stale timers, crash safety, 1024-char limit, probe event absence, and action loop crash guards).
+- 2026-10-09 CI flakiness fix in the clock and requests services (see Deviations); backend 581 tests, 0 failures, 0 errors, 1 skipped.

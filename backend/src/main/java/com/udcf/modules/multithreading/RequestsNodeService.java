@@ -65,6 +65,14 @@ import java.util.concurrent.ThreadPoolExecutor;
  * listening socket, but does allow rebinding while the crashed connections sit in
  * TIME_WAIT. A bind failure on start or recover is reported, never retried.</p>
  *
+ * <p><b>Closing.</b> {@link #crash()} and {@link #stop()} return only after the accept
+ * thread has left {@code accept()}. On Linux a listener closed while another thread is
+ * blocked in {@code accept()} keeps listening until that thread wakes, so without this wait
+ * a client connecting just after the crash would be accepted and then dropped ("closed the
+ * connection without replying") instead of refused, and the old listener could still hold
+ * the port when recovery binds it again. Once the wait ends, connecting to a crashed or
+ * stopped node fails with {@link java.net.ConnectException}.</p>
+ *
  * <p><b>Metrics.</b> Request counters and the duration timer go to the given
  * {@link MeterRegistry}, tagged with this node's id (R5). The executor gauges are bound once
  * per node by {@link MultithreadingMetrics}, which reads {@link #snapshot()} at scrape time,
@@ -80,6 +88,9 @@ public class RequestsNodeService implements NodeService {
     /** Most input read and dropped after an over-long request line. */
     private static final long MAX_DISCARD_BYTES = 64 * 1024;
 
+    /** Upper bound on waiting for the accept thread to leave {@code accept()} after the listener closes. */
+    private static final long ACCEPT_EXIT_TIMEOUT_MILLIS = 2_000L;
+
     private final ClusterNode node;
     private final MultithreadingProperties properties;
     private final MeterRegistry meterRegistry;
@@ -91,6 +102,7 @@ public class RequestsNodeService implements NodeService {
 
     private volatile Engine engine;       // the current executor generation; null before the first start
     private volatile ServerSocket server;
+    private volatile Thread acceptThread;
     private volatile boolean running;
 
     /** One executor generation and everything that holds it. */
@@ -265,6 +277,7 @@ public class RequestsNodeService implements NodeService {
         running = true;
         Thread accept = new Thread(() -> acceptLoop(socket), "udcf-requests-n" + node.id() + "-accept");
         accept.setDaemon(true);
+        acceptThread = accept;
         accept.start();
     }
 
@@ -295,6 +308,8 @@ public class RequestsNodeService implements NodeService {
     private void close(String reason) {
         running = false;
         closeQuietly(server);
+        // Before closing connections, so one accepted in the meantime is closed too.
+        awaitAcceptLoopExit();
         connections.forEach(RequestsNodeService::closeQuietly);
         Engine current = engine;
         if (current == null || current.executor().isShutdown()) {
@@ -304,6 +319,25 @@ public class RequestsNodeService implements NodeService {
         NodeDownException down = new NodeDownException(node.id());
         current.tasks().forEach(future -> future.completeExceptionally(down));
         current.processing().shutdownNow(reason);
+    }
+
+    /** Waits, bounded, until the accept thread has left {@code accept()}; see "Closing" in the class Javadoc. */
+    private void awaitAcceptLoopExit() {
+        Thread accept = acceptThread;
+        acceptThread = null;
+        if (accept == null || accept == Thread.currentThread()) {
+            return;
+        }
+        try {
+            accept.join(ACCEPT_EXIT_TIMEOUT_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (accept.isAlive()) {
+            log.warn("Node {}: accept thread did not exit within {} ms of the listener closing",
+                    node.id(), ACCEPT_EXIT_TIMEOUT_MILLIS);
+        }
     }
 
     private void acceptLoop(ServerSocket socket) {

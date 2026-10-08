@@ -296,6 +296,24 @@ class ClockNodeServiceTest {
     }
 
     @Test
+    @DisplayName("every start and recover leaves a listener that answers at once, cycle after cycle")
+    void everyRecoverLeavesAnAnsweringListener() {
+        ClockNodeService s1 = service(1);
+        service(2);
+
+        for (int cycle = 0; cycle < 40; cycle++) {
+            // Both the daemon (which must receive the reply) and the peer (which must answer the poll)
+            BerkeleyRoundResult result = s1.runBerkeleyRound(List.of(1, 2), 500L, Duration.ofSeconds(2));
+            assertThat(result.participatingNodes()).as("cycle %d", cycle).containsExactly(1, 2);
+
+            cluster.node(1).crash();
+            cluster.node(2).crash();
+            assertThat(cluster.node(1).recover()).isTrue();
+            assertThat(cluster.node(2).recover()).isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("late reply for an old round is ignored without exception")
     void lateReplyForOldRoundIsIgnored() throws IOException {
         ClockNodeService s1 = service(1);

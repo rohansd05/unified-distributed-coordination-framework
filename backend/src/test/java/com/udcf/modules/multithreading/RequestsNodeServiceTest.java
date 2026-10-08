@@ -250,12 +250,13 @@ class RequestsNodeServiceTest {
         assertThat(service.isRunning()).isFalse();
         assertThatThrownBy(service::processing).isInstanceOf(NodeDownException.class);
         assertThatThrownBy(() -> service(1)).isInstanceOf(NodeDownException.class);
-        assertThat(service.registry().recent(0))
+        // Queued work ends inside crash(); running work ends when its interrupted worker gets there.
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> assertThat(service.registry().recent(0))
                 .allMatch(request -> request.getStatus() == RequestStatus.FAILED)
                 .extracting(DistributedRequest::getErrorMessage)
                 .containsExactlyInAnyOrder("Interrupted during processing", "Interrupted during processing",
                         "Interrupted during processing", "Interrupted during processing",
-                        "Node crashed", "Node crashed");
+                        "Node crashed", "Node crashed"));
         assertThat(requestEvents(1)).as("a crashed node sends no replies, so publishes no events").isEmpty();
     }
 
@@ -278,6 +279,21 @@ class RequestsNodeServiceTest {
     }
 
     @Test
+    @DisplayName("every crash refuses connections at once and every recover serves at once, cycle after cycle")
+    void crashAndRecoverCyclesTakeEffectAtOnce() throws IOException {
+        service(1);
+
+        for (int cycle = 0; cycle < 30; cycle++) {
+            assertThat(send(1, WorkloadType.CPU_HASH, 5).status()).as("cycle %d", cycle)
+                    .isEqualTo(RequestStatus.COMPLETED);
+            cluster.crash(1);
+            assertThatThrownBy(() -> send(1, WorkloadType.CPU_HASH, 5)).as("cycle %d", cycle)
+                    .isInstanceOf(ConnectException.class);
+            assertThat(cluster.recover(1)).isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("a crash while many requests complete ends each one once, with one event at most and no hang")
     void crashWhileManyComplete() throws Exception {
         RequestsNodeService service = service(1);
@@ -285,8 +301,10 @@ class RequestsNodeServiceTest {
         for (int i = 0; i < 40; i++) {
             replies.add(sendAsync(1, WorkloadType.CPU_HASH, 50));
         }
+        // Crash only once all 40 are accepted: one still connecting or submitting would be refused or rejected instead.
         await().atMost(10, TimeUnit.SECONDS)
-                .until(() -> service.registry().countByStatus().get(RequestStatus.COMPLETED) >= 5);
+                .until(() -> count("accepted") == 40.0
+                        && service.registry().countByStatus().get(RequestStatus.COMPLETED) >= 5);
 
         cluster.crash(1);
 
@@ -300,7 +318,11 @@ class RequestsNodeServiceTest {
             }
         }
         assertThat(answered).isPositive();
-        assertThat(service.registry().recent(0)).hasSize(40).allMatch(DistributedRequest::isEnded);
+        // A cut connection reaches the client before the interrupted worker has ended its request.
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(service.registry().recent(0)).hasSize(40).allMatch(DistributedRequest::isEnded);
+            assertThat(count("completed") + count("failed")).isEqualTo(40.0);
+        });
         List<Object> ids = requestEvents(1).stream().map(event -> event.data().get("requestId")).toList();
         assertThat(ids).doesNotHaveDuplicates().hasSizeLessThanOrEqualTo(40);
         double accepted = count("accepted");
