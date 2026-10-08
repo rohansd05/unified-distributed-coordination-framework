@@ -14,7 +14,7 @@
 
 ### Steps
 - [x] E5a — `DataItem`, `DataStore`, last-writer-wins, anti-entropy, out-of-order injection, epochs and `ReplicationStats` as pure classes. Needs: none.
-- [ ] E5b — replication NodeService on `ports().replication()` (710k): sync and async writes, anti-entropy; document its public API under "Interfaces for other tracks" (Track B builds Exp 8 on it). Needs: E5a.
+- [x] E5b — replication NodeService on `ports().replication()` (710k): sync and async writes, anti-entropy; document its public API under "Interfaces for other tracks" (Track B builds Exp 8 on it). Needs: E5a.
 - [ ] E5c — `ReplicationModule` (lab 5): write (sync/async), read per replica, crash or recover a backup, anti-entropy, inject a stale update; the health table; metrics; fixtures. Needs: E5b.
 - [ ] E5d — page and end-to-end check. Needs: E5c, E2d.
 
@@ -174,6 +174,141 @@ until then the replication primary comes from this selector, not from election.
     `ReplicationEventLog` (replaced by the core `ClusterEventBus`), `NodeRole` (role selector and,
     later, cluster roles), the demo driver.
 
+### E5b — replication transport (`com.udcf.modules.replication`), for E5c (Track C) and E8b (Track B)
+
+**Ports and properties.** One TCP listener per node on 127.0.0.1:`ports().replication()` (710k:
+7101–7105 locally, 7101–7103 in the public profile). `ReplicationProperties` binds
+`udcf.replication.*` (no defaults in code; startup fails on a missing or invalid key):
+- `async-delay-millis: 450`: **SIMULATED (R7)**, the wait before each asynchronous push, standing
+  in for wide-area latency (Appendix B). Synchronous pushes are never delayed. Every place it shows
+  carries the label: `WriteResult.simulatedDelayMillis` / `simulated()`, and `simulated: true` plus
+  `simulatedDelayMillis` in the `WRITE_CONFIRMED` and `ACK` event data. E5c must show the Simulated
+  badge for it.
+- `timeout-millis: 1500`: the connect and read timeout of every exchange, on the client, and the
+  server's `SO_TIMEOUT` on each accepted connection.
+- `batch-size: 200`: items per anti-entropy SYNC message and per dump page; `@Min(1) @Max(1000)`.
+
+**`ReplicationNodeService implements NodeService`** (`NAME = "replication"`, `MODULE = "replication"`)
+- `static ReplicationNodeService on(ClusterNode, Cluster, ReplicationProperties, ClusterEventBus)`:
+  through `ensureService`, so a crashed node throws `NodeDownException`; peer ports come from
+  `cluster.node(id).ports().replication()`. `static Optional<ReplicationNodeService> find(ClusterNode)`
+  never starts one. Public constructor `(ClusterNode, IntUnaryOperator peerPort, ReplicationProperties,
+  ClusterEventBus, java.time.Clock wallClock)` (the clock is used only for `lastSync`, display only).
+- Lifecycle: `start()`, `crash()`, `recover()`, `stop()`, `isRunning()`, `nodeId()`, `port()`.
+- Role and epoch:
+  - `void becomePrimary(long epoch)`: raises the store epoch to `epoch` (`observeEpoch`) and acts as
+    primary at it; idempotent for the same epoch. Throws `NodeDownException` if down,
+    `NotPrimaryException` if the node already knows a higher epoch, `IllegalArgumentException` for an
+    epoch below 1. Exp 5 passes `epoch()`; **Exp 8 promotes with a new, higher epoch.**
+  - `void stepDown()` (idempotent), `boolean isPrimary()`, `OptionalLong primaryEpoch()`,
+    `long epoch()` (the store epoch: the highest epoch this node knows), `long observeEpoch(long)`
+    (raise only; returns the epoch after the call). These work on a crashed node too; only
+    `becomePrimary` needs the node up.
+  - **Supersession:** the node stops acting as primary, and publishes `PRIMARY_SUPERSEDED` once,
+    as soon as its store learns an epoch above its primary epoch: (a) a `STALE_EPOCH` reply to its
+    own push (it calls `observeEpoch(replyEpoch)`), (b) a push from a newer primary (rule 3 of the
+    E5a fence raises its store epoch), or (c) `observeEpoch` (for example from an Exp 8 peer
+    query). **The role survives a crash**, so a recovered old primary still believes it is primary
+    until (a), (b) or (c) happens. Cluster roles (`NodeDto.roles`) are not touched here.
+- Writes: `WriteResult write(String key, String value, ConsistencyModel model, Collection<Integer>
+  backupIds)`. Stamps `(key, value, clock().tick(), nodeId, primaryEpoch)`, applies it locally with
+  `store.apply(item, primaryEpoch)`, then pushes to every backup. `backupIds` must be distinct,
+  must not include this node, and are checked before anything changes (an unknown id fails with
+  `UnknownNodeException`). Crashed backups are fine and end `FAILED`.
+  - SYNCHRONOUS: pushes in parallel and returns after every backup replied or failed; the replication
+    future is already complete.
+  - ASYNCHRONOUS: returns at once; each push fires after the simulated delay; the future completes later.
+  - Throws `NodeDownException` (down, or went down before a synchronous write was confirmed),
+    `NotPrimaryException` (not acting as primary, or superseded), `IllegalArgumentException` (invalid
+    key, value or backup list; nothing changes, the clock does not tick).
+- `PushOutcome deliverOutOfOrder(int backupId, DataItem staleItem)`: demonstration only (E5c's
+  "inject a stale update"); sent with this node's store epoch.
+- `AntiEntropyReport antiEntropy(int targetId)`: pushes the whole store (`AntiEntropy.plan`) in
+  `batch-size` chunks, at least one SYNC (so an empty store still proves reachability), with this
+  node's store epoch; stops at the first failed chunk. **Not counted in `ReplicationStats`.**
+- In-process reads `Optional<DataItem> get(String key)`, `SortedMap<String, DataItem> snapshot()`:
+  `NodeDownException` while down (a crashed node refuses to serve).
+- `SortedMap<Integer, ReplicationStatsSnapshot> stats()` (per backup this node pushed to: acks with
+  measured TCP round-trip latency, outcome counts, failures, last sync) and `resetStats()`. Stats,
+  the store and the role survive crash and recovery.
+
+**`NotPrimaryException`** (`nodeId()`, `storeEpoch()`): the node is not, or no longer, acting as
+primary. A superseded SYNCHRONOUS write throws it after its round. **"Not confirmed" does NOT mean
+"not stored"**: the item was already applied to the old primary's own store, and possibly to
+backups that had not yet seen the newer epoch. A superseded ASYNCHRONOUS write was already confirmed
+to the client; the supersession shows only in its outcomes and events.
+
+**Results**
+- `WriteResult(item, model, localResult, confirmMillis, simulatedDelayMillis, backupIds,
+  CompletableFuture<List<PushOutcome>> replication)`; `simulated()`. `confirmMillis` is measured.
+- `PushOutcome(backupId, PushStatus status, Optional<ApplyResult> result, OptionalLong backupEpoch,
+  OptionalDouble latencyMillis, Optional<String> detail)`; `acknowledged()`. Only `ACKED` has a
+  result, epoch and latency (the measured TCP round trip, without the simulated delay); any other
+  status only a detail. `PushStatus`: `ACKED`; `FAILED` (refused, timed out, closed without reply,
+  or ERROR: counted as a backup failure, never stale); `NOT_SENT` (the sender went down before
+  sending, for example a dropped async push); `ABANDONED` (the sender went down mid-flight: the
+  backup may or may not have applied it). `NOT_SENT` and `ABANDONED` are not backup failures.
+- `AntiEntropyReport(targetNodeId, AntiEntropyResult merged, chunksPlanned, chunksAcknowledged,
+  latencyMillis, Optional<String> failure)`; `completed()`.
+
+**`ReplicaSet`** (Exp 5 facade): `new ReplicaSet(Cluster, ReplicationProperties, ClusterEventBus)`;
+`int primaryId()` (lowest live id via `ReplicationRoleSelector`, `// TODO(L1)`;
+`IllegalStateException` if every node is crashed); `List<Integer> backupIds()` (every other node,
+crashed ones included); `ReplicationNodeService service(int nodeId)` (starts it;
+`NodeDownException` if crashed); `ReplicationNodeService primary()` (starts the service on every
+live node, steps down any other live node acting as primary, and makes the selected node primary
+at its current epoch, so in Exp 5 the epoch stays 1); `WriteResult write(key, value, model)`;
+`AntiEntropyReport antiEntropy(int targetId)`; `PushOutcome injectStale(int backupId, String key,
+String staleValue)` (`IllegalArgumentException` if the primary does not hold the key);
+`ReadReply read(int nodeId, String key) throws IOException` and `ReplicaDump dump(int nodeId)
+throws IOException` over TCP as the cluster-level client (sender `CLIENT_ID = 0`, the cluster
+clock). Exp 8 should drive `ReplicationNodeService` directly rather than through `ReplicaSet`.
+
+**`ReplicationClient(int timeoutMillis)`** (stateless, thread safe): `replicate`, `sync`, `read`,
+`dumpPage`, `dump(port, senderId, senderClock, pageSize)`. Ticks the sender's clock before sending
+and merges the reply's time (also on ERROR). Failures: `ConnectException` (crashed node),
+`SocketTimeoutException` (silent node), `ProtocolException` (ERROR reply or malformed reply), any
+other `IOException` (closed without a reply). Replies: `AckReply`, `SyncReply`, `ReadReply`,
+`DumpPage`, `ReplicaDump` (records).
+
+**Messages and wire format** (`ReplicationProtocol`, the single place it lives): one request and one
+reply per TCP connection. Requests `REPLICATE`, `SYNC`, `READ`, `DUMP` (cursor paging); replies `ACK`,
+`SYNCED`, `VALUE`, `DUMPED`, `ERROR`. Header fields are `|`-separated; messages with items are
+followed by one `ITEM` line per item and an `END` line, and the count must match. Keys and values
+travel as Base64 of their UTF-16 code units, so `;`, `~`, `|`, the empty value and unpaired
+surrogates round-trip exactly. Lines are printable ASCII, at most 8192 characters; at most 1000
+items per message; an item epoch above the sender's epoch is refused. Anything malformed gets an
+`ERROR` reply and changes nothing. Every message carries the sender's Lamport time (L4).
+
+**Events** (module `replication`, node = the publishing node, Lamport time from its shared clock):
+
+| Type | Where, peer | Data keys |
+|---|---|---|
+| `WRITE` | primary, at the item's Lamport time | key, value, model, epoch, localResult, backups |
+| `WRITE_CONFIRMED` | primary | key, model, confirmMillis; SYNC: acked, failed; ASYNC: simulated, simulatedDelayMillis |
+| `WRITE_NOT_CONFIRMED` | primary | key, reason, storedLocally |
+| `ACK` | primary, peer = backup | key, itemLamport, result, senderEpoch, backupEpoch, latencyMillis; async: simulated, simulatedDelayMillis; injected: outOfOrder |
+| `REPLICATION_FAILED` | primary, peer = backup | key, reason (exception class), message |
+| `REPLICA_APPLIED` / `_DUPLICATE` / `_STALE` / `_STALE_EPOCH` | receiver, peer = sender, at the reply's Lamport time | key, itemLamport, originNode, itemEpoch, senderEpoch, storeEpoch, receiveLamport |
+| `ANTI_ENTROPY` / `ANTI_ENTROPY_FAILED` | sender, peer = target | pushed, applied, alreadyCurrent, stale, staleEpoch, chunksPlanned, chunksAcknowledged, latencyMillis; failed: reason |
+| `ANTI_ENTROPY_MERGED` | receiver, one per chunk, peer = sender | pushed, applied, alreadyCurrent, stale, staleEpoch, senderEpoch, storeEpoch, receiveLamport |
+| `PRIMARY_ACTIVE` | the node | epoch, previousEpoch (0 = none) |
+| `PRIMARY_STEPPED_DOWN` | the node | epoch |
+| `PRIMARY_SUPERSEDED` | the node, peer = the node it learned from (none if local) | previousEpoch, newEpoch, learnedFrom ("node N" or "local") |
+| `ASYNC_PUSHES_DROPPED` | crashed primary (crash only, not stop) | pushes, keys (at most 20), keysTruncated |
+
+Reads and dumps publish nothing.
+
+**Close rule.** `crash()` and `stop()` return only after: the accept thread has exited (joined),
+so the port is really closed (Linux keeps a listener open while a thread is blocked in `accept()`);
+every connection handler has finished (`awaitTermination`; handlers re-check `running` immediately
+before `store.apply` / `AntiEntropy.merge` and reply nothing once the node is down, so no request
+changes the store after `crash()` returns); every outbound push and anti-entropy run has stopped;
+and the async scheduler and its thread have stopped. Each wait is bounded at 5 s; if one does not
+finish, an `IllegalStateException` is thrown. Pending async pushes complete as `NOT_SENT`.
+
+**Metrics** arrive with the module in E5c (`MetricNames`, `node_id` per meter); E5b registers none.
+
 ---
 
 ## Known issues
@@ -186,6 +321,32 @@ until then the replication primary comes from this selector, not from election.
   can pause the write path and force interleavings; production code uses the public constructor.
 - E5a: the fence tests check the guarantee on every run, and one forces the critical interleaving
   through the probe, but no test can enumerate every possible interleaving.
+- E5b, for Track B (E8b): **orphan local item.** A recovered old primary still believes it is
+  primary, so its first write is applied to its own store (at the old epoch) before its pushes come
+  back `STALE_EPOCH` and supersede it; that write throws `NotPrimaryException` (not confirmed) but
+  the item stays in the old primary's store. Resynchronising it from the new primary
+  (`antiEntropy` from the new primary) overwrites keys the new primary also holds, by
+  last-writer-wins on the newer epoch, but a key only the old primary wrote stays there. Exp 8 must
+  either query the cluster's epoch (`observeEpoch`) before the old primary writes again, or treat
+  such keys as lost. Accepted (Q4).
+- E5b: a push in flight when its sender crashes ends `ABANDONED`: the backup may or may not have
+  applied it. A synchronous write interrupted by its primary's crash throws `NodeDownException`,
+  but the item is in the primary's store and possibly on some backups.
+- E5b: `SO_TIMEOUT` bounds each read, not a whole request. A client trickling one byte just inside
+  the timeout can hold a handler for longer than `timeout-millis`, bounded by the message limits
+  (8192 characters a line, 1000 items). Loopback only, so accepted.
+- E5b: a dump of more than `batch-size` items is several exchanges, so it is not one atomic
+  snapshot while writes arrive (each key is as its page saw it).
+- E5b, for E5c: in Exp 5 the primary moves to node 2 when node 1 crashes (same epoch, 1); if node 1
+  recovers it is primary again but has missed node 2's writes. Anti-entropy runs from the primary,
+  so it does not repair the primary itself; E5c must decide how the page shows or repairs that (for
+  example, anti-entropy from the most up-to-date replica).
+- E5b: the close waits are bounded at 5 s; reaching a bound throws `IllegalStateException` from
+  `crash()`/`stop()`, which `ClusterNode` records as a crash failure. The tests prove the waits on
+  every run but cannot prove a bound is never reached under extreme load.
+- E5b: the Linux accept/close behaviour is checked by five Docker runs
+  (`maven:3.9-eclipse-temurin-21`, `--cpus=2`) and CI, not on a real Linux host; Docker wrote
+  `backend/target` during those runs.
 
 ---
 
@@ -199,3 +360,17 @@ until then the replication primary comes from this selector, not from election.
   green, identical totals; baseline 525), frontend not run (no frontend change); deviations: none
   from the approved plan except 3 extra tests added after the first run so that every requirement
   has its own test method (see the list of deliberate differences from legacy above).
+- 2026-10-08 E5b done: ReplicationNodeService on ports().replication() (sync and async writes, the
+  simulated async delay from YAML, anti-entropy in batches, out-of-order delivery, role and epoch
+  supersession, crash waits for accept thread, handlers, pushes and scheduler), ReplicationProtocol
+  (Base64 UTF-16 fields, END-terminated item blocks, 8192-character lines, 1000 items), ReplicationClient,
+  ReplicaSet (selector, TODO(L1)), ReplicationProperties (udcf.replication block in application.yml)
+  and result records; 6 new test classes, 66 tests on ports 28401–28429; backend 687 tests, 1
+  skipped (3 Windows runs, identical; baseline 621), replication classes 66 tests in 5 Linux Docker
+  runs, all green; frontend not run (no frontend change); deviations: (1) a package-private
+  `ReplyChecks` helper for the reply records; (2) `PushStatus.ABANDONED` added beside ACKED, FAILED
+  and NOT_SENT (a push in flight when the sender crashed is not "not sent"); (3) an extra
+  `WRITE_NOT_CONFIRMED` event; (4) item-carrying messages end with an `END` line, so a count mismatch
+  in either direction is detected; SYNCED also carries `pushed`; (5) anti-entropy and
+  `deliverOutOfOrder` run on the push executor, so crash() waits for them too; (6) some test methods
+  are named or grouped differently from the plan (see the E5b report).
