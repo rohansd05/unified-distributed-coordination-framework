@@ -274,6 +274,8 @@ backend HTTP port (8080 locally; `$PORT` on Render).
 These ranges match the legacy demos, so the two can never run at the same time on one machine.
 Document that in the README.
 
+**Test ports rule (Linux safety):** Every fixed port used in a TEST (Java tests, test YAML/properties, test configs) must be below 32768, because Linux hands out outgoing ports from 32768-60999 (Windows 49152-65535) and a test that binds inside that range can collide with the OS. Production ports (1101.., 6001.., 7001..) are already fine. Port blocks: Nidhi 21000-21999, Rohan 24100-24899, Swanand 26100-26899, Jai 28100-28899.
+
 ### 6.4 Integration links — what makes it one system
 
 | Link | From | To | Behaviour |

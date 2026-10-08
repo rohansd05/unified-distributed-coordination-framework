@@ -60,6 +60,7 @@ AI agents never run any git command, not even read-only ones. People run every g
 - Anything simulated is flagged in its DTO (for example `simulated: true` plus a reason) and shown with the Simulated badge (R7).
 - Tests that crash nodes or reset the cluster use their own Spring context, so they never disturb other tests.
 - Config only from YAML (hard rule 6); no hard-coded ports, sizes or origins.
+- Every fixed port used in a TEST (Java tests, test YAML/properties, test configs) must be below 32768, because Linux hands out outgoing ports from 32768-60999 (Windows 49152-65535) and a test that binds inside that range can collide with the OS. Production ports (1101.., 6001.., 7001..) are already fine. Port blocks: Nidhi 21000-21999, Rohan 24100-24899, Swanand 26100-26899, Jai 28100-28899.
 
 ---
 
@@ -101,3 +102,15 @@ AI agents never run any git command, not even read-only ones. People run every g
 ## 9. Reporting rule
 
 Every number and claim in an agent's report must come from command output it actually ran, pasted verbatim.
+
+---
+
+## 10. Test ports (Linux safety rule)
+
+Every fixed port used in a TEST (Java tests, test YAML/properties, test configs) must be below 32768, because Linux hands out outgoing ports from 32768-60999 (Windows 49152-65535) and a test that binds inside that range can collide with the OS. Production ports (1101.., 6001.., 7001..) are already fine.
+
+Assigned test port blocks:
+- **Nidhi:** `21000-21999`
+- **Rohan:** `24100-24899`
+- **Swanand:** `26100-26899`
+- **Jai:** `28100-28899`

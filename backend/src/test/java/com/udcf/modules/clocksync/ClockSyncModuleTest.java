@@ -38,14 +38,14 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * Integration tests for {@link ClockSyncModule} using standalone cluster and real UDP sockets
- * on reserved port range 48100-48899.
+ * on reserved port range 24100-24899.
  */
 class ClockSyncModuleTest {
 
     private static final ClusterProperties CLUSTER_PROPS = new ClusterProperties(
             3,
             List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(48100, 48400, 48300, 48500, 48700, 48800)
+            new ClusterProperties.Ports(24100, 24400, 24300, 24500, 24700, 24800)
     );
 
     private static final ClockSyncProperties PROPERTIES = new ClockSyncProperties(

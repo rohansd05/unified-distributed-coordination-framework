@@ -45,20 +45,20 @@ import static org.awaitility.Awaitility.await;
 /**
  * Integration tests on real 127.0.0.1 UDP sockets, on a standalone cluster (no Spring context).
  *
- * <p>Test ports: 48100 to 48899 (reserved for Track D Exp 3):
+ * <p>Test ports: 24100 to 24899 (reserved for Track D Exp 3):
  * <ul>
- *   <li>Cluster bases: RMI 48100, Clock 48200 (clock UDP ports 48201 to 48205), Election 48300,
- *       Replication 48400, Requests 48500, MapReduce 48600.</li>
- *   <li>Squatter / port collision test: 48801.</li>
+ *   <li>Cluster bases: RMI 24100, Clock 24200 (clock UDP ports 24201 to 24205), Election 24300,
+ *       Replication 24400, Requests 24500, MapReduce 24600.</li>
+ *   <li>Squatter / port collision test: 24801.</li>
  * </ul>
- * Apart from Track A (47100-47899) and Exp 2 (41xxx-46xxx), safely below Windows dynamic range (49152).</p>
+ * Safely below Linux ephemeral range (32768-60999) and Windows dynamic range (49152).</p>
  */
 class ClockNodeServiceTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(
             3,
             List.of(FAST, MEDIUM, SLOW),
-            new ClusterProperties.Ports(48100, 48200, 48300, 48400, 48500, 48600)
+            new ClusterProperties.Ports(24100, 24200, 24300, 24400, 24500, 24600)
     );
 
     private static final ClockSyncProperties PROPERTIES = new ClockSyncProperties(
@@ -113,7 +113,7 @@ class ClockNodeServiceTest {
         ClockNodeService svc = service(1);
 
         assertThat(svc.name()).isEqualTo("clock");
-        assertThat(svc.port()).isEqualTo(48201);
+        assertThat(svc.port()).isEqualTo(24201);
         assertThat(svc.isRunning()).isTrue();
         assertThat(cluster.node(1).runningServices()).contains("clock");
 
@@ -362,20 +362,20 @@ class ClockNodeServiceTest {
     @Test
     @DisplayName("port already in use publishes SERVICE_START_FAILED and throws exception")
     void portAlreadyInUseGivesServiceStartFailed() throws IOException {
-        int occupiedPort = 48801;
+        int occupiedPort = 24801;
         try (DatagramSocket squatter = new DatagramSocket(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), occupiedPort))) {
             // Build a node configured with the occupied port
             ClusterProperties customProps = new ClusterProperties(
                     1,
                     List.of(FAST),
-                    new ClusterProperties.Ports(48100, occupiedPort - 1, 48300, 48400, 48500, 48600)
+                    new ClusterProperties.Ports(24100, occupiedPort - 1, 24300, 24400, 24500, 24600)
             );
             Cluster customCluster = new Cluster(customProps, bus);
 
             try {
                 ClockNodeService conflictingService = new ClockNodeService(
                         customCluster.node(1),
-                        id -> 48201,
+                        id -> 24201,
                         eventLog,
                         null,
                         bus,
