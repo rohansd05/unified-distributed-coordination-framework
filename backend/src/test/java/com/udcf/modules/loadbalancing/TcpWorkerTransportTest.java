@@ -303,6 +303,23 @@ class TcpWorkerTransportTest {
     }
 
     @Test
+    @DisplayName("given a run id, every event carries it; without one, none does")
+    void runIdOnEvents() throws Exception {
+        server(47801, ScriptedServer.Mode.REPLY, "REJECTED|1|5|r-1;;0.0;0.0;0.0;Queue full");
+        TcpWorkerTransport tagged = new TcpWorkerTransport(new RequestsClient(5000), cluster.clusterClock(), bus, "abc12345");
+
+        assertThatThrownBy(() -> tagged.send(worker(1, 47801), 1, 5)).isInstanceOf(WorkerDeclinedException.class);
+        assertThatThrownBy(() -> tagged.send(worker(2, NOTHING_LISTENING), 2, 5)).isInstanceOf(ConnectException.class);
+        assertThatThrownBy(() -> transport.send(worker(3, NOTHING_LISTENING), 3, 5)).isInstanceOf(ConnectException.class);
+
+        assertThat(events("DISPATCH_DECLINED")).singleElement()
+                .satisfies(e -> assertThat(e.data()).containsEntry("runId", "abc12345"));
+        assertThat(events("DISPATCH_FAILED")).hasSize(2)
+                .anySatisfy(e -> assertThat(e.data()).containsEntry("runId", "abc12345"))
+                .anySatisfy(e -> assertThat(e.data()).doesNotContainKey("runId"));
+    }
+
+    @Test
     @DisplayName("rejects null arguments with NullPointerException")
     void validation() {
         RequestsClient client = new RequestsClient(1000);

@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 /**
  * Binds the Experiment 6 balancer to the shared cluster (R10): every cluster node is a
@@ -76,7 +77,20 @@ public class LoadBalancingGateway {
      * @param concurrency  concurrent clients, at least 1
      */
     public PhaseReport run(Strategy strategy, int requestCount, int workUnits, int concurrency) {
+        return run(strategy, requestCount, workUnits, concurrency, null, result -> { });
+    }
+
+    /**
+     * As {@link #run(Strategy, int, int, int)}, plus:
+     *
+     * @param runId    added as {@code runId} to this run's DISPATCH_* events; null for none
+     * @param onResult called with each request's result on the client thread (see
+     *                 {@link BatchRunner#run(LoadBalancer, Strategy, int, int, int, Consumer)})
+     */
+    public PhaseReport run(Strategy strategy, int requestCount, int workUnits, int concurrency,
+                           String runId, Consumer<DispatchResult> onResult) {
         Objects.requireNonNull(strategy, "strategy must not be null");
+        Objects.requireNonNull(onResult, "onResult must not be null");
         TcpWorkerTransport.requireWorkUnits(workUnits);
         if (requestCount < 1) {
             throw new IllegalArgumentException("requestCount must be >= 1, was " + requestCount);
@@ -89,9 +103,10 @@ public class LoadBalancingGateway {
             startLiveServices();
             List<WorkerInfo> fresh = newWorkers();
             TcpWorkerTransport transport = new TcpWorkerTransport(
-                    new RequestsClient(properties.requestTimeoutMillis()), cluster.clusterClock(), bus);
+                    new RequestsClient(properties.requestTimeoutMillis()), cluster.clusterClock(), bus, runId);
             workers = fresh;
-            return runner.run(new LoadBalancer(fresh, transport), strategy, requestCount, workUnits, concurrency);
+            return runner.run(new LoadBalancer(fresh, transport), strategy, requestCount, workUnits, concurrency,
+                    onResult);
         } finally {
             runLock.unlock();
         }
@@ -103,6 +118,19 @@ public class LoadBalancingGateway {
      */
     public List<WorkerInfo> workers() {
         return workers;
+    }
+
+    /**
+     * Replaces the workers with fresh ones (zero counters, all healthy), as before the first
+     * run. Waits for a run in progress to end; a module reset only calls it while idle.
+     */
+    public void resetWorkers() {
+        runLock.lock();
+        try {
+            workers = newWorkers();
+        } finally {
+            runLock.unlock();
+        }
     }
 
     private List<WorkerInfo> newWorkers() {

@@ -53,7 +53,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * publishes a {@code REQUEST_COMPLETED} event with peer 0). At most
  * {@value #MAX_EVENTS_PER_WORKER} events per worker per transport; beyond that only the
  * balancer's counters ({@link WorkerInfo#failed()}, {@link WorkerInfo#declined()}) move.
- * Build one transport per run so the cap is per run.</p>
+ * Build one transport per run so the cap is per run. Given a run id, every event also carries
+ * {@code runId}, first in its data.</p>
  *
  * <p>No locks: safe for many client threads at once, and never holds a monitor across a
  * socket call. Covered by TcpWorkerTransportTest.</p>
@@ -77,6 +78,7 @@ public class TcpWorkerTransport implements WorkerTransport {
     private final LamportClock senderClock;
     private final ClusterEventBus bus;
     private final Map<Integer, AtomicInteger> eventsByWorker = new ConcurrentHashMap<>();
+    private final String runId;
 
     /**
      * @param client      sends one request line and reads one reply, with its timeout
@@ -84,9 +86,15 @@ public class TcpWorkerTransport implements WorkerTransport {
      * @param bus         receives the DISPATCH_* events
      */
     public TcpWorkerTransport(RequestsClient client, LamportClock senderClock, ClusterEventBus bus) {
+        this(client, senderClock, bus, null);
+    }
+
+    /** @param runId added as {@code runId} to every event this transport publishes; null for none */
+    public TcpWorkerTransport(RequestsClient client, LamportClock senderClock, ClusterEventBus bus, String runId) {
         this.client = Objects.requireNonNull(client, "client must not be null");
         this.senderClock = Objects.requireNonNull(senderClock, "senderClock must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
+        this.runId = runId;
     }
 
     /** @throws IllegalArgumentException if {@code workUnits} is outside the Exp 2 payload range 1-5000 */
@@ -127,6 +135,7 @@ public class TcpWorkerTransport implements WorkerTransport {
         }
         String reason = e.getClass().getSimpleName();
         Map<String, Object> data = new LinkedHashMap<>();
+        putRunId(data);
         data.put("requestId", requestId);
         data.put("reason", reason);
         data.put("message", messageOf(e));
@@ -142,6 +151,7 @@ public class TcpWorkerTransport implements WorkerTransport {
             return;
         }
         Map<String, Object> data = new LinkedHashMap<>();
+        putRunId(data);
         data.put("requestId", requestId);
         data.put("status", status);
         data.put("detail", detail == null ? "" : detail);
@@ -152,6 +162,12 @@ public class TcpWorkerTransport implements WorkerTransport {
                 .withPeer(worker.nodeId())
                 .withMessage("Node " + worker.nodeId() + " declined request " + requestId + " (" + status + ")")
                 .withData(data));
+    }
+
+    private void putRunId(Map<String, Object> data) {
+        if (runId != null) {
+            data.put("runId", runId);
+        }
     }
 
     private boolean underCap(WorkerInfo worker) {

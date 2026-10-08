@@ -11,6 +11,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -58,8 +59,20 @@ public class BatchRunner {
      *                          client has stopped; the other clients stop taking new requests
      */
     public PhaseReport run(LoadBalancer balancer, Strategy strategy, int requestCount, int workUnits, int concurrency) {
+        return run(balancer, strategy, requestCount, workUnits, concurrency, result -> { });
+    }
+
+    /**
+     * As {@link #run(LoadBalancer, Strategy, int, int, int)}, and calls {@code onResult} with
+     * each request's result, on the client thread that dispatched it, right after its answer.
+     * An exception from {@code onResult} ends the run like a transport bug: the other clients
+     * stop taking new requests and it is rethrown once every client has stopped.
+     */
+    public PhaseReport run(LoadBalancer balancer, Strategy strategy, int requestCount, int workUnits, int concurrency,
+                           Consumer<DispatchResult> onResult) {
         Objects.requireNonNull(balancer, "balancer must not be null");
         Objects.requireNonNull(strategy, "strategy must not be null");
+        Objects.requireNonNull(onResult, "onResult must not be null");
         requireAtLeastOne(requestCount, "requestCount");
         requireAtLeastOne(workUnits, "workUnits");
         requireAtLeastOne(concurrency, "concurrency");
@@ -80,7 +93,9 @@ public class BatchRunner {
                     try {
                         int id;
                         while (!aborted.get() && (id = nextId.getAndIncrement()) <= requestCount) {
-                            results[id - 1] = balancer.dispatch(id, workUnits, strategy);
+                            DispatchResult result = balancer.dispatch(id, workUnits, strategy);
+                            results[id - 1] = result;
+                            onResult.accept(result);
                         }
                     } catch (RuntimeException | Error e) {
                         aborted.set(true);
