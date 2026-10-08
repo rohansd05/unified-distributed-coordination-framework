@@ -164,7 +164,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -193,7 +192,6 @@ public class ClockNodeService implements NodeService {
             return;
         }
         bindAndListen();
-        running = true;
     }
 
     @Override
@@ -205,7 +203,8 @@ public class ClockNodeService implements NodeService {
 
     @Override
     public boolean isRunning() {
-        return running && socket != null && !socket.isClosed();
+        return running && socket != null && !socket.isClosed()
+                && listenerThread != null && listenerThread.isAlive();
     }
 
     public ClusterNode node() {
@@ -474,6 +473,7 @@ public class ClockNodeService implements NodeService {
             throw new IllegalStateException("Clock UDP socket failed to bind on port " + bindPort, e);
         }
 
+        running = true;
         listenerThread = new Thread(this::listenLoop, "clock-" + node.id() + "-listener");
         listenerThread.setDaemon(true);
         listenerThread.start();
@@ -499,7 +499,10 @@ public class ClockNodeService implements NodeService {
                 handleDatagram(packet);
             } catch (SocketException e) {
                 // Expected when socket is closed during crash or shutdown
-                break;
+                if (!running || socket == null || socket.isClosed()) {
+                    break;
+                }
+                log.warn("Node {}: UDP socket exception in receive loop: {}", node.id(), e.getMessage());
             } catch (Exception e) {
                 if (running) {
                     log.warn("Node {}: UDP receive loop error: {}", node.id(), e.getMessage());
