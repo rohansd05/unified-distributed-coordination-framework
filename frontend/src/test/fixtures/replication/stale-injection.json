@@ -1,0 +1,1 @@
+{"primaryNodeId":1,"backupNodeId":2,"key":"balance","currentItem":{"key":"balance","value":"2000","lamportTime":19,"originNode":1,"epoch":1},"staleItem":{"key":"balance","value":"500","lamportTime":18,"originNode":1,"epoch":1},"push":{"backupNodeId":2,"status":"ACKED","result":"STALE","backupEpoch":1,"latencyMillis":2.87,"detail":null},"rejected":true}

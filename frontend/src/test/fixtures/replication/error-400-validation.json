@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: key","instance":"/api/modules/replication/writes","errors":{"key":"key is required"}}
