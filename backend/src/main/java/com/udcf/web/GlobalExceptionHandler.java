@@ -10,7 +10,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.validation.ObjectError;
 import org.springframework.validation.method.ParameterValidationResult;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -23,12 +26,12 @@ import java.util.Map;
 /**
  * Maps UDCF exceptions to RFC 7807 {@link ProblemDetail} responses.
  *
- * <p>Scoped to {@code com.udcf.web}, so the Exp 2 controller keeps the default error
- * responses. Every body carries {@code status}, {@code title}, {@code detail} and
- * {@code instance}; node and module errors add {@code nodeId} or {@code moduleId}, and
- * parameter errors add {@code errors: {parameter: message}}.</p>
+ * <p>Covers every controller under {@code com.udcf}, including each module's controller in
+ * {@code com.udcf.modules.<moduleId>}. Every body carries {@code status}, {@code title},
+ * {@code detail} and {@code instance}; node and module errors add {@code nodeId} or
+ * {@code moduleId}, and parameter or request-body errors add {@code errors: {name: message}}.</p>
  */
-@RestControllerAdvice(basePackages = "com.udcf.web")
+@RestControllerAdvice(basePackages = "com.udcf")
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     static final String INVALID_PARAMETERS_TITLE = "Invalid request parameters";
@@ -83,6 +86,24 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail body = ex.getBody();
         body.setTitle(INVALID_PARAMETERS_TITLE);
         body.setDetail("Invalid request parameter: " + String.join(", ", errors.keySet()));
+        body.setProperty("errors", errors);
+        return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /** A {@code @Valid} request body that fails validation: the same 400 shape as a bad parameter. */
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        for (FieldError error : ex.getBindingResult().getFieldErrors()) {
+            errors.putIfAbsent(error.getField(), error.getDefaultMessage());
+        }
+        for (ObjectError error : ex.getBindingResult().getGlobalErrors()) {
+            errors.putIfAbsent(error.getObjectName(), error.getDefaultMessage());
+        }
+        ProblemDetail body = ex.getBody();
+        body.setTitle(INVALID_PARAMETERS_TITLE);
+        body.setDetail("Invalid request body: " + String.join(", ", errors.keySet()));
         body.setProperty("errors", errors);
         return handleExceptionInternal(ex, body, headers, status, request);
     }

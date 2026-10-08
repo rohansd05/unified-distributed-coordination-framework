@@ -13,8 +13,8 @@
 - **Special rules:** the Berkeley drift is simulated and labelled (R11); the time daemon comes from a module-local selector (TODO(L1)).
 
 ### Steps
-- [ ] E3a — the causal-invariant checker, the total order (lamportTime, nodeId), Berkeley averaging with an outlier threshold, and the drift model, as pure classes. Needs: none.
-- [ ] E3b — clock UDP service on `ports().clock()` (600k): Lamport send and receive, Berkeley poll and adjust rounds. Needs: E3a.
+- [x] E3a — the causal-invariant checker, the total order (lamportTime, nodeId), Berkeley averaging with an outlier threshold, and the drift model, as pure classes. Needs: none.
+- [x] E3b — clock UDP service on `ports().clock()` (600k): Lamport send and receive, Berkeley poll and adjust rounds. Needs: E3a.
 - [ ] E3c — `ClockSyncModule` (lab 3): a local event, send X to Y, random traffic for N seconds, a Berkeley round, verification; metric `distributed_clock_value` per node; fixtures. Needs: E3b.
 - [ ] E3d — the space-time diagram page and end-to-end check. Needs: E3c, E2d.
 
@@ -35,7 +35,22 @@
 
 ## Interfaces for other tracks
 
-(none yet)
+- **Reserved test port range:** `48100–48899` (Track D clock synchronization test sockets). Base port 48100, clock UDP ports 48201–48205, collision test port 48801. Avoids other tracks' reserved ranges (41xxx, 42xxx, 43xxx, 47xxx).
+- **Service Factory API:** `ClockNodeService.on(ClusterNode node, Cluster cluster, ClockEventLog eventLog, ClockDriftModel driftModel, EventBus bus, ClockSyncProperties properties, Clock wallClock)` registers and starts or retrieves the `clock` `NodeService` bound to `127.0.0.1:ports().clock()`.
+- **Wire Protocol:** Text-based UDP datagrams (`MAX_DATAGRAM_SIZE = 1024` bytes, UTF-8):
+  - `LAMPORT|<senderId>|<lamportTime>|<messageId>|<payload>`
+  - `BERKELEY_POLL|<senderId>|<lamportTime>|<roundId>`
+  - `BERKELEY_POLL_REPLY|<senderId>|<lamportTime>|<roundId>|<offsetMillis>`
+  - `BERKELEY_ADJUST|<senderId>|<lamportTime>|<roundId>|<adjMillis>|<isOutlier>`
+  - `BERKELEY_ADJUST_ACK|<senderId>|<lamportTime>|<roundId>|<afterOffsetMillis>`
+- **Cluster Event Shapes (`module = "clocksync"`):**
+  - `CLOCK_MESSAGE_SENT`: data `{"messageId": ..., "payload": ...}`
+  - `CLOCK_MESSAGE_RECEIVED`: data `{"messageId": ..., "causedByTime": ..., "payload": ...}`
+  - `CLOCK_LOCAL_EVENT`: data `{"description": ...}`
+  - `BERKELEY_ROUND_STARTED`: data `{"roundId": ..., "daemonId": ..., "thresholdMillis": ..., "targetNodes": [...]}`
+  - `BERKELEY_NODE_ADJUSTED`: data `{"roundId": ..., "beforeOffset": ..., "adjustment": ..., "afterOffset": ..., "outlier": ..., "rttMillis": ...}`
+  - `BERKELEY_ROUND_FINISHED`: data `{"roundId": ..., "targetOffset": ..., "spreadBefore": ..., "spreadAfter": ..., "participatingNodes": [...], "outlierNodes": [...], "unresponsiveNodes": [...]}`
+  - `SERVICE_START_FAILED`: published on socket bind failure
 
 ---
 
@@ -48,3 +63,5 @@
 ## Progress log
 
 - 2026-10-07 track file created.
+- 2026-10-07 E3a done: causal checker, total order, Berkeley averaging and drift model implemented as pure classes; backend 282 tests, frontend 126 tests; deviations: none
+- 2026-10-08 E3b done: clock UDP service on ports().clock() (600k) with Lamport and Berkeley sync; backend 482 tests, frontend 232 tests; deviations: none

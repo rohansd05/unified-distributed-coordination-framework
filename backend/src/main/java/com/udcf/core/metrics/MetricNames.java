@@ -30,6 +30,18 @@ public final class MetricNames {
     public static final String MATRIX_EXECUTION_DURATION = "distributed_matrix_execution_duration";
     public static final String EVENTS_PUBLISHED_TOTAL = "distributed_events_published_total";
     public static final String EVENT_NOTIFICATIONS_DROPPED_TOTAL = "distributed_event_notifications_dropped_total";
+    public static final String POOL_SIZE = "distributed_pool_size";
+    public static final String QUEUED_REQUESTS = "distributed_queued_requests";
+    public static final String QUEUE_REMAINING_CAPACITY = "distributed_queue_remaining_capacity";
+    public static final String REQUEST_THROUGHPUT = "distributed_request_throughput";
+    public static final String RESPONSE_TIME_P95_MILLIS = "distributed_response_time_p95_millis";
+    public static final String REQUEST_DURATION = "distributed_request_duration";
+    /** Experiment 6: dispatch attempts per worker node, by strategy and outcome (served, failed, declined). */
+    public static final String BALANCER_DISPATCHES_TOTAL = "distributed_balancer_dispatches_total";
+    /** Experiment 6: makespan of each run, cluster-level (node_id "0"), by strategy. */
+    public static final String BALANCER_MAKESPAN = "distributed_balancer_makespan";
+    /** Experiment 6: requests the balancer has in flight to each worker node. */
+    public static final String BALANCER_IN_FLIGHT = "distributed_balancer_in_flight";
 
     /** Tag key every meter carries. */
     public static final String NODE_ID = "node_id";

@@ -10,16 +10,6 @@ server:
   port: ${PORT:8080}
 
 udcf:
-  node:
-    # Experiment 2's node identity. Disappears in Phase 3, when Exp 2 runs on the shared cluster.
-    id: 1
-  threadpool:
-    core-pool-size: 4
-    max-pool-size: 8
-    queue-capacity: 200
-    keep-alive-seconds: 60
-    thread-name-prefix: udcf-worker-
-    metrics-window-seconds: 30
   events:
     buffer-size: 5000
     dispatch-queue-size: 1024
@@ -38,6 +28,54 @@ udcf:
   system:
     version: "@project.version@"
     mode: local
+  # Experiment 2 (lab 2). Thread counts come from each node's capacity (FAST 4, MEDIUM 2, SLOW 1).
+  multithreading:
+    queue-capacity: 200
+    keep-alive-seconds: 60
+    thread-name-prefix: udcf-worker-
+    metrics-window-seconds: 30
+    request-history-size: 500
+    read-timeout-millis: 5000
+    # The demo sends threads + queue capacity + extra-requests as one burst, so it always rejects some.
+    backpressure:
+      extra-requests: 50
+      workload: CPU_HASH
+      payload-size: 200
+  # Experiment 3 (lab 3). Clock synchronization (Lamport logical clock and Berkeley physical clock).
+  clocksync:
+    poll-timeout-millis: 1000
+    outlier-threshold-millis: 500
+    nodes:
+      1:
+        initial-offset-millis: 0
+        drift-rate-ms-per-sec: 0.0
+      2:
+        initial-offset-millis: 40
+        drift-rate-ms-per-sec: 1.5
+      3:
+        initial-offset-millis: -30
+        drift-rate-ms-per-sec: -1.0
+      4:
+        initial-offset-millis: 25
+        drift-rate-ms-per-sec: 0.8
+      5:
+        initial-offset-millis: -20
+        drift-rate-ms-per-sec: -0.5
+  # Experiment 6 (lab 6). The balancer dispatches into each node's Exp 2 requests service (link L3).
+  loadbalancing:
+    # Connect and read timeout per attempt; the read also covers the worker's queue wait.
+    request-timeout-millis: 10000
+    # Appendix B: 60 requests and 12 concurrent clients; 400 work units (Exp 2 payload) from the E6b probe.
+    defaults:
+      request-count: 60
+      work-units: 400
+      concurrency: 12
+    # max-total-work caps requestCount x workUnits per run, and 5 x that for a comparison (4 phases + warm-up).
+    limits:
+      max-request-count: 1000
+      max-work-units: 5000
+      max-concurrency: 50
+      max-total-work: 500000
 
 management:
   endpoints:

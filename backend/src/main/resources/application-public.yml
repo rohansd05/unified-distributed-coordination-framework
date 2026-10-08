@@ -6,10 +6,16 @@ udcf:
     size: 3          # the capacity pattern is unchanged, so nodes are FAST, MEDIUM, SLOW
   events:
     buffer-size: 1500
-  threadpool:
-    core-pool-size: 2
-    max-pool-size: 4
+  multithreading:
     queue-capacity: 100
+  # Smaller for 0.1 CPU: a default comparison (5 x 60 x 400 = 120000 units) is estimated at about
+  # 10 s there, and the SLOW node's worst queue wait stays well under the 10 s timeout.
+  loadbalancing:
+    limits:
+      max-request-count: 200
+      max-work-units: 500
+      max-concurrency: 24
+      max-total-work: 120000
 
 management:
   endpoints:
