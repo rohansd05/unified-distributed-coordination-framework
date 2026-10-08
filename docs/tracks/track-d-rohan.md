@@ -16,7 +16,7 @@
 - [x] E3a — the causal-invariant checker, the total order (lamportTime, nodeId), Berkeley averaging with an outlier threshold, and the drift model, as pure classes. Needs: none.
 - [x] E3b — clock UDP service on `ports().clock()` (600k): Lamport send and receive, Berkeley poll and adjust rounds. Needs: E3a.
 - [x] E3c — `ClockSyncModule` (lab 3): a local event, send X to Y, random traffic for N seconds, a Berkeley round, verification; metric `distributed_clock_value` per node; fixtures. Needs: E3b.
-- [ ] E3d — the space-time diagram page and end-to-end check. Needs: E3c, E2d.
+- [x] E3d — the space-time diagram page and end-to-end check. Needs: E3c, E2d.
 
 ---
 
@@ -85,4 +85,5 @@
 - 2026-10-07 E3a done: causal checker, total order, Berkeley averaging and drift model implemented as pure classes; backend 282 tests, frontend 126 tests; deviations: none
 - 2026-10-08 E3b done: clock UDP service on ports().clock() (600k) with Lamport and Berkeley sync; backend 482 tests, frontend 232 tests; deviations: none
 - 2026-10-08 E3c done: ClockSyncModule, REST API, metrics (distributed_clock_value), and contract fixtures; backend 509 tests (3 consecutive runs: 509/509/509), frontend 232 tests; deviations: none
+- 2026-10-09 E3d done: Clock Synchronization page at /experiments/3-clocksync on the E2d kit: space-time diagram (horizontal lanes per node, events as circles, UDP message arrows, causal violations marked by triangle shape and text, bounded 40 events with honest retention notice), keyboard-accessible table equivalent in (lamportTime, nodeId) order, Berkeley diverging offset visual centred on 0 ms with honest Not reached reporting for crashed nodes and SimulatedBadge, causal verification panel, local event / UDP message / traffic session / Berkeley round / drift controls with focus management and polite announcements, contract test on the 14 E3c fixtures; unit and contract tests only; live check against the real backend done by hand by Rohan (the agent's browser was unavailable); backend 763 tests, frontend 453 tests (3 runs, baseline 388); deviations: none; approved shared edits: routes.test.jsx (add-only) and the lab 3 concept line in experiments.js.
 
