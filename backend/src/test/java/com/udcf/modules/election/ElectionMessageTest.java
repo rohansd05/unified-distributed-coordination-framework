@@ -25,9 +25,15 @@ class ElectionMessageTest {
         assertThrows(IllegalArgumentException.class, () -> ElectionMessage.fromWire(""));
         assertThrows(IllegalArgumentException.class, () -> ElectionMessage.fromWire("ELECTION|5"));
         assertThrows(IllegalArgumentException.class, () -> ElectionMessage.fromWire("UNKNOWN|5|12"));
-        
-        StringBuilder sb = new StringBuilder();
-        for (int i=0; i<1030; i++) sb.append("a");
+    }
+
+    @Test
+    void testMessageOver1024CharactersRejected() {
+        StringBuilder sb = new StringBuilder("ELECTION|1|1|");
+        while (sb.length() <= 1024) {
+            sb.append("x");
+        }
+        assertTrue(sb.length() > 1024);
         assertThrows(IllegalArgumentException.class, () -> ElectionMessage.fromWire(sb.toString()));
     }
 }

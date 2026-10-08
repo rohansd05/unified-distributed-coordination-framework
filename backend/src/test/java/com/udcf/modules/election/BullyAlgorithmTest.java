@@ -3,6 +3,7 @@ package com.udcf.modules.election;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -235,11 +236,54 @@ class BullyAlgorithmTest {
 
     @Test
     void testTimerAfterCrashDoesNothing() {
+        // OK timer after crash does nothing
         node1.startElection();
         node1.crash();
         messenger.clear();
         timer.fire(config.okTimeoutMs());
         assertEquals(0, messenger.sent.size());
+
+        // Coordinator timer after crash does nothing
+        node2.startElection();
+        node2.onReceive(new ElectionMessage(ElectionMessageType.OK, 3, 10, ""));
+        node2.crash();
+        messenger.clear();
+        timer.fire(config.coordinatorTimeoutMs());
+        assertEquals(0, messenger.sent.size());
+    }
+
+    @Test
+    void testOldOkTimeoutFiredAfterNewElectionStartedDoesNothing() {
+        node1.startElection();
+        Runnable oldOkTimeout = timer.tasks.get(timer.tasks.size() - 1).action;
+
+        // Node receives OK, coordinator timeout fires to restart election (new election generation)
+        node1.onReceive(new ElectionMessage(ElectionMessageType.OK, 2, 5, ""));
+        timer.fire(config.coordinatorTimeoutMs());
+
+        // Stale OK timer from the prior election should do nothing
+        messenger.clear();
+        oldOkTimeout.run();
+        assertNull(node1.getCoordinatorId());
+        assertEquals(0, messenger.sent.size());
+    }
+
+    @Test
+    void testCrashBetweenCollectingAndSendingSendsNothingFurther() {
+        BullyAlgorithm[] nodeRef = new BullyAlgorithm[1];
+        List<ElectionMessage> sent = new ArrayList<>();
+        ElectionMessenger crashingMessenger = (target, msg) -> {
+            sent.add(msg);
+            if (target == 2) {
+                nodeRef[0].crash();
+            }
+        };
+        nodeRef[0] = new BullyAlgorithm(1, List.of(1, 2, 3), config, crashingMessenger, listener, timer, nanoClock, wallClock);
+        nodeRef[0].startElection();
+
+        // Sent to 2, then crashed, so sending to 3 was skipped
+        assertEquals(1, sent.size());
+        assertTrue(nodeRef[0].isCrashed());
     }
 
     @Test
