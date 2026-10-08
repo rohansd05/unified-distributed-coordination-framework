@@ -61,6 +61,14 @@ udcf:
       5:
         initial-offset-millis: -20
         drift-rate-ms-per-sec: -0.5
+  # Experiment 5 (lab 5). Replication over TCP 710k; the primary is the lowest live node until Phase 9A (L1).
+  replication:
+    # SIMULATED (R7): stands in for wide-area latency on asynchronous pushes only (Appendix B: 450 ms).
+    async-delay-millis: 450
+    # Connect and read timeout of every replication exchange, client and server (legacy 1500 ms).
+    timeout-millis: 1500
+    # Items per anti-entropy message and per dump page, 1 to 1000 (the protocol limit).
+    batch-size: 200
   # Experiment 6 (lab 6). The balancer dispatches into each node's Exp 2 requests service (link L3).
   loadbalancing:
     # Connect and read timeout per attempt; the read also covers the worker's queue wait.
