@@ -55,7 +55,9 @@ class LoadBalancingProbeTest {
         try (ClusterEventBus bus = new ClusterEventBus(new EventProperties(5000, 5000), java.time.Clock.systemUTC());
              Cluster cluster = new Cluster(CLUSTER, bus)) {
             LoadBalancingGateway gateway = new LoadBalancingGateway(cluster, MULTITHREADING,
-                    new SimpleMeterRegistry(), bus, new LoadBalancingProperties(10_000));
+                    new SimpleMeterRegistry(), bus, new LoadBalancingProperties(10_000,
+                            new LoadBalancingProperties.Defaults(60, 400, 12),
+                            new LoadBalancingProperties.Limits(1000, 5000, 50, 500_000)));
             gateway.run(Strategy.ROUND_ROBIN, REQUESTS, 100, CLIENTS);   // JIT warm-up, discarded
 
             StringBuilder out = new StringBuilder();

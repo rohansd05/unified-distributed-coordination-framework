@@ -14,6 +14,14 @@ udcf:
     default-messages-per-second: 4
     max-messages-per-second: 10
     retained-events-capacity: 1000
+  # Smaller for 0.1 CPU: a default comparison (5 x 60 x 400 = 120000 units) is estimated at about
+  # 10 s there, and the SLOW node's worst queue wait stays well under the 10 s timeout.
+  loadbalancing:
+    limits:
+      max-request-count: 200
+      max-work-units: 500
+      max-concurrency: 24
+      max-total-work: 120000
 
 management:
   endpoints:

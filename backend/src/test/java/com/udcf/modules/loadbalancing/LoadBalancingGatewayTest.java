@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.udcf.core.cluster.NodeCapacity.FAST;
 import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
@@ -47,7 +48,9 @@ class LoadBalancingGatewayTest {
     private static final MultithreadingProperties MULTITHREADING =
             new MultithreadingProperties(200, 60, "udcf-worker-", 30, 500, 2000,
                     new MultithreadingProperties.Backpressure(50, WorkloadType.CPU_HASH, 200));
-    private static final LoadBalancingProperties PROPERTIES = new LoadBalancingProperties(10_000);
+    private static final LoadBalancingProperties PROPERTIES = new LoadBalancingProperties(10_000,
+            new LoadBalancingProperties.Defaults(60, 400, 12),
+            new LoadBalancingProperties.Limits(1000, 5000, 50, 500_000));
 
     private ClusterEventBus bus;
     private Cluster cluster;
@@ -205,6 +208,33 @@ class LoadBalancingGatewayTest {
         assertThat(after.requestsPerNode()).isEqualTo(Map.of(1, 10, 2, 10, 3, 10));
         assertThat(after.reroutes()).isZero();
         assertThat(worker(3).isHealthy()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the run id and the observer pass through: every result observed, DISPATCH events tagged with the run id")
+    void runIdAndObserverPassThrough() {
+        cluster.crash(3);
+        AtomicInteger observed = new AtomicInteger();
+
+        PhaseReport report = gateway.run(Strategy.ROUND_ROBIN, 12, 5, 3, "run-42", result -> observed.incrementAndGet());
+
+        assertThat(observed).hasValue(12);
+        assertThat(report.served()).isEqualTo(12);
+        assertThat(events(TcpWorkerTransport.MODULE, "DISPATCH_FAILED")).isNotEmpty()
+                .allSatisfy(e -> assertThat(e.data()).containsEntry("runId", "run-42"));
+    }
+
+    @Test
+    @DisplayName("resetWorkers gives fresh workers with zero counters, all healthy")
+    void resetWorkers() {
+        cluster.crash(3);
+        gateway.run(Strategy.ROUND_ROBIN, 12, 5, 3);
+        assertThat(worker(3).isHealthy()).isFalse();
+
+        gateway.resetWorkers();
+
+        assertThat(gateway.workers()).allMatch(WorkerInfo::isHealthy)
+                .allMatch(w -> w.completed() == 0 && w.failed() == 0 && w.declined() == 0);
     }
 
     @Test

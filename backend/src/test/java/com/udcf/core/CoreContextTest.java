@@ -43,6 +43,9 @@ class CoreContextTest {
         assertThat(moduleRegistry.modules()).extracting(ExperimentModule::labNumber).isSorted();
         assertThat(moduleRegistry.get("multithreading").labNumber()).isEqualTo(2);
         assertThat(moduleRegistry.get("clocksync").labNumber()).isEqualTo(3);
+        assertThat(moduleRegistry.get("loadbalancing").labNumber()).isEqualTo(6);
+        assertThat(moduleRegistry.modules()).extracting(ExperimentModule::id)
+                .containsSubsequence("multithreading", "clocksync", "loadbalancing");
         assertThat(eventBus.query("cluster", 0, 100))
                 .extracting(ClusterEvent::type)
                 .contains("CLUSTER_STARTED");

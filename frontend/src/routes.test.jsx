@@ -5,6 +5,8 @@ import { api } from '@/services/api'
 import { multithreadingApi } from '@/modules/multithreading/multithreadingApi'
 import { renderRoute } from '@/test/renderRoute'
 import overviewBefore from '@/test/fixtures/multithreading/overview-before.json'
+import { loadBalancingApi } from '@/modules/loadbalancing/loadBalancingApi'
+import loadBalancingOverviewBefore from '@/test/fixtures/loadbalancing/overview-before.json'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -12,6 +14,7 @@ beforeEach(() => {
   vi.spyOn(api, 'getEvents').mockResolvedValue([])
   vi.spyOn(multithreadingApi, 'getOverview').mockResolvedValue(overviewBefore)
   vi.spyOn(multithreadingApi, 'getRequests').mockResolvedValue([])
+  vi.spyOn(loadBalancingApi, 'getOverview').mockResolvedValue(loadBalancingOverviewBefore)
 })
 
 afterEach(() => {
