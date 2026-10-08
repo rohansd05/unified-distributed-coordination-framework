@@ -65,13 +65,14 @@ public class BerkeleyAveragingCoordinator {
 
         long daemonOffset = daemonReading.offsetMillis();
 
-        // 2. Classify into participating (non-outlier) and outlier nodes
+        // 2. Classify into participating (non-outlier) and outlier nodes, with Cristian RTT compensation
         List<NodeClockReading> validReadings = new ArrayList<>();
         List<Integer> participatingNodes = new ArrayList<>();
         List<Integer> outlierNodes = new ArrayList<>();
 
         for (NodeClockReading r : readings) {
-            long diffFromDaemon = Math.abs(r.offsetMillis() - daemonOffset);
+            long compensatedOffset = r.offsetMillis() + Math.round(r.rttMillis() / 2.0);
+            long diffFromDaemon = Math.abs(compensatedOffset - daemonOffset);
             if (diffFromDaemon <= outlierThresholdMillis) {
                 validReadings.add(r);
                 participatingNodes.add(r.nodeId());
@@ -84,19 +85,22 @@ public class BerkeleyAveragingCoordinator {
         // Daemon itself is always valid (diff = 0 <= threshold)
         long sumDeltas = 0;
         for (NodeClockReading r : validReadings) {
-            sumDeltas += (r.offsetMillis() - daemonOffset);
+            long compensatedOffset = r.offsetMillis() + Math.round(r.rttMillis() / 2.0);
+            sumDeltas += (compensatedOffset - daemonOffset);
         }
         long avgDelta = Math.round((double) sumDeltas / validReadings.size());
         long targetOffset = daemonOffset + avgDelta;
 
         // 4. Compute adjustments per node
+        // Outliers are excluded from the average calculation, but still receive an individual adjustment
+        // toward the target consensus offset so the whole cluster converges (HANDOFF Section 7, Gusella & Zatti 1989)
         List<NodeAdjustment> adjustments = new ArrayList<>();
         for (NodeClockReading r : readings) {
             boolean isOutlier = outlierNodes.contains(r.nodeId());
-            long before = r.offsetMillis();
-            long adjustment = isOutlier ? 0L : (targetOffset - before);
-            long after = before + adjustment;
-            adjustments.add(new NodeAdjustment(r.nodeId(), before, adjustment, after, isOutlier));
+            long compensatedBefore = r.offsetMillis() + Math.round(r.rttMillis() / 2.0);
+            long adjustment = targetOffset - compensatedBefore;
+            long after = targetOffset;
+            adjustments.add(new NodeAdjustment(r.nodeId(), r.offsetMillis(), adjustment, after, isOutlier, r.rttMillis()));
         }
 
         // Sort adjustments by nodeId for clean deterministic presentation
@@ -104,22 +108,20 @@ public class BerkeleyAveragingCoordinator {
         Collections.sort(participatingNodes);
         Collections.sort(outlierNodes);
 
-        // 5. Measure spread before and after (spread among all readings vs synchronized readings)
+        // 5. Measure spread before and after across ALL participating readings (honest reporting, R7)
         long minBefore = readings.stream().mapToLong(NodeClockReading::offsetMillis).min().orElse(0L);
         long maxBefore = readings.stream().mapToLong(NodeClockReading::offsetMillis).max().orElse(0L);
         long spreadBefore = maxBefore - minBefore;
 
-        long minAfterValid = adjustments.stream()
-                .filter(a -> !a.outlier())
+        long minAfter = adjustments.stream()
                 .mapToLong(NodeAdjustment::afterOffsetMillis)
                 .min()
                 .orElse(0L);
-        long maxAfterValid = adjustments.stream()
-                .filter(a -> !a.outlier())
+        long maxAfter = adjustments.stream()
                 .mapToLong(NodeAdjustment::afterOffsetMillis)
                 .max()
                 .orElse(0L);
-        long spreadAfter = maxAfterValid - minAfterValid;
+        long spreadAfter = maxAfter - minAfter;
 
         return new BerkeleyRoundResult(
                 daemonNodeId,

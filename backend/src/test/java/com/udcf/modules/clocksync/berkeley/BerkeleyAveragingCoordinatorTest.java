@@ -79,7 +79,7 @@ class BerkeleyAveragingCoordinatorTest {
     }
 
     @Test
-    @DisplayName("identifies and discards outliers beyond threshold, protecting average from distortion")
+    @DisplayName("identifies and discards outliers beyond threshold, protecting average from distortion, while adjusting outlier toward target")
     void discardsOutlierExceedingThreshold() {
         // Daemon is Node 1 (offset = 100 ms)
         // Node 2: offset = 140 ms (diff = +40 ms, within 300 ms threshold)
@@ -100,11 +100,11 @@ class BerkeleyAveragingCoordinatorTest {
         assertThat(result.outlierNodes()).containsExactly(4);
         assertThat(result.averageOffsetMillis()).isEqualTo(107L);
 
-        // Outlier Node 4 receives 0 adjustment and retains its original offset
+        // Outlier Node 4 is excluded from average, but receives adjustment toward consensus (107 - 5000 = -4893)
         NodeAdjustment adj4 = result.adjustments().stream().filter(a -> a.nodeId() == 4).findFirst().orElseThrow();
         assertThat(adj4.outlier()).isTrue();
-        assertThat(adj4.adjustmentMillis()).isZero();
-        assertThat(adj4.afterOffsetMillis()).isEqualTo(5000L);
+        assertThat(adj4.adjustmentMillis()).isEqualTo(-4893L);
+        assertThat(adj4.afterOffsetMillis()).isEqualTo(107L);
 
         // Valid nodes converge to target offset (107 ms)
         for (int id : List.of(1, 2, 3)) {
@@ -113,8 +113,33 @@ class BerkeleyAveragingCoordinatorTest {
             assertThat(adj.afterOffsetMillis()).isEqualTo(107L);
         }
 
-        // Spread among synchronized nodes is 0
+        // Spread across ALL participating nodes (including adjusted outlier) is 0
         assertThat(result.spreadAfterMillis()).isZero();
+    }
+
+    @Test
+    @DisplayName("applies Cristian RTT compensation when estimating peer clock offsets")
+    void appliesRttCompensation() {
+        // Daemon is Node 1 (offset = 0 ms, RTT = 0)
+        // Node 2: reported offset = 50 ms, RTT = 20.0 ms -> estimated offset = 50 + 10 = 60 ms
+        // Node 3: reported offset = -40 ms, RTT = 10.0 ms -> estimated offset = -40 + 5 = -35 ms
+        List<NodeClockReading> readings = List.of(
+                new NodeClockReading(1, 0L, 0.0),
+                new NodeClockReading(2, 50L, 20.0),
+                new NodeClockReading(3, -40L, 10.0)
+        );
+
+        BerkeleyRoundResult result = coordinator.computeRound(1, readings, 500L);
+
+        // Average = (0 + 60 - 35) / 3 = round(25 / 3) = 8 ms
+        assertThat(result.averageOffsetMillis()).isEqualTo(8L);
+
+        NodeAdjustment adj2 = result.adjustments().stream().filter(a -> a.nodeId() == 2).findFirst().orElseThrow();
+        assertThat(adj2.rttMillis()).isEqualTo(20.0);
+        // Adjustment brings estimated (60 ms) to target (8 ms): adjustment = 8 - 60 = -52 ms
+        assertThat(adj2.adjustmentMillis()).isEqualTo(-52L);
+        // Node's actual synchronized after offset = target (8 ms)
+        assertThat(adj2.afterOffsetMillis()).isEqualTo(8L);
     }
 
     @Test
