@@ -19,6 +19,7 @@ import java.net.InetSocketAddress;
 import java.net.ProtocolException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -59,6 +60,13 @@ import java.util.concurrent.ThreadPoolExecutor;
  * work ends FAILED "Node crashed". The {@link RequestRegistry} and {@link ThroughputTracker}
  * survive crash and recovery, so the history shows what happened to interrupted requests.</p>
  *
+ * <p><b>Closing the port.</b> {@link #crash()} and {@link #stop()} return only after the accept
+ * thread has exited, so the port is really closed when they return. Closing a
+ * {@link ServerSocket} while another thread is blocked in {@code accept()} only pre-closes it;
+ * on Linux the socket keeps listening until that thread wakes, and a connection arriving in
+ * that window is accepted and then dropped without a reply, and a recover in that window
+ * cannot rebind. Windows aborts the blocked accept at once, which hides this.</p>
+ *
  * <p><b>Binding.</b> The listener sets {@code SO_REUSEADDR}. Checked on Windows 11 with
  * JDK 21: a second listener on a port in use is still refused, and an immediate rebind
  * after a crash succeeds. On Linux, {@code SO_REUSEADDR} never allows binding over a
@@ -80,6 +88,13 @@ public class RequestsNodeService implements NodeService {
     /** Most input read and dropped after an over-long request line. */
     private static final long MAX_DISCARD_BYTES = 64 * 1024;
 
+    /**
+     * How long crash() and stop() wait for the accept thread to exit after closing the
+     * listener. A shutdown bound, not deployment config: the thread normally exits within
+     * microseconds of the close; reaching this bound means the port may still be listening.
+     */
+    private static final Duration ACCEPT_EXIT_TIMEOUT = Duration.ofSeconds(5);
+
     private final ClusterNode node;
     private final MultithreadingProperties properties;
     private final MeterRegistry meterRegistry;
@@ -92,6 +107,7 @@ public class RequestsNodeService implements NodeService {
     private volatile Engine engine;       // the current executor generation; null before the first start
     private volatile ServerSocket server;
     private volatile boolean running;
+    private Thread acceptThread;          // guarded by this: only the synchronized lifecycle methods touch it
 
     /** One executor generation and everything that holds it. */
     private record Engine(ThreadPoolExecutor executor,
@@ -265,6 +281,7 @@ public class RequestsNodeService implements NodeService {
         running = true;
         Thread accept = new Thread(() -> acceptLoop(socket), "udcf-requests-n" + node.id() + "-accept");
         accept.setDaemon(true);
+        acceptThread = accept;
         accept.start();
     }
 
@@ -296,14 +313,45 @@ public class RequestsNodeService implements NodeService {
         running = false;
         closeQuietly(server);
         connections.forEach(RequestsNodeService::closeQuietly);
-        Engine current = engine;
-        if (current == null || current.executor().isShutdown()) {
+        try {
+            Engine current = engine;
+            if (current == null || current.executor().isShutdown()) {
+                return;
+            }
+            // Fail the futures first, so an interrupted task cannot complete them differently.
+            NodeDownException down = new NodeDownException(node.id());
+            current.tasks().forEach(future -> future.completeExceptionally(down));
+            current.processing().shutdownNow(reason);
+        } finally {
+            awaitAcceptThreadExit();
+        }
+    }
+
+    /**
+     * Waits, bounded, for the accept thread to exit: only then is the listening socket really
+     * closed (see "Closing the port" in the class Javadoc). The accept thread never takes this
+     * object's lock, so joining it while holding the lock cannot deadlock.
+     *
+     * @throws IllegalStateException if it is still alive after {@link #ACCEPT_EXIT_TIMEOUT},
+     *                               or the wait is interrupted (the interrupt flag is restored)
+     */
+    private void awaitAcceptThreadExit() {
+        Thread accept = acceptThread;
+        if (accept == null) {
             return;
         }
-        // Fail the futures first, so an interrupted task cannot complete them differently.
-        NodeDownException down = new NodeDownException(node.id());
-        current.tasks().forEach(future -> future.completeExceptionally(down));
-        current.processing().shutdownNow(reason);
+        try {
+            if (!accept.join(ACCEPT_EXIT_TIMEOUT)) {
+                throw new IllegalStateException("Node " + node.id() + ": the accept thread did not exit within "
+                        + ACCEPT_EXIT_TIMEOUT.toMillis() + " ms; port " + port() + " may still be listening");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Node " + node.id()
+                    + ": interrupted while waiting for the accept thread to exit; port " + port()
+                    + " may still be listening", e);
+        }
+        acceptThread = null;
     }
 
     private void acceptLoop(ServerSocket socket) {
