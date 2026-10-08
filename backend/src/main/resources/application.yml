@@ -45,6 +45,11 @@ udcf:
   clocksync:
     poll-timeout-millis: 1000
     outlier-threshold-millis: 500
+    default-traffic-seconds: 5
+    max-traffic-seconds: 30
+    default-messages-per-second: 4
+    max-messages-per-second: 20
+    retained-events-capacity: 2000
     nodes:
       1:
         initial-offset-millis: 0

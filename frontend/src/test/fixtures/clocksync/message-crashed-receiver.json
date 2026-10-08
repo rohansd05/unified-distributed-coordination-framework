@@ -1,0 +1,1 @@
+{"from":1,"to":3,"messageId":2,"lamportTime":4,"payload":"Message to crashed node 3","deliveryStatus":"UNKNOWN","deliveryNote":"UDP message sent to port 6003 of crashed node 3; datagram was transmitted over UDP socket but delivery cannot be confirmed in unreliable connectionless protocol.","wallTime":"2026-10-08T12:02:48.904201200Z"}

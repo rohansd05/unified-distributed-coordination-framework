@@ -15,7 +15,7 @@
 ### Steps
 - [x] E3a — the causal-invariant checker, the total order (lamportTime, nodeId), Berkeley averaging with an outlier threshold, and the drift model, as pure classes. Needs: none.
 - [x] E3b — clock UDP service on `ports().clock()` (600k): Lamport send and receive, Berkeley poll and adjust rounds. Needs: E3a.
-- [ ] E3c — `ClockSyncModule` (lab 3): a local event, send X to Y, random traffic for N seconds, a Berkeley round, verification; metric `distributed_clock_value` per node; fixtures. Needs: E3b.
+- [x] E3c — `ClockSyncModule` (lab 3): a local event, send X to Y, random traffic for N seconds, a Berkeley round, verification; metric `distributed_clock_value` per node; fixtures. Needs: E3b.
 - [ ] E3d — the space-time diagram page and end-to-end check. Needs: E3c, E2d.
 
 ---
@@ -35,7 +35,7 @@
 
 ## Interfaces for other tracks
 
-- **Reserved test port range:** `48100–48899` (Track D clock synchronization test sockets). Base port 48100, clock UDP ports 48201–48205, collision test port 48801. Avoids other tracks' reserved ranges (41xxx, 42xxx, 43xxx, 47xxx).
+- **Reserved test port range:** `48100–48899` (Track D clock synchronization test sockets). Base port 48100, clock UDP ports 48201–48205 (service tests), 48401–48405 (module tests), 48601–48605 (controller tests), squatter test port 48801. Avoids other tracks' reserved ranges (41xxx, 42xxx, 43xxx, 47xxx).
 - **Service Factory API:** `ClockNodeService.on(ClusterNode node, Cluster cluster, ClockEventLog eventLog, ClockDriftModel driftModel, EventBus bus, ClockSyncProperties properties, Clock wallClock)` registers and starts or retrieves the `clock` `NodeService` bound to `127.0.0.1:ports().clock()`.
 - **Wire Protocol:** Text-based UDP datagrams (`MAX_DATAGRAM_SIZE = 1024` bytes, UTF-8):
   - `LAMPORT|<senderId>|<lamportTime>|<messageId>|<payload>`
@@ -51,6 +51,19 @@
   - `BERKELEY_NODE_ADJUSTED`: data `{"roundId": ..., "beforeOffset": ..., "adjustment": ..., "afterOffset": ..., "outlier": ..., "rttMillis": ...}`
   - `BERKELEY_ROUND_FINISHED`: data `{"roundId": ..., "targetOffset": ..., "spreadBefore": ..., "spreadAfter": ..., "participatingNodes": [...], "outlierNodes": [...], "unresponsiveNodes": [...]}`
   - `SERVICE_START_FAILED`: published on socket bind failure
+- **REST Endpoints (`/api/modules/clocksync`):**
+  - `GET /` -> `ClockSyncOverviewDto`: module status, live daemon node id, node states, drift snapshots, latest round, operational limits, plain-sentence notes
+  - `POST /nodes/{id}/local-events` -> `LocalEventResult`: records local event advancing Lamport clock (Rule 1)
+  - `POST /messages` -> `SendLamportResult`: sends point-to-point UDP message (Rule 2), supports UDP honesty (`deliveryStatus: "UNKNOWN"` when receiver is crashed)
+  - `POST /traffic` -> `TrafficSessionDto`: 202 Accepted, background burst across live nodes guarded by `ModuleActionGuard`
+  - `POST /berkeley-rounds` -> `BerkeleyRoundAcceptedDto`: 202 Accepted, daemon coordinates UDP Berkeley round across live nodes guarded by `ModuleActionGuard`
+  - `PUT /nodes/{id}/drift` -> `NodeDriftResponseDto`: modifies simulated drift offset and rate
+  - `GET /verification` -> `CausalVerificationDto`: checks Lamport Rule 3 and local monotonicity invariants over retained event window
+  - `GET /timeline?limit=` -> `TimelineResponseDto`: returns retained causal events with `messageId` for space-time diagram linkage
+- **Micrometer Metrics:**
+  - `distributed_clock_value`: gauge per node tagged with `node_id`, reading current Lamport clock value
+- **Frontend Fixtures:**
+  - Real contract JSON fixtures exported to `frontend/src/test/fixtures/clocksync/` (14 JSON files + `README.md`)
 
 ---
 
@@ -65,3 +78,5 @@
 - 2026-10-07 track file created.
 - 2026-10-07 E3a done: causal checker, total order, Berkeley averaging and drift model implemented as pure classes; backend 282 tests, frontend 126 tests; deviations: none
 - 2026-10-08 E3b done: clock UDP service on ports().clock() (600k) with Lamport and Berkeley sync; backend 482 tests, frontend 232 tests; deviations: none
+- 2026-10-08 E3c done: ClockSyncModule, REST API, metrics (distributed_clock_value), and contract fixtures; backend 509 tests (3 consecutive runs: 509/509/509), frontend 232 tests; deviations: none
+

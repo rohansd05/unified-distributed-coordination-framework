@@ -39,9 +39,10 @@ class CoreContextTest {
                 NodeCapacity.MEDIUM, NodeCapacity.FAST);
         assertThat(cluster.node(3).ports().election()).isEqualTo(7003);
         // "Contains", not an exact list: other tracks' modules join the registry later (E2c).
-        assertThat(moduleRegistry.modules()).extracting(ExperimentModule::id).contains("multithreading");
+        assertThat(moduleRegistry.modules()).extracting(ExperimentModule::id).contains("multithreading", "clocksync");
         assertThat(moduleRegistry.modules()).extracting(ExperimentModule::labNumber).isSorted();
         assertThat(moduleRegistry.get("multithreading").labNumber()).isEqualTo(2);
+        assertThat(moduleRegistry.get("clocksync").labNumber()).isEqualTo(3);
         assertThat(eventBus.query("cluster", 0, 100))
                 .extracting(ClusterEvent::type)
                 .contains("CLUSTER_STARTED");

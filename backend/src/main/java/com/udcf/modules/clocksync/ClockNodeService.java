@@ -23,6 +23,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ProtocolException;
+import java.util.Optional;
 import java.net.SocketException;
 import java.time.Clock;
 import java.time.Duration;
@@ -110,7 +111,7 @@ public class ClockNodeService implements NodeService {
         this.peerPortResolver = Objects.requireNonNull(peerPortResolver, "peerPortResolver must not be null");
         this.eventLog = Objects.requireNonNull(eventLog, "eventLog must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
-        this.properties = properties != null ? properties : new ClockSyncProperties(1000L, 500L, Map.of());
+        this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.wallClock = wallClock != null ? wallClock : Clock.systemUTC();
 
         if (driftModel != null) {
@@ -145,6 +146,11 @@ public class ClockNodeService implements NodeService {
     ) {
         return on(node, peerId -> cluster.node(peerId).ports().clock(),
                 eventLog, driftModel, bus, properties, wallClock);
+    }
+
+    /** Returns the node's clock service if it is registered, without starting it. */
+    public static Optional<ClockNodeService> find(ClusterNode node) {
+        return node.service(NAME).map(ClockNodeService.class::cast);
     }
 
     @Override
@@ -257,7 +263,7 @@ public class ClockNodeService implements NodeService {
         long stamped;
         synchronized (node.clock()) {
             stamped = node.clock().tick();
-            eventLog.record(ClockEvent.send(node.id(), stamped, targetNodeId, payload, wallClock.instant()));
+            eventLog.record(ClockEvent.send(node.id(), stamped, targetNodeId, messageId, payload, wallClock.instant()));
             bus.publish(EventDraft.of(MODULE, node.id(), "CLOCK_MESSAGE_SENT", stamped)
                     .withPeer(targetNodeId)
                     .withMessage(payload)
@@ -518,7 +524,7 @@ public class ClockNodeService implements NodeService {
                 synchronized (node.clock()) {
                     updated = node.clock().update(msg.lamportTime());
                     eventLog.record(ClockEvent.receive(
-                            node.id(), updated, msg.senderId(), msg.lamportTime(), msg.textPayload(), wallClock.instant()));
+                            node.id(), updated, msg.senderId(), msg.id(), msg.lamportTime(), msg.textPayload(), wallClock.instant()));
                     bus.publish(EventDraft.of(MODULE, node.id(), "CLOCK_MESSAGE_RECEIVED", updated)
                             .withPeer(msg.senderId())
                             .withMessage(msg.textPayload())

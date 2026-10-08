@@ -64,6 +64,11 @@ class ClockNodeServiceTest {
     private static final ClockSyncProperties PROPERTIES = new ClockSyncProperties(
             500L,
             300L,
+            5,
+            30,
+            4,
+            20,
+            2000,
             Map.of(
                     1, new ClockSyncProperties.NodeDriftConfig(0L, 0.0),
                     2, new ClockSyncProperties.NodeDriftConfig(60L, 1.0),

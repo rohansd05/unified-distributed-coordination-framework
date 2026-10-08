@@ -8,6 +8,12 @@ udcf:
     buffer-size: 1500
   multithreading:
     queue-capacity: 100
+  clocksync:
+    default-traffic-seconds: 5
+    max-traffic-seconds: 15
+    default-messages-per-second: 4
+    max-messages-per-second: 10
+    retained-events-capacity: 1000
 
 management:
   endpoints:
