@@ -17,7 +17,13 @@ export const EXPERIMENTS = [
   },
   { lab: 3, id: 'clocksync', title: 'Clock Synchronization', arrivesIn: 4 },
   { lab: 4, id: 'election', title: 'Bully and Ring Election', arrivesIn: 5 },
-  { lab: 5, id: 'replication', title: 'Consistency and Replication', arrivesIn: 6 },
+  {
+    lab: 5,
+    id: 'replication',
+    title: 'Consistency and Replication',
+    arrivesIn: 6,
+    concept: 'One write, several copies: when may a copy be out of date, and how does it catch up again?',
+  },
   {
     lab: 6,
     id: 'loadbalancing',
