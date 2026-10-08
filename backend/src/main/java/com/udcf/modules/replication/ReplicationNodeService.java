@@ -103,6 +103,7 @@ import java.util.function.Supplier;
  * {@code WRITE_NOT_CONFIRMED}, {@code ACK}, {@code REPLICATION_FAILED}, {@code REPLICA_APPLIED},
  * {@code REPLICA_DUPLICATE}, {@code REPLICA_STALE}, {@code REPLICA_STALE_EPOCH},
  * {@code ANTI_ENTROPY}, {@code ANTI_ENTROPY_FAILED}, {@code ANTI_ENTROPY_MERGED},
+ * {@code CATCH_UP}, {@code CATCH_UP_FAILED},
  * {@code PRIMARY_ACTIVE}, {@code PRIMARY_STEPPED_DOWN}, {@code PRIMARY_SUPERSEDED},
  * {@code ASYNC_PUSHES_DROPPED}; their data keys are listed in docs/tracks/track-c-jai.md.
  * Reads and dumps publish nothing.</p>
@@ -246,6 +247,27 @@ public class ReplicationNodeService implements NodeService {
     @Override
     public boolean isRunning() {
         return running;
+    }
+
+    /**
+     * A module reset: back to a fresh service. A running service is closed first (the close
+     * rule: accept thread, handlers, pushes and scheduler all finished; pending asynchronous
+     * pushes end {@link PushStatus#NOT_SENT}), then its store (epoch back to 1), statistics and
+     * role are cleared, and it is reopened on the same port. A service that is not running (its
+     * node is crashed) is only cleared and stays closed: whether the node recovers is the
+     * cluster's decision. Publishes nothing.
+     */
+    public synchronized void resetState() {
+        boolean wasRunning = running;
+        if (wasRunning) {
+            close(false);
+        }
+        store.clear();
+        stats.clear();
+        primaryEpoch.set(0);
+        if (wasRunning) {
+            open();
+        }
     }
 
     public int nodeId() {
@@ -650,6 +672,71 @@ public class ReplicationNodeService implements NodeService {
                     report.completed()
                             ? "Anti-entropy to node " + targetId + ": " + applied + " of " + pushed + " items applied"
                             : "Anti-entropy to node " + targetId + " failed: " + failure.get(), data);
+        }
+        return report;
+    }
+
+    // ------------------------------------------------------------------ catch-up (pull)
+
+    /**
+     * Catch-up, the reverse of anti-entropy: pulls {@code sourceId}'s whole store over TCP
+     * (DUMP pages of {@code batch-size}) and merges it into this node's store with
+     * {@link AntiEntropy#merge}, using the source's store epoch as the sender epoch. A higher
+     * epoch is learned (and a primary on a lower one is superseded); old-epoch items compete by
+     * last-writer-wins. Used by a node about to take over as primary, which has missed writes.
+     *
+     * <p><b>Lamport time.</b> Each DUMP page ticks this node's clock before sending and merges
+     * the reply's time, and a replica's clock is always at or above the Lamport time of every
+     * item it holds; so after a successful catch-up this node's clock is above every item it
+     * pulled, and its next write wins against all of them.</p>
+     *
+     * <p>Runs on the push executor, so {@code crash()} waits for it; nothing is merged once
+     * this node is down. Publishes {@code CATCH_UP} or {@code CATCH_UP_FAILED}.</p>
+     *
+     * @throws NodeDownException if this node is down
+     */
+    public CatchUpReport catchUpFrom(int sourceId) {
+        validBackups(List.of(sourceId));
+        Engine current = requireRunning();
+        int port = peerPort.applyAsInt(sourceId);
+        return submit(current, () -> runCatchUp(sourceId, port), () -> {
+            throw new NodeDownException(node.id());
+        }).join();
+    }
+
+    private CatchUpReport runCatchUp(int sourceId, int port) {
+        long start = System.nanoTime();
+        CatchUpReport report;
+        try {
+            ReplicaDump dump = client.dump(port, node.id(), node.clock(), properties.batchSize());
+            if (!running) {
+                return CatchUpReport.failed(sourceId, millisSince(start), downDetail());
+            }
+            AntiEntropyResult merged = AntiEntropy.merge(store, dump.items().values(), dump.storeEpoch());
+            noteEpoch(store.epoch(), sourceId);
+            report = CatchUpReport.merged(sourceId, merged, dump.storeEpoch(), millisSince(start));
+        } catch (IOException e) {
+            report = CatchUpReport.failed(sourceId, millisSince(start), describe(e));
+        }
+        if (running) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            report.merged().ifPresent(r -> {
+                data.put("pulled", r.pushed());
+                data.put("applied", r.applied());
+                data.put("alreadyCurrent", r.alreadyCurrent());
+                data.put("stale", r.stale());
+                data.put("staleEpoch", r.staleEpoch());
+            });
+            report.sourceEpoch().ifPresent(epoch -> data.put("sourceEpoch", epoch));
+            data.put("storeEpoch", store.epoch());
+            data.put("latencyMillis", report.latencyMillis());
+            report.failure().ifPresent(reason -> data.put("reason", reason));
+            publish(report.completed() ? "CATCH_UP" : "CATCH_UP_FAILED", node.clock().tick(), sourceId,
+                    report.completed()
+                            ? "Node " + node.id() + " caught up from node " + sourceId + ": "
+                            + report.merged().get().applied() + " of " + report.merged().get().pushed() + " items applied"
+                            : "Node " + node.id() + " could not catch up from node " + sourceId + ": "
+                            + report.failure().get(), data);
         }
         return report;
     }

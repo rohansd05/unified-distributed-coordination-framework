@@ -22,6 +22,14 @@ public final class MetricNames {
     public static final String CLOCK_VALUE = "distributed_clock_value";
     public static final String REPLICATION_LATENCY = "distributed_replication_latency";
     public static final String REPLICATION_FAILURES_TOTAL = "distributed_replication_failures_total";
+    /** Experiment 5: acknowledgements per backup node, by result (APPLIED, DUPLICATE, STALE, STALE_EPOCH). */
+    public static final String REPLICATION_ACKS_TOTAL = "distributed_replication_acks_total";
+    /** Experiment 5: client writes accepted per primary node, by consistency model. */
+    public static final String REPLICATION_WRITES_TOTAL = "distributed_replication_writes_total";
+    /** Experiment 5: items in each node's replicated store (NaN while its service is not running). */
+    public static final String REPLICATION_STORE_ITEMS = "distributed_replication_store_items";
+    /** Experiment 5: each node's store epoch (NaN while its service is not running). */
+    public static final String REPLICATION_EPOCH = "distributed_replication_epoch";
     public static final String FAILURES_TOTAL = "distributed_failures_total";
     public static final String RECOVERY_DURATION = "distributed_recovery_duration";
     public static final String MAP_TASKS_TOTAL = "distributed_map_tasks_total";

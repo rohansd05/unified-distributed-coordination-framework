@@ -751,4 +751,109 @@ class ReplicationNodeServiceTest {
         assertThat(results).allSatisfy(result -> assertThat(result.join().replication().join())
                 .extracting(PushOutcome::status).containsOnly(PushStatus.ACKED));
     }
+
+    // ------------------------------------------------------------------ E5c: catch-up and reset
+
+    @Test
+    @DisplayName("catchUpFrom pulls the source's store over TCP and merges it with the source's epoch (raised here, events published)")
+    void catchUpFromMergesWithSourceEpoch() {
+        ReplicationNodeService one = service(1);
+        ReplicationNodeService two = service(2);
+        two.becomePrimary(2);
+        two.write("a", "1", ConsistencyModel.SYNCHRONOUS, List.of());
+        two.write("b;~", "2", ConsistencyModel.SYNCHRONOUS, List.of());
+
+        CatchUpReport report = one.catchUpFrom(2);
+
+        assertThat(report.completed()).isTrue();
+        assertThat(report.merged()).contains(new AntiEntropyResult(2, 2, 0, 0, 0));
+        assertThat(report.sourceEpoch()).hasValue(2);
+        assertThat(one.snapshot()).isEqualTo(two.snapshot());
+        assertThat(one.epoch()).isEqualTo(2);
+        assertThat(events(1, "CATCH_UP")).singleElement().satisfies(event -> {
+            assertThat(event.peerId()).isEqualTo(2);
+            assertThat(event.data()).containsEntry("pulled", 2).containsEntry("applied", 2)
+                    .containsEntry("sourceEpoch", 2L).containsEntry("storeEpoch", 2L);
+        });
+        assertThat(one.catchUpFrom(2).merged()).contains(new AntiEntropyResult(2, 0, 2, 0, 0));
+    }
+
+    @Test
+    @DisplayName("after a catch-up the node's Lamport clock is above every item it pulled (the DUMP reply time is merged)")
+    void catchUpAdvancesClockPastEveryPulledItem() {
+        ReplicationNodeService one = service(1);
+        ReplicationNodeService two = service(2);
+        two.becomePrimary(1);
+        cluster.node(2).clock().update(500);
+        for (int i = 0; i < 5; i++) {
+            two.write("k" + i, "v", ConsistencyModel.SYNCHRONOUS, List.of());
+        }
+        long highestItem = two.snapshot().values().stream().mapToLong(DataItem::lamportTime).max().orElseThrow();
+        assertThat(cluster.node(1).clock().current()).isLessThan(highestItem);
+
+        one.catchUpFrom(2);
+
+        assertThat(cluster.node(1).clock().current()).isGreaterThan(highestItem);
+    }
+
+    @Test
+    @DisplayName("a catch-up from a crashed peer is a failed report and a CATCH_UP_FAILED event; nothing is merged")
+    void catchUpFromUnreachablePeerIsReported() {
+        ReplicationNodeService one = service(1);
+        service(2);
+        cluster.crash(2);
+
+        CatchUpReport report = one.catchUpFrom(2);
+
+        assertThat(report.completed()).isFalse();
+        assertThat(report.merged()).isEmpty();
+        assertThat(report.sourceEpoch()).isEmpty();
+        assertThat(report.failure()).hasValueSatisfying(reason -> assertThat(reason).contains("ConnectException"));
+        assertThat(events(1, "CATCH_UP_FAILED")).singleElement()
+                .satisfies(event -> assertThat(event.peerId()).isEqualTo(2));
+        assertThat(one.snapshot()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("resetState clears store, stats, role and epoch, drops pending async pushes, and serves again; no new accept thread survives")
+    void resetStateClearsAndRestarts() throws Exception {
+        Set<Thread> before = liveReplicationThreads(1);
+        ReplicationNodeService primary = primaryWithBackups(new ReplicationProperties(60_000, 2000, 200));
+        primary.observeEpoch(3);
+        primary.becomePrimary(3);
+        primary.write("k", "v", ConsistencyModel.SYNCHRONOUS, BOTH);
+        WriteResult pending = primary.write("p", "v", ConsistencyModel.ASYNCHRONOUS, BOTH);
+        Set<Thread> started = newThreads(1, before);
+
+        primary.resetState();
+
+        assertThat(pending.replication().get(5, TimeUnit.SECONDS)).extracting(PushOutcome::status)
+                .containsOnly(PushStatus.NOT_SENT);
+        assertThat(primary.isRunning()).isTrue();
+        assertThat(primary.snapshot()).isEmpty();
+        assertThat(primary.stats()).isEmpty();
+        assertThat(primary.isPrimary()).isFalse();
+        assertThat(primary.epoch()).isEqualTo(DataStore.INITIAL_EPOCH);
+        assertThat(started).noneMatch(Thread::isAlive);
+        assertThat(newThreads(1, before)).extracting(Thread::getName).containsExactly("udcf-replication-n1-accept");
+        assertThat(readOver(1, "k")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("resetState on a crashed node's service only clears it: it stays closed and nothing listens")
+    void resetStateOnCrashedServiceOnlyClears() throws IOException {
+        ReplicationNodeService primary = primaryWithBackups(PROPERTIES);
+        primary.write("k", "v", ConsistencyModel.SYNCHRONOUS, BOTH);
+        cluster.crash(1);
+
+        primary.resetState();
+
+        assertThat(primary.isRunning()).isFalse();
+        assertThatThrownBy(() -> readOver(1, "k")).isInstanceOf(ConnectException.class);
+        assertThat(primary.isPrimary()).isFalse();
+        assertThat(primary.stats()).isEmpty();
+        assertThat(primary.epoch()).isEqualTo(DataStore.INITIAL_EPOCH);
+        assertThat(cluster.recover(1)).isTrue();
+        assertThat(primary.snapshot()).isEmpty();
+    }
 }

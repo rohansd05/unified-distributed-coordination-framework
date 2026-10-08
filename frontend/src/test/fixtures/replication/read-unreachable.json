@@ -1,0 +1,1 @@
+{"nodeId":3,"key":"region","referenceNodeId":1,"reachable":false,"item":null,"referenceItem":{"key":"region","value":"eu;west~1","lamportTime":38,"originNode":1,"epoch":1},"state":"UNREACHABLE","error":"ConnectException: Connection refused: getsockopt"}

@@ -1,0 +1,1 @@
+{"nodeId":2,"key":"balance","referenceNodeId":1,"reachable":true,"item":{"key":"balance","value":"2000","lamportTime":19,"originNode":1,"epoch":1},"referenceItem":{"key":"balance","value":"2000","lamportTime":19,"originNode":1,"epoch":1},"state":"CURRENT","error":null}

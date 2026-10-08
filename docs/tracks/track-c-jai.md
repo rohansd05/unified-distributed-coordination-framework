@@ -15,7 +15,7 @@
 ### Steps
 - [x] E5a — `DataItem`, `DataStore`, last-writer-wins, anti-entropy, out-of-order injection, epochs and `ReplicationStats` as pure classes. Needs: none.
 - [x] E5b — replication NodeService on `ports().replication()` (710k): sync and async writes, anti-entropy; document its public API under "Interfaces for other tracks" (Track B builds Exp 8 on it). Needs: E5a.
-- [ ] E5c — `ReplicationModule` (lab 5): write (sync/async), read per replica, crash or recover a backup, anti-entropy, inject a stale update; the health table; metrics; fixtures. Needs: E5b.
+- [x] E5c — `ReplicationModule` (lab 5): write (sync/async), read per replica, crash or recover a backup, anti-entropy, inject a stale update; the health table; metrics; fixtures. Needs: E5b.
 - [ ] E5d — page and end-to-end check. Needs: E5c, E2d.
 
 ---
@@ -309,6 +309,134 @@ finish, an `IllegalStateException` is thrown. Pending async pushes complete as `
 
 **Metrics** arrive with the module in E5c (`MetricNames`, `node_id` per meter); E5b registers none.
 
+**Added in E5c** (same classes): `ReplicationNodeService.catchUpFrom(int sourceId)` returns a
+`CatchUpReport(sourceNodeId, Optional<AntiEntropyResult> merged, OptionalLong sourceEpoch,
+latencyMillis, Optional<String> failure)`: it pulls the source's whole store over TCP (DUMP pages)
+and merges it with `AntiEntropy.merge(store, items, the source's store epoch)`. It runs on the push
+executor, so the close rule applies, and publishes `CATCH_UP` / `CATCH_UP_FAILED` (data: pulled,
+applied, alreadyCurrent, stale, staleEpoch, sourceEpoch, storeEpoch, latencyMillis, reason). Each
+DUMP page merges the reply's Lamport time, and a replica's clock is always at or above the Lamport
+time of every item it holds, so after a catch-up the node's next write wins against everything it
+pulled. `ReplicationNodeService.resetState()`: a running service is closed (close rule), cleared
+(store, epoch back to 1, stats, role, pending async pushes `NOT_SENT`) and reopened; a crashed one is
+only cleared and stays closed. `ReplicaSet` gained the takeover (below) plus `selectedPrimaryId()`,
+`currentPrimaryId()`, `takeoverPending()`, `lastTakeover()` (all read-only) and `reset()`.
+
+### E5c — replication module and API (`/api/modules/replication`), for E5d (Track C) and Track B
+
+**`ReplicationModule`** (`@Component`, id `replication`, lab 5, title "Consistency and Replication").
+Status: BUSY while an action holds the guard, RUNNING while asynchronous pushes are pending,
+otherwise IDLE. `reset()` (called only by the cluster reset): two passes of `resetState()` over every
+started service (a running service is closed, cleared and reopened; one on a crashed node is cleared
+and stays closed), then the replica set forgets its primary and the module forgets its latest write,
+anti-entropy and injection. It never starts a service and publishes nothing; the cluster reset clears
+the event history.
+
+**Endpoints** (all errors are ProblemDetail from the shared handler):
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /api/modules/replication` | | `ReplicationOverviewDto` |
+| `POST /writes` | `{key, value, model: SYNCHRONOUS\|ASYNCHRONOUS}` | 200 `WriteDto` (async: `replicationState` PENDING) |
+| `GET /nodes/{nodeId}/values?key=` | | `ReadDto` (read over TCP) |
+| `GET /replicas` | | `ReplicasDto` (every replica dumped over TCP) |
+| `POST /nodes/{nodeId}/crash` | | `NodeReplicaDto`; backups only |
+| `POST /nodes/{nodeId}/recover` | | `NodeReplicaDto`; any crashed node; runs a pending takeover |
+| `POST /anti-entropy` | `{targetNodeId}` | `AntiEntropyDto` |
+| `POST /stale-injections` | `{backupNodeId, key, staleValue}` | `InjectionDto` |
+
+Errors:
+- 400: body validation, a `DataItem` rule (control or line-break character), the primary as a
+  crash, anti-entropy or injection target, or a key the primary does not hold.
+- 404: unknown node.
+- 409 `Node down`: the anti-entropy or injection target is crashed.
+- 409 `Node state conflict`: crash of a crashed node, recover of an up node, or every node crashed
+  (nodeId 0).
+- 409 `Module busy`.
+
+Every action (write, crash, recover, anti-entropy, injection) holds the module guard. Crash and
+recover use `Cluster.crash` / `Cluster.recover`, as the cluster page does.
+
+**Reads never take over.** GET `/`, `/replicas` and `/nodes/{id}/values` never start a service,
+change a role or run a takeover. The overview reports:
+- `primaryNodeId`: the selector's choice, read-only;
+- `currentPrimaryNodeId`: the node last made primary;
+- `takeoverPending`: a primary was made before and the selector now picks another node;
+- `lastTakeover`.
+
+A takeover runs only inside a write, anti-entropy, stale injection or recover.
+
+**Takeover (Q1).** When the selector picks a node other than the one made primary last, that node:
+1. catches up from every live peer (pull and merge, with each peer's store epoch);
+2. acts as primary at its, possibly raised, epoch;
+3. restarts its push statistics (the health table starts empty, with nulls);
+4. pushes its whole store to every live backup.
+
+On the first selection, or after a reset, both the catch-up and the push are skipped. Every
+selection publishes `PRIMARY_SELECTED` on the new primary. Data: previousPrimaryId (absent on the
+first selection), reason, catchUpSources, appliedFromCatchUp, pushedTo. Peer = the previous primary.
+
+**DTOs** (`dto/`):
+- `ReplicationOverviewDto`: status, actionInProgress, primaryNodeId, currentPrimaryNodeId,
+  takeoverPending, lastTakeover, asyncDelayMillis, asyncDelayReason, timeoutMillis, batchSize,
+  conflictRuleNote, models, nodes, healthMeasuredByNodeId, health, latestWrite, latestAntiEntropy,
+  latestInjection.
+- `NodeReplicaDto`: nodeId, nodeStatus, role (PRIMARY or BACKUP by the selector; null if every node
+  is crashed), actingPrimary, serviceRunning, port, epoch (null if the service never started), and
+  itemCount (null unless the service is running).
+- `HealthRowDto`: backupNodeId, acks, applied, duplicates, staleRejections, staleEpochRejections,
+  failures, averageLatencyMillis, maxLatencyMillis, lastSync. It is measured by the current primary;
+  the latencies and lastSync are null before the first acknowledgement.
+- `ModelDto`: model, description, guarantee, simulated, simulatedReason.
+- `WriteDto`: writeId, model, primaryNodeId, item, localResult, confirmMillis, simulated,
+  simulatedDelayMillis, simulatedReason, replicationState, backupNodeIds, pushes (empty while
+  PENDING), takeover (non-null if this write changed the primary, including the first selection).
+- `ItemDto`: key, value, lamportTime, originNode, epoch.
+- `PushDto`: backupNodeId, status, result, backupEpoch, latencyMillis, detail (only ACKED has result,
+  epoch and latency).
+- `ReadDto`: nodeId, key, referenceNodeId, reachable, item, referenceItem, state, error.
+  `ReplicaState` is CURRENT, ABSENT, MISSING, STALE, AHEAD, CONFLICT or UNREACHABLE; null when there
+  is no readable reference.
+- `ReplicasDto`: referenceNodeId, consistent, divergences, replicas (columns), rows. A
+  `ReplicaColumnDto` holds nodeId, nodeStatus, reference, reachable, epoch, itemCount, error. A
+  `KeyRowDto` holds key and cells; a `CellDto` holds nodeId, item, state.
+- `AntiEntropyDto`: sourceNodeId, targetNodeId, completed, pushed, applied, alreadyCurrent, stale,
+  staleEpoch, chunksPlanned, chunksAcknowledged, latencyMillis, failure.
+- `InjectionDto`: primaryNodeId, backupNodeId, key, currentItem, staleItem, push, rejected.
+- `TakeoverDto`: previousPrimaryNodeId, newPrimaryNodeId, appliedFromCatchUp, catchUps, pushes,
+  lamportTime.
+- `CatchUpDto`: sourceNodeId, completed, pulled, applied, alreadyCurrent, stale, staleEpoch,
+  sourceEpoch, latencyMillis, failure (the counts are null when the pull failed).
+
+**Simulated (R7).** Only the asynchronous delay (450 ms locally). It appears as
+`asyncDelayMillis`/`asyncDelayReason`, as the ASYNCHRONOUS `ModelDto` (simulated, simulatedReason),
+and as `WriteDto.simulated`/`simulatedDelayMillis`/`simulatedReason`. E5d shows the Simulated badge
+next to each.
+
+**Metrics** (`ReplicationMetrics`, `node_id` on every meter):
+
+| Meter | Tags and meaning |
+|---|---|
+| `distributed_replication_latency` | timer `{node_id = backup, kind SYNCHRONOUS/ASYNCHRONOUS/OUT_OF_ORDER}`; measured round trip only |
+| `distributed_replication_acks_total` | `{node_id = backup, result}` |
+| `distributed_replication_failures_total` | `{node_id = backup}`; FAILED only, not NOT_SENT or ABANDONED |
+| `distributed_replication_writes_total` | `{node_id = primary, model}` |
+| `distributed_replication_store_items` | gauge `{node_id}`; NaN while the service is not running |
+| `distributed_replication_epoch` | gauge `{node_id}`; NaN while the service is not running |
+
+Anti-entropy and catch-up are not metered.
+
+**Text for the E5d page ("What to notice"), also served as `conflictRuleNote`:** "Replicas settle
+conflicting versions by last writer wins: the version with the higher Lamport time wins, and the
+node id breaks a tie. In this experiment the epoch never changes, so nothing else is compared. An
+asynchronous write that never left a primary before it crashed can therefore beat a write made
+later on the new primary, if its Lamport time is higher: the write that happened later in real time
+is then lost. That is what last writer wins means, not a fault; the epochs of Experiment 8 prevent
+it."
+
+**Fixtures:** `frontend/src/test/fixtures/replication/` (captured from the running backend; see its
+README).
+
 ---
 
 ## Known issues
@@ -339,14 +467,34 @@ finish, an `IllegalStateException` is thrown. Pending async pushes complete as `
   snapshot while writes arrive (each key is as its page saw it).
 - E5b, for E5c: in Exp 5 the primary moves to node 2 when node 1 crashes (same epoch, 1); if node 1
   recovers it is primary again but has missed node 2's writes. Anti-entropy runs from the primary,
-  so it does not repair the primary itself; E5c must decide how the page shows or repairs that (for
-  example, anti-entropy from the most up-to-date replica).
+  so it does not repair the primary itself. **Resolved in E5c** by the takeover: catch-up from every
+  live peer, then a push to every live backup (see the E5c interfaces).
 - E5b: the close waits are bounded at 5 s; reaching a bound throws `IllegalStateException` from
   `crash()`/`stop()`, which `ClusterNode` records as a crash failure. The tests prove the waits on
   every run but cannot prove a bound is never reached under extreme load.
 - E5b: the Linux accept/close behaviour is checked by five Docker runs
   (`maven:3.9-eclipse-temurin-21`, `--cpus=2`) and CI, not on a real Linux host; Docker wrote
   `backend/target` during those runs.
+- E5c: **last-writer-wins can lose the newer-in-real-time write.** In Exp 5 the epoch never changes,
+  so conflicts are settled purely by (Lamport time, origin). Say an asynchronous write never left a
+  primary that then crashed, and its Lamport time is higher than a write made later on the new
+  primary. After a catch-up or anti-entropy, the old write wins and the later one is lost. That is
+  correct last-writer-wins, not a fault, and exactly what Exp 8's epochs fix. It is served as
+  `conflictRuleNote` for the E5d page ("What to notice") and must not be hidden.
+- E5c: a catch-up only pulls from live peers. A crashed replica's writes, for example in-flight async
+  writes held only by a crashed old primary, reach the others only when that replica recovers and
+  a later takeover or anti-entropy pushes from a node that holds them.
+- E5c: the takeover runs only inside a guarded action (write, anti-entropy, injection, recover).
+  After the cluster page crashes or recovers node 1, the overview says `takeoverPending: true` until
+  the next such action; reads never repair anything.
+- E5c: the health table is measured by the current primary and is restarted on every takeover, so
+  it starts empty (counts 0, latencies and lastSync null) after a primary change.
+- E5c: `error-409-module-busy` is covered by MockMvc only (ReplicationControllerTest holds the guard).
+  No replication action runs long enough to capture it from the live backend (Q6); its body shape is
+  the shared one already captured by the other modules.
+- E5c: `ReplicationModule.reset()` takes the module guard. If an action starts between the cluster
+  reset's BUSY check and this module's reset, the reset throws `ModuleBusyException` (409) after the
+  nodes were recovered and earlier modules were reset. That window is very small.
 
 ---
 
@@ -374,3 +522,18 @@ finish, an `IllegalStateException` is thrown. Pending async pushes complete as `
   in either direction is detected; SYNCED also carries `pushed`; (5) anti-entropy and
   `deliverOutOfOrder` run on the push executor, so crash() waits for them too; (6) some test methods
   are named or grouped differently from the plan (see the E5b report).
+- 2026-10-09 E5c done: ReplicationModule (lab 5) and ReplicationController under
+  /api/modules/replication (sync/async writes, read per replica and side by side over TCP, crash a
+  backup and recover through Cluster.crash/recover, anti-entropy, stale injection, health table
+  measured by the current primary, clean-slate reset in two passes), the takeover with catch-up
+  (ReplicationNodeService.catchUpFrom, ReplicaSet takeover, PRIMARY_SELECTED/CATCH_UP events),
+  ReplicationMetrics (4 MetricNames constants added), 24 contract fixtures captured from the
+  running backend; 3 new test classes and new tests in 3 existing ones, 49 tests; backend 736
+  tests, 1 skipped (3 Windows runs, identical; baseline 687); the 6 new or changed replication test
+  classes, 88 tests, green in 5 Linux Docker runs; frontend not run (no frontend code changed; the
+  fixtures are data); deviations: (1) an extra `ReplicaColumnDto` for the side-by-side view's
+  columns, and an `ABSENT` state (neither replica holds the key); (2) the latency timer's second tag
+  is `kind` (SYNCHRONOUS, ASYNCHRONOUS or OUT_OF_ORDER) instead of `model`, so injected stale
+  updates are labelled honestly; (3) `PRIMARY_SELECTED` is also published on the first selection;
+  (4) the recover action runs a pending takeover only when one is pending, and crash never changes
+  the selection; (5) ReplicationRecordsTest gained tests for the two new records.

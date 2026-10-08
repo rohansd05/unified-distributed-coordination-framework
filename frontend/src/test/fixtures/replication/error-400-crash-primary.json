@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request parameter: nodeId","instance":"/api/modules/replication/nodes/1/crash","errors":{"nodeId":"Node 1 is the replication primary. This page crashes backups only; crash the primary from the Cluster page."}}
