@@ -114,6 +114,7 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 ## Known issues
 
 - `MultithreadingModuleTest.backpressureIsDeterministicAndGuarded` (Track A's test) failed once in one of three runs (expected 5, was 9). Not edited, as it is unrelated to the election module and our tests are completely pure without static state, threads, or sleep loops.
+- `ClockNodeServiceTest.berkeleyRoundReducesSpread` and `daemonReceivesRepliesUnderLoadWithoutDeadlock` (Track D's test) flaked once in GitHub Actions CI under runner scheduling contention (UDP round timed out before peer reply). Unrelated to election module (all 54 election tests passed in CI); not edited per cross-track rule.
 
 ---
 
