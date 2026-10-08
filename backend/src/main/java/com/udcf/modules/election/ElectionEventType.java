@@ -1,0 +1,17 @@
+package com.udcf.modules.election;
+
+public enum ElectionEventType {
+    ELECTION_START,
+    ELECTION_RESTART,
+    OK_RECEIVED,
+    WAITING_FOR_COORDINATOR,
+    ELECTED,
+    COORDINATOR_ACCEPTED,
+    TOKEN_FORWARDED,
+    DEAD_NODE_SKIPPED,
+    ELECTION_TIMEOUT,
+    CRASH,
+    RECOVER,
+    UNKNOWN_SENDER,
+    LATE_MESSAGE
+}
