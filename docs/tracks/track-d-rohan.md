@@ -26,7 +26,7 @@
 - **Special rules:** the average-latency job carries "sum;count", never an average; the coordinator comes from a module-local selector (TODO(L1)); 15 s task timeout with retry on another worker.
 
 ### Steps
-- [ ] E7a — the jobs and the split, map, combine, shuffle, partition and reduce pipeline as pure classes. Needs: E3d.
+- [x] E7a — the jobs and the split, map, combine, shuffle, partition and reduce pipeline as pure classes. Needs: E3d.
 - [ ] E7b — MapReduce workers on `ports().mapreduce()` (730k) with task retry. Needs: E7a.
 - [ ] E7c — `MapReduceModule` (lab 7) and its API; inputs: bundled sample, uploaded .txt (size-capped), live event log; build `EventLogExporter` and `GET /api/events/export` (link L5). Needs: E7b.
 - [ ] E7d — the pipeline page and end-to-end check. Needs: E7c, E2d.
@@ -64,12 +64,24 @@
   - `distributed_clock_value`: gauge per node tagged with `node_id`, reading current Lamport clock value
 - **Frontend Fixtures:**
   - Real contract JSON fixtures exported to `frontend/src/test/fixtures/clocksync/` (14 JSON files + `README.md`)
+- **MapReduce Pipeline & Transport API (E7a -> E7b for Jai):**
+  - **TaskTransport Interface:** `@FunctionalInterface public interface TaskTransport` with `String executeTask(int targetNodeId, TaskType taskType, String jobName, String payload) throws IOException`, using enum `TaskType { MAP, REDUCE }`. E7a provides `TaskTransport.inMemory(JobRegistry)`. Step E7b implements `TaskTransport` over TCP on `ports().mapreduce()` (730k).
+  - **Wire Payloads & Encoding:** Fields Base64-encoded to round-trip tabs, newlines, carriage returns, `\u0001`, `=`, `#`, empty strings, and non-ASCII text without delimiter collision:
+    - MAP task payload: raw split lines joined with `\n`.
+    - MAP task result: `#raw=<rawCount>\n<base64Key>\t<base64Val>\n...` (encoded/decoded via `MapTask.encode` / `MapTask.decode`).
+    - REDUCE partition payload: `<base64Key>\t<base64Val1>\u0001<base64Val2>...\n` (encoded/decoded via `ReduceTask.encodePartition` / `ReduceTask.decodePartition`).
+    - REDUCE result: `<base64Key>\t<base64Val>\n` (encoded/decoded via `ReduceTask.encodeResult` / `ReduceTask.decodeResult`).
+  - **JobRegistry:** `JobRegistry.standard()` pre-registers `word-count` (`WordCountJob`), `event-category-count` (`EventCategoryJob`), and `avg-latency-per-node` (`LatencyPerNodeJob`).
+  - **JobReport Semantics:** All accessors synchronized; stage timings (`mapMillis`, `shuffleMillis`, `reduceMillis`) are `null` when the stage did not run, while `totalMillis` measures overall pipeline elapsed time; `combinerSavingPercent` is `null` when no pairs were emitted (undefined saving per Rule R7); `mapTasks` counts only non-empty splits dispatched; `failedTasksRetried` increments once per retry. Splits made only of blank lines are not counted, so the "splits" and "mapTasks" numbers cover non-blank splits only.
+  - **Task Timeout and Retry:** Default task timeout is 15 seconds (Appendix B, configurable via constructor). If a worker task times out or throws `IOException`, the coordinator cancels/interrupts and retries on `(preferredIndex + attempt) % workerIds.size()`. If all workers fail, throws `IOException`.
+  - **Lamport Stamping Seam:** The pure pipeline does not instantiate or stamp a Lamport clock. Per Condition 7 and Rule L4, Lamport logical clock stamping (tick on send, update on receive via `ClusterNode.clock()`) belongs strictly to the **E7b** network transport layer when messages cross TCP sockets.
+  - **Default Reducers R:** The default reducer count R equals the number of worker IDs passed to the pipeline ($R = \text{workerIds.size()}$, matching HANDOFF Appendix B: `floorMod(key.hashCode(), R)`). The pipeline does not decide which cluster nodes act as workers; E7b/E7c pass the worker list based on cluster configuration (HANDOFF Section 6.2: "Cluster holds ClusterNodes. Size comes from configuration: default 5 locally, 3 in the public profile to save memory").
 
 ---
 
 ## Known issues
 
-(none yet)
+- `LatencyPerNodeJob.formatResult` returns "No latency measured" when there is no data or event count is zero (Rule R7: never presents an unmeasured average as a number).
 
 ---
 
@@ -86,4 +98,7 @@
 - 2026-10-08 E3b done: clock UDP service on ports().clock() (600k) with Lamport and Berkeley sync; backend 482 tests, frontend 232 tests; deviations: none
 - 2026-10-08 E3c done: ClockSyncModule, REST API, metrics (distributed_clock_value), and contract fixtures; backend 509 tests (3 consecutive runs: 509/509/509), frontend 232 tests; deviations: none
 - 2026-10-09 E3d done: Clock Synchronization page at /experiments/3-clocksync on the E2d kit: space-time diagram (horizontal lanes per node, events as circles, UDP message arrows, causal violations marked by triangle shape and text, bounded 40 events with honest retention notice), keyboard-accessible table equivalent in (lamportTime, nodeId) order, Berkeley diverging offset visual centred on 0 ms with honest Not reached reporting for crashed nodes and SimulatedBadge, causal verification panel, local event / UDP message / traffic session / Berkeley round / drift controls with focus management and polite announcements, contract test on the 14 E3c fixtures; unit and contract tests only; live check against the real backend done by hand by Rohan (the agent's browser was unavailable); backend 763 tests, frontend 453 tests (3 runs, baseline 388); deviations: none; approved shared edits: routes.test.jsx (add-only) and the lab 3 concept line in experiments.js.
+- 2026-10-09 E7a done: jobs, log parser, registry, report, and the pure MapReduce pipeline (split, map, combine, shuffle, partition, reduce, retry, timeout) implemented as pure classes; backend 912 tests (3 consecutive runs: 912/912/912), frontend 453 tests; deviations: none
+  Linux (Docker, 2 CPUs): 915 tests, 0 failures, 1 skipped.
+
 
