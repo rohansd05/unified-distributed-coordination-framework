@@ -25,6 +25,8 @@ udcf:
   # Smaller max-request-bytes for 512 MB RAM (docs/tracks/README.md Section 5).
   mapreduce:
     max-request-bytes: 1048576
+    # A quarter of max-request-bytes (the startup check), so every task fits one wire line.
+    upload-max-bytes: 262144
 
 management:
   endpoints:

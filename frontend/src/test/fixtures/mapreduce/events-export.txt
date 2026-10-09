@@ -1,0 +1,25 @@
+2026-10-09 09:49:17.589 | node=2 | category=TASK_COMPLETED | seq=131 | lamport=97 | module=mapreduce | peer=1 | msg=Map task 2 completed on node 2
+2026-10-09 09:49:17.590 | node=5 | category=TASK_COMPLETED | seq=132 | lamport=100 | module=mapreduce | peer=1 | msg=Map task 5 completed on node 5
+2026-10-09 09:49:17.590 | node=1 | category=WORKER_CRASH_TRIGGERED | seq=134 | lamport=105 | module=mapreduce | peer=3 | msg=The module crashed node 3 right after sending it its first map task
+2026-10-09 09:49:17.592 | node=1 | category=TASK_ATTEMPT_FAILED | seq=135 | lamport=105 | module=mapreduce | peer=3 | msg=Map task 3 attempt to node 3 failed: Connection refused: connect
+2026-10-09 09:49:17.592 | node=1 | category=TASK_SENT | seq=136 | lamport=106 | module=mapreduce | peer=4 | msg=Map task 6 sent to node 4
+2026-10-09 09:49:17.593 | node=4 | category=TASK_RECEIVED | seq=137 | lamport=107 | module=mapreduce | peer=1 | msg=Map task 6 received from node 1
+2026-10-09 09:49:17.593 | node=4 | category=TASK_COMPLETED | seq=138 | lamport=108 | module=mapreduce | peer=1 | msg=Map task 6 completed on node 4
+2026-10-09 09:49:17.596 | node=1 | category=TASK_SENT | seq=139 | lamport=110 | module=mapreduce | peer=1 | msg=Reduce task 7 sent to node 1
+2026-10-09 09:49:17.596 | node=1 | category=TASK_SENT | seq=140 | lamport=111 | module=mapreduce | peer=2 | msg=Reduce task 8 sent to node 2
+2026-10-09 09:49:17.596 | node=1 | category=TASK_SENT | seq=141 | lamport=112 | module=mapreduce | peer=3 | msg=Reduce task 9 sent to node 3
+2026-10-09 09:49:17.597 | node=2 | category=TASK_RECEIVED | seq=145 | lamport=112 | module=mapreduce | peer=1 | msg=Reduce task 8 received from node 1
+2026-10-09 09:49:17.596 | node=1 | category=TASK_SENT | seq=142 | lamport=113 | module=mapreduce | peer=4 | msg=Reduce task 10 sent to node 4
+2026-10-09 09:49:17.597 | node=2 | category=TASK_COMPLETED | seq=153 | lamport=113 | module=mapreduce | peer=1 | msg=Reduce task 8 completed on node 2
+2026-10-09 09:49:17.596 | node=1 | category=TASK_SENT | seq=143 | lamport=114 | module=mapreduce | peer=5 | msg=Reduce task 11 sent to node 5
+2026-10-09 09:49:17.597 | node=1 | category=TASK_ATTEMPT_FAILED | seq=146 | lamport=114 | module=mapreduce | peer=3 | msg=Reduce task 9 attempt to node 3 failed: Connection refused: connect
+2026-10-09 09:49:17.597 | node=4 | category=TASK_RECEIVED | seq=144 | lamport=114 | module=mapreduce | peer=1 | msg=Reduce task 10 received from node 1
+2026-10-09 09:49:17.597 | node=1 | category=TASK_RECEIVED | seq=148 | lamport=115 | module=mapreduce | peer=1 | msg=Reduce task 7 received from node 1
+2026-10-09 09:49:17.597 | node=4 | category=TASK_COMPLETED | seq=150 | lamport=115 | module=mapreduce | peer=1 | msg=Reduce task 10 completed on node 4
+2026-10-09 09:49:17.597 | node=5 | category=TASK_RECEIVED | seq=147 | lamport=115 | module=mapreduce | peer=1 | msg=Reduce task 11 received from node 1
+2026-10-09 09:49:17.597 | node=1 | category=TASK_SENT | seq=149 | lamport=116 | module=mapreduce | peer=4 | msg=Reduce task 12 sent to node 4
+2026-10-09 09:49:17.597 | node=5 | category=TASK_COMPLETED | seq=151 | lamport=116 | module=mapreduce | peer=1 | msg=Reduce task 11 completed on node 5
+2026-10-09 09:49:17.598 | node=4 | category=TASK_RECEIVED | seq=154 | lamport=117 | module=mapreduce | peer=1 | msg=Reduce task 12 received from node 1
+2026-10-09 09:49:17.597 | node=1 | category=TASK_COMPLETED | seq=152 | lamport=118 | module=mapreduce | peer=1 | msg=Reduce task 7 completed on node 1
+2026-10-09 09:49:17.598 | node=4 | category=TASK_COMPLETED | seq=155 | lamport=118 | module=mapreduce | peer=1 | msg=Reduce task 12 completed on node 4
+2026-10-09 09:49:17.601 | node=1 | category=JOB_COMPLETED | seq=156 | lamport=123 | module=mapreduce | msg=Word count job completed in 12.5 ms with 116 result keys

@@ -391,4 +391,91 @@ class MapReducePipelineTest {
             @Override public String formatResult(String key, String value) { return delegate.formatResult(key, value); }
         };
     }
+
+    // ---------------------------------------------------------------- E7c: TaskAttemptListener (add-only)
+
+    /** One listener call, as recorded by the tests below. */
+    private record Attempt(TaskType type, int taskIndex, int attempt, int nodeId, String failureReason) {
+    }
+
+    @Test
+    void testListenerSeesOneSuccessfulFirstAttemptPerTask() throws IOException {
+        List<Attempt> attempts = Collections.synchronizedList(new ArrayList<>());
+        MapReducePipeline pipeline = new MapReducePipeline(List.of(1, 2, 3),
+                TaskTransport.inMemory(JobRegistry.standard()));
+        JobReport report = new JobReport("word-count");
+        try {
+            pipeline.run(new WordCountJob(), List.of("a b", "c d", "e f"), report,
+                    (type, taskIndex, attempt, nodeId, failureReason) ->
+                            attempts.add(new Attempt(type, taskIndex, attempt, nodeId, failureReason)));
+        } finally {
+            pipeline.shutdown();
+        }
+
+        List<Attempt> maps = attempts.stream().filter(a -> a.type() == TaskType.MAP)
+                .sorted(java.util.Comparator.comparingInt(Attempt::taskIndex)).toList();
+        assertEquals(List.of(new Attempt(TaskType.MAP, 0, 1, 1, null), new Attempt(TaskType.MAP, 1, 1, 2, null),
+                new Attempt(TaskType.MAP, 2, 1, 3, null)), maps);
+        long reduces = attempts.stream().filter(a -> a.type() == TaskType.REDUCE).count();
+        assertEquals(report.reduceTasks(), reduces);
+        assertTrue(attempts.stream().allMatch(a -> a.attempt() == 1 && a.failureReason() == null));
+    }
+
+    @Test
+    void testListenerSeesFailedAttemptThenRetryOnNextWorker() throws IOException {
+        Set<Integer> failedOnce = ConcurrentHashMap.newKeySet();
+        TaskTransport inMem = TaskTransport.inMemory(JobRegistry.standard());
+        TaskTransport flaky = (targetNodeId, taskType, jobName, payload) -> {
+            if (targetNodeId == 2 && taskType == TaskType.MAP && failedOnce.add(2)) {
+                throw new IOException("Connection refused by node 2");
+            }
+            return inMem.executeTask(targetNodeId, taskType, jobName, payload);
+        };
+        List<Attempt> attempts = Collections.synchronizedList(new ArrayList<>());
+        MapReducePipeline pipeline = new MapReducePipeline(List.of(1, 2, 3), flaky);
+        try {
+            pipeline.run(new WordCountJob(), List.of("a", "b", "c"), new JobReport("word-count"),
+                    (type, taskIndex, attempt, nodeId, failureReason) ->
+                            attempts.add(new Attempt(type, taskIndex, attempt, nodeId, failureReason)));
+        } finally {
+            pipeline.shutdown();
+        }
+
+        List<Attempt> task1 = attempts.stream().filter(a -> a.type() == TaskType.MAP && a.taskIndex() == 1).toList();
+        assertEquals(List.of(new Attempt(TaskType.MAP, 1, 1, 2, "Connection refused by node 2"),
+                new Attempt(TaskType.MAP, 1, 2, 3, null)), task1);
+    }
+
+    @Test
+    void testListenerExceptionNeverChangesTheOutcome() throws IOException {
+        List<String> input = List.of("apple orange", "apple banana", "orange apple");
+        Map<String, String> expected = MapReducePipeline.runLocal(new WordCountJob(), input, 3, new JobReport("word-count"));
+
+        MapReducePipeline pipeline = new MapReducePipeline(List.of(1, 2, 3),
+                TaskTransport.inMemory(JobRegistry.standard()));
+        JobReport report = new JobReport("word-count");
+        Map<String, String> results;
+        try {
+            results = pipeline.run(new WordCountJob(), input, report,
+                    (type, taskIndex, attempt, nodeId, failureReason) -> {
+                        throw new IllegalStateException("listener bug");
+                    });
+        } finally {
+            pipeline.shutdown();
+        }
+
+        assertEquals(expected, results);
+        assertEquals(0, report.failedTasksRetried());
+    }
+
+    @Test
+    void testListenerMustNotBeNull() {
+        MapReducePipeline pipeline = new MapReducePipeline(List.of(1), TaskTransport.inMemory(JobRegistry.standard()));
+        try {
+            assertThrows(NullPointerException.class, () -> pipeline.run(new WordCountJob(), List.of("a"),
+                    new JobReport("word-count"), null));
+        } finally {
+            pipeline.shutdown();
+        }
+    }
 }

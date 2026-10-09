@@ -177,6 +177,10 @@ class MapReduceNodeServiceTest {
         assertThat(workerNode.clock().current()).isGreaterThanOrEqualTo(13);
         assertThat(coordNode.clock().current()).isGreaterThanOrEqualTo(14);
 
+        // The worker publishes TASK_COMPLETED after it flushes the reply: wait for every event the snapshot needs.
+        await().atMost(Duration.ofSeconds(5)).until(() -> bus.query(MapReduceNodeService.MODULE, null, 100).stream()
+                .map(ClusterEvent::type).toList().containsAll(List.of("TASK_SENT", "TASK_RECEIVED", "TASK_COMPLETED")));
+
         List<ClusterEvent> events = bus.query(MapReduceNodeService.MODULE, null, 100);
         assertThat(events).extracting(ClusterEvent::type)
                 .contains("TASK_SENT", "TASK_RECEIVED", "TASK_COMPLETED");
@@ -250,9 +254,10 @@ class MapReduceNodeServiceTest {
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessageContaining("failed to bind");
 
-                List<ClusterEvent> events = bus.query(MapReduceNodeService.MODULE, 1, 100);
-                assertThat(events).anyMatch(e -> "SERVICE_START_FAILED".equals(e.type())
-                        && e.message().contains("Failed to bind mapreduce TCP socket"));
+                await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                        assertThat(bus.query(MapReduceNodeService.MODULE, 1, 100))
+                                .anyMatch(e -> "SERVICE_START_FAILED".equals(e.type())
+                                        && e.message().contains("Failed to bind mapreduce TCP socket")));
             } finally {
                 squatterCluster.close();
             }
@@ -284,10 +289,10 @@ class MapReduceNodeServiceTest {
         String result = transport.executeTask(2, TaskType.MAP, "word-count", "ok");
         assertThat(result).isNotEmpty();
 
-        List<ClusterEvent> refused = bus.query(MapReduceNodeService.MODULE, 2, 100).stream()
-                .filter(e -> "REQUEST_REFUSED".equals(e.type()))
-                .toList();
-        assertThat(refused).isNotEmpty();
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(bus.query(MapReduceNodeService.MODULE, 2, 100).stream()
+                        .filter(e -> "REQUEST_REFUSED".equals(e.type()))
+                        .toList()).isNotEmpty());
     }
 
     @Test
@@ -325,9 +330,10 @@ class MapReduceNodeServiceTest {
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("Unknown job: non-existent-job");
 
-        List<ClusterEvent> events = bus.query(MapReduceNodeService.MODULE, 2, 100);
-        assertThat(events).anyMatch(e -> "REQUEST_REFUSED".equals(e.type())
-                && e.message().contains("Unknown job"));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(bus.query(MapReduceNodeService.MODULE, 2, 100))
+                        .anyMatch(e -> "REQUEST_REFUSED".equals(e.type())
+                                && e.message().contains("Unknown job")));
     }
 
     @Test
@@ -422,8 +428,9 @@ class MapReduceNodeServiceTest {
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("Failure | with pipe \n and newline | details");
 
-        List<ClusterEvent> events = bus.query(MapReduceNodeService.MODULE, 2, 100);
-        assertThat(events).anyMatch(e -> "TASK_FAILED".equals(e.type()));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(bus.query(MapReduceNodeService.MODULE, 2, 100))
+                        .anyMatch(e -> "TASK_FAILED".equals(e.type())));
     }
 
     @Test
@@ -492,9 +499,10 @@ class MapReduceNodeServiceTest {
                     .isInstanceOf(IOException.class)
                     .hasMessageContaining("Worker is busy");
 
-            List<ClusterEvent> events = bus.query(MapReduceNodeService.MODULE, 2, 100);
-            assertThat(events).anyMatch(e -> "REQUEST_REFUSED".equals(e.type())
-                    && e.message().contains("Worker is busy"));
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(bus.query(MapReduceNodeService.MODULE, 2, 100))
+                            .anyMatch(e -> "REQUEST_REFUSED".equals(e.type())
+                                    && e.message().contains("Worker is busy")));
         } finally {
             pause.countDown();
             clientPool.shutdownNow();

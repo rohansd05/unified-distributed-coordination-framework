@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request parameter: upload.contentBase64","instance":"/api/modules/mapreduce/runs","errors":{"upload.contentBase64":"the file contains the control character U+0007 on line 2; only tab, line feed and carriage return are allowed"}}

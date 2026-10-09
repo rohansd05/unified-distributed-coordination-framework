@@ -50,6 +50,12 @@ public final class MetricNames {
     public static final String BALANCER_MAKESPAN = "distributed_balancer_makespan";
     /** Experiment 6: requests the balancer has in flight to each worker node. */
     public static final String BALANCER_IN_FLIGHT = "distributed_balancer_in_flight";
+    /** Experiment 7: MapReduce runs per coordinator node, by job and outcome (completed, failed). */
+    public static final String MAPREDUCE_JOBS_TOTAL = "distributed_mapreduce_jobs_total";
+    /** Experiment 7: total time of each completed MapReduce run, per coordinator node, by job. */
+    public static final String MAPREDUCE_JOB_DURATION = "distributed_mapreduce_job_duration";
+    /** Experiment 7: failed task attempts per worker node, by task type (map, reduce). */
+    public static final String MAPREDUCE_TASK_ATTEMPTS_FAILED_TOTAL = "distributed_mapreduce_task_attempts_failed_total";
 
     /** Tag key every meter carries. */
     public static final String NODE_ID = "node_id";

@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request parameter: upload.fileName","instance":"/api/modules/mapreduce/runs","errors":{"upload.fileName":"must be a .txt file"}}

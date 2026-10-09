@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Module busy","status":409,"detail":"Module 'mapreduce' is busy: 'MapReduce run of the word count job on an uploaded file' is in progress","instance":"/api/modules/mapreduce/runs","moduleId":"mapreduce","actionInProgress":"MapReduce run of the word count job on an uploaded file"}

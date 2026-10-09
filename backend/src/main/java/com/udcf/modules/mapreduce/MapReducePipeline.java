@@ -1,5 +1,8 @@
 package com.udcf.modules.mapreduce;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -30,6 +33,37 @@ public class MapReducePipeline {
     public static final Duration DEFAULT_TASK_TIMEOUT = Duration.ofSeconds(15);
 
     private static final AtomicInteger POOL_THREAD_SEQ = new AtomicInteger(0);
+
+    private static final Logger log = LoggerFactory.getLogger(MapReducePipeline.class);
+
+    /** Listener that ignores every attempt; used by the three-argument {@link #run}. */
+    private static final TaskAttemptListener NO_LISTENER = (type, taskIndex, attempt, nodeId, failureReason) -> { };
+
+    /**
+     * Observer of individual task attempts (added in step E7c so the module can report, per
+     * task, the worker that finally ran it and every failed attempt).
+     *
+     * <p>Called exactly once per attempt, after the attempt has ended, on the pipeline's own
+     * task thread. An exception thrown by the listener is caught and ignored, so a listener can
+     * never change a job's outcome.</p>
+     */
+    @FunctionalInterface
+    public interface TaskAttemptListener {
+
+        /**
+         * @param type          MAP or REDUCE
+         * @param taskIndex     0-based index of the task within its stage: for MAP the index of
+         *                      the non-blank split, for REDUCE the index among the non-empty
+         *                      partitions (in partition order); the same for every attempt of
+         *                      one task
+         * @param attempt       1 for the first attempt of the task, 2 for the first retry, and so on
+         * @param nodeId        the worker node this attempt was sent to
+         * @param failureReason {@code null} if this attempt produced the task's result;
+         *                      otherwise why it failed (timeout, I/O error, worker error,
+         *                      interruption)
+         */
+        void onAttempt(TaskType type, int taskIndex, int attempt, int nodeId, String failureReason);
+    }
 
     private final List<Integer> workerIds;
     private final TaskTransport transport;
@@ -99,6 +133,16 @@ public class MapReducePipeline {
      */
     public Map<String, String> run(MapReduceJob job, List<String> input, JobReport report)
             throws IOException {
+        return run(job, input, report, NO_LISTENER);
+    }
+
+    /**
+     * Same as {@link #run(MapReduceJob, List, JobReport)}, also telling {@code listener}
+     * about every task attempt (see {@link TaskAttemptListener}).
+     */
+    public Map<String, String> run(MapReduceJob job, List<String> input, JobReport report,
+                                   TaskAttemptListener listener) throws IOException {
+        Objects.requireNonNull(listener, "listener must not be null");
         Objects.requireNonNull(job, "job must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(report, "report must not be null");
@@ -134,7 +178,7 @@ public class MapReducePipeline {
             final int index = i;
             final String payload = String.join("\n", activeSplits.get(index));
             mapFutures.add(taskPool.submit(
-                    () -> runTaskWithRetry(TaskType.MAP, job.name(), payload, index, report)));
+                    () -> runTaskWithRetry(TaskType.MAP, job.name(), payload, index, report, listener)));
         }
 
         List<String> mapOutputs = new ArrayList<>();
@@ -191,7 +235,7 @@ public class MapReducePipeline {
             String payload = ReduceTask.encodePartition(partition);
             final int index = i;
             reduceFutures.add(taskPool.submit(
-                    () -> runTaskWithRetry(TaskType.REDUCE, job.name(), payload, index, report)));
+                    () -> runTaskWithRetry(TaskType.REDUCE, job.name(), payload, index, report, listener)));
         }
 
         List<String> reduceOutputs = new ArrayList<>();
@@ -221,7 +265,8 @@ public class MapReducePipeline {
     }
 
     private String runTaskWithRetry(TaskType type, String jobName, String payload,
-                                    int preferredIndex, JobReport report) throws IOException {
+                                    int preferredIndex, JobReport report,
+                                    TaskAttemptListener listener) throws IOException {
         IOException lastException = null;
         for (int attempt = 0; attempt < workerIds.size(); attempt++) {
             int nodeId = workerIds.get(Math.floorMod(preferredIndex + attempt, workerIds.size()));
@@ -230,7 +275,9 @@ public class MapReducePipeline {
             try {
                 String result = attemptFuture.get(taskTimeout.toMillis(), TimeUnit.MILLISECONDS);
                 if (result == null) {
-                    throw new IOException("Worker node " + nodeId + " returned null output");
+                    IOException nullOutput = new IOException("Worker node " + nodeId + " returned null output");
+                    notifyAttempt(listener, type, preferredIndex, attempt + 1, nodeId, describe(nullOutput));
+                    throw nullOutput;
                 }
                 if (type == TaskType.MAP) {
                     report.countMapTask(nodeId);
@@ -240,11 +287,13 @@ public class MapReducePipeline {
                 if (attempt > 0) {
                     report.addRetry();
                 }
+                notifyAttempt(listener, type, preferredIndex, attempt + 1, nodeId, null);
                 return result;
             } catch (TimeoutException te) {
                 attemptFuture.cancel(true);
                 lastException = new IOException("Task timed out after " + taskTimeout.toMillis()
                         + " ms on worker " + nodeId, te);
+                notifyAttempt(listener, type, preferredIndex, attempt + 1, nodeId, describe(lastException));
             } catch (ExecutionException ee) {
                 Throwable cause = ee.getCause();
                 if (cause instanceof IOException ioe) {
@@ -253,14 +302,31 @@ public class MapReducePipeline {
                     lastException = new IOException("Worker node " + nodeId + " failed: "
                             + (cause != null ? cause.getMessage() : "unknown error"), cause);
                 }
+                notifyAttempt(listener, type, preferredIndex, attempt + 1, nodeId, describe(lastException));
             } catch (InterruptedException ie) {
                 attemptFuture.cancel(true);
                 Thread.currentThread().interrupt();
-                throw new IOException("Task execution interrupted on worker " + nodeId, ie);
+                IOException interrupted = new IOException("Task execution interrupted on worker " + nodeId, ie);
+                notifyAttempt(listener, type, preferredIndex, attempt + 1, nodeId, describe(interrupted));
+                throw interrupted;
             }
         }
         throw new IOException("All workers exhausted for " + type + " task (job=" + jobName
                 + ", preferredIndex=" + preferredIndex + ")", lastException);
+    }
+
+    /** Tells the listener about one attempt; a listener failure is logged at debug and ignored. */
+    private static void notifyAttempt(TaskAttemptListener listener, TaskType type, int taskIndex,
+                                      int attempt, int nodeId, String failureReason) {
+        try {
+            listener.onAttempt(type, taskIndex, attempt, nodeId, failureReason);
+        } catch (RuntimeException e) {
+            log.debug("Task attempt listener failed ({}); ignored", e.getClass().getSimpleName());
+        }
+    }
+
+    private static String describe(IOException e) {
+        return e.getMessage() != null && !e.getMessage().isBlank() ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     /**

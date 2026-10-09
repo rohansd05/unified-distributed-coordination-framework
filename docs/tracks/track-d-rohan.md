@@ -28,7 +28,7 @@
 ### Steps
 - [x] E7a — the jobs and the split, map, combine, shuffle, partition and reduce pipeline as pure classes. Needs: E3d.
 - [x] E7b — MapReduce workers on `ports().mapreduce()` (730k) with task retry. Needs: E7a.
-- [ ] E7c — `MapReduceModule` (lab 7) and its API; inputs: bundled sample, uploaded .txt (size-capped), live event log; build `EventLogExporter` and `GET /api/events/export` (link L5). Needs: E7b.
+- [x] E7c — `MapReduceModule` (lab 7) and its API; inputs: bundled sample, uploaded .txt (size-capped), live event log; build `EventLogExporter` and `GET /api/events/export` (link L5). Needs: E7b.
 - [ ] E7d — the pipeline page and end-to-end check. Needs: E7c, E2d.
 
 ---
@@ -100,11 +100,50 @@
 
   Linux (Docker, 2 CPUs): the five new test classes (40 tests) passed 5 runs in a row; full backend suite <total> tests, 0 failures, 1 skipped.
 
+### E7c interfaces (for E7d, the MapReduce page)
+
+- **Module:** `MapReduceModule`, id `mapreduce`, lab 7, title "MapReduce". Registered like every module (a `@Component` picked up by `ModuleRegistry`). Status: BUSY while a run is active; otherwise ERROR if the last run FAILED (cleared by the next completed run or by reset); otherwise RUNNING while any node's mapreduce service listens; otherwise IDLE. Reset clears the latest run and the history and never throws; a run still active at that moment finishes and publishes its events, but its record is dropped (its id then answers 404).
+- **Roles:** coordinator = lowest live node, workers = every live node, R = number of workers (`MapReduceRoleSelector`, `// TODO(L1)`).
+- **Endpoints** (errors are ProblemDetail bodies):
+  - `GET /api/modules/mapreduce` -> 200 `MapReduceOverviewDto`.
+  - `POST /api/modules/mapreduce/runs` -> 202 `RunDto` (RUNNING). 400 field errors (`jobId`, `inputType`, `upload`, `upload.fileName`, `upload.contentType`, `upload.contentBase64`, `crashWorkerId`); 404 unknown job (`jobId`); 409 module busy (`actionInProgress`); 409 no live worker; 413 body larger than `limits.requestBodyMaxBytes` (`limitBytes`).
+  - `GET /api/modules/mapreduce/runs` -> 200 `RunSummaryDto[]`, newest first, at most `runHistorySize` (20).
+  - `GET /api/modules/mapreduce/runs/latest` -> 200 `RunDto`; 404 when no run is kept (`runId: null`).
+  - `GET /api/modules/mapreduce/runs/{runId}` -> 200 `RunDto`; 404 unknown run (`runId`).
+  - `GET /api/events/export?module=&node=&limit=` -> 200 `text/plain; charset=UTF-8` (link L5); limit 1 to `udcf.events.buffer-size` (default = buffer size); 400 for limit 0, a limit above the buffer size, or a negative node.
+- **Request body** `RunCommand`: `jobId` (`word-count`, `event-category-count`, `avg-latency-per-node`), `inputType` (`SAMPLE`, `UPLOAD`, `EVENT_LOG`), `upload` (UPLOAD only: `fileName`, `contentType` `text/plain` or empty, `contentBase64`), `crashWorkerId` (optional). The upload is JSON with Base64 so it stays in memory (R3); it is never written to disk, logged or put into an event.
+- **DTO fields; the nullable ones are marked "null:".**
+  - `MapReduceOverviewDto`: `status`, `currentAction` (null: none active), `jobs[] {id, title, description}`, `inputTypes[] {id, title, description}`, `coordinatorId` (null: every node down), `workerIds[]`, `limits {uploadMaxBytes, requestBodyMaxBytes, eventLogMaxBytes, eventLogMaxEvents, resultRowsMax, runHistorySize, taskTimeoutMillis}`, `latestRun` (null: none kept), `notes[]`.
+  - `RunDto`: `runId`, `state` (RUNNING, COMPLETED, FAILED), `jobId`, `jobTitle`, `inputType`, `inputName` (safe display name, never a path), `inputBytes` (null: event-log run still RUNNING), `coordinatorId`, `workerIds` (planned while RUNNING, used once finished), `crash` (null: no crash plan), `startedAt`, `finishedAt` (null: RUNNING), `report` (null: RUNNING), `error` (null unless FAILED), `notice` (null: nothing to say).
+  - `CrashDto`: `workerId`, `triggered`, `nodeCrashed` (null: not triggered), `taskType` MAP or REDUCE (null: not triggered).
+  - `JobReportDto`: `reducers`, `inputLines`, `inputLinesDropped` (null: not an event-log run), `splits`, `mapTasks`, `pairsEmitted` and `pairsAfterCombine` (null: failed before the map stage finished), `shuffleKeys` and `partitions` (null: failed before the shuffle finished), `resultKeys` (null: FAILED), `combinerSavingPercent` (null: no pairs emitted), `retriedTasks`, `timings {mapMillis, shuffleMillis, reduceMillis, totalMillis}` (each null when that stage did not run; total null when FAILED), `mapTasksPerNode`, `reduceTasksPerNode`, `tasks[]`, `results[]`, `resultsTruncated`.
+  - `TaskRowDto`: `taskType`, `taskNumber` (1-based), `completed`, `workerId` (null: no attempt succeeded), `attempts`, `failedAttempts[] {attempt, workerId, reason}`.
+  - `ResultRowDto`: `key`, `display` (the job's own text, e.g. "No latency measured"), `count` (null: value is not a count), `averageMillis` (latency job only, sum / count computed once from the reduced `sum;count`, null when count is 0; never an average of averages).
+  - `RunSummaryDto`: `runId`, `state`, `jobId`, `inputType`, `inputName`, `startedAt`, `finishedAt` (null: RUNNING), `totalMillis` and `resultKeys` (null unless COMPLETED), `retriedTasks` (null: RUNNING), `crashWorkerId` (null: no crash plan).
+- **Events** (module `mapreduce`, node = coordinator, one tick of the coordinator's Lamport clock each, data with `runId` and `jobId`): `JOB_STARTED` {inputType, inputLines, inputBytes, coordinatorId, workerIds, reducers, crashWorkerId (null kept)}, `WORKER_CRASH_TRIGGERED` {workerId, taskType, nodeCrashed} with peer = the crashed node, `JOB_COMPLETED` {totalMillis, resultKeys, retriedTasks}, `JOB_FAILED` {error}; plus E7b's TASK_* events.
+- **Crash trigger:** with `crashWorkerId`, the module crashes that node through `Cluster.crash` (every service on it, R10) right after the first task is sent to it. `TcpTaskTransport` publishes `TASK_SENT` and then asks its port resolver for the port; the module's resolver performs the crash at that moment, on the pipeline's attempt thread (never the HTTP thread or the event dispatcher), at most once per run (`AtomicBoolean`). The attempt then finds the port closed, `TASK_ATTEMPT_FAILED` follows and the task is retried on the next worker; the order TASK_SENT, WORKER_CRASH_TRIGGERED, TASK_ATTEMPT_FAILED is fixed. The report says whether a map or a reduce task was interrupted. The node stays down until recovered on the Cluster page. Validation (400): the node must be a live worker and not the coordinator, and at least two workers must be live. A chosen node that gets no task is not crashed (`triggered: false`, with a notice).
+- **Export line format** (`EventLogExporter`, causal order (lamportTime, nodeId, sequence); fields in brackets only when the event has a value):
+  `<yyyy-MM-dd HH:mm:ss.SSS, UTC> | node=<nodeId> | category=<type>[ | latency=<ms>] | seq=<sequence> | lamport=<lamportTime> | module=<module>[ | peer=<peerId>][ | msg=<message>]`
+  Real sample: `2026-10-09 09:49:17.590 | node=1 | category=WORKER_CRASH_TRIGGERED | seq=134 | lamport=105 | module=mapreduce | peer=3 | msg=The module crashed node 3 right after sending it its first map task`.
+  Escapes in category, module and msg: `\` -> `\\`, `|` -> `\p`, LF `\n`, CR `\r`, TAB `\t`, other control characters and U+2028/U+2029 `\uXXXX`, a leading or trailing space `\s`; `EventLogExporter.unescape` reverses them. `latency=` is written only from a numeric `data.latencyMillis`, and never for an event that carries `simulatedDelayMillis`.
+- **Sizing arithmetic:**
+  - A request line is `MAP|sender|lamport|taskId|job|<Base64 payload>`; Base64 of n bytes is 4 x ceil(n/3). With one live worker the whole input is one split.
+  - Worst case for intermediate data: distinct four-character words, 5 input bytes each. Each map-reply entry is `Base64(key) TAB Base64("1") LF` = 8 + 1 + 4 + 1 = 14 bytes, Base64-encoded again on the wire: 14 x 4/3 = 18.7 bytes per 5 input bytes, about 3.73 x the input. So the startup check is `upload-max-bytes x 4 <= max-request-bytes`.
+  - Public: cap 262144 (max-request-bytes 1048576). 52429 distinct words fill the cap exactly; the map reply is 52429 x 14 + 11 (`#raw=52429` line) = 734017 bytes, 978692 in Base64, under 1048576. The C1 test proves this run completes on one live worker.
+  - Local: cap 1048576 (max-request-bytes 4194304), the same ratio.
+  - `POST /runs` body limit = 4 x ceil(cap/3) + `request-body-allowance-bytes` (8192): local 1398104 + 8192 = 1406296; public 349528 + 8192 = 357720.
+- **Fixtures** (`frontend/src/test/fixtures/mapreduce/`, 31 real captures plus README): overview-idle, overview-after-runs, run-accepted, run-sample-word-count, run-upload-avg-latency, run-event-log-event-category, run-truncated-result, run-crash-retry, run-event-log-empty-result, run-latest, runs-history, cluster-after-crash, events-mapreduce, events-export.txt, error-404-no-run-yet, error-404-unknown-run, error-404-unknown-job, error-400-missing-fields, error-400-upload-missing, error-400-upload-file-name, error-400-upload-content-type, error-400-upload-not-base64, error-400-upload-empty, error-400-upload-too-large, error-400-upload-not-utf8, error-400-upload-nul, error-400-upload-control-character, error-400-crash-worker, error-409-busy, error-409-no-live-worker, error-413-body-too-large.
+- **Test ports:** 24501-24505, 24511-24512, 24521-24522, 24531-24532 (module tests), 24541-24545 (controller test), 24701-24705 (crash tests).
+
 ---
 
 ## Known issues
 
 - `LatencyPerNodeJob.formatResult` returns "No latency measured" when there is no data or event count is zero (Rule R7: never presents an unmeasured average as a number).
+- E7c fixtures: the empty-event-log notice ("No events have been recorded yet; use another page first.") cannot be captured from a running backend, because the log always holds at least `CLUSTER_STARTED` or `CLUSTER_RESET`. `run-event-log-empty-result.json` (latency job on the event log right after a reset: no result keys and an honest notice) was captured instead; the empty-log notice is covered by `RunInputLoaderTest`.
+- E7c hardened E7b's `MapReduceNodeServiceTest` (test file only; no E7b main file changed). The worker flushes its reply before it publishes the matching event (`TASK_FAILED` after the error reply, `TASK_COMPLETED` after the OK reply), so a test that reads the bus right after the reply races the worker thread. `errorTextWithPipesAndNewlinesDoesNotBreakFraming` failed in the full suite for that reason. The presence checks at the former lines 253, 287, 328, 425 and 495 now wait with Awaitility (at most 5 s).
+- E7c: the worst-case intermediate data is about 3.7 x the input, so `upload-max-bytes` is limited to a quarter of `max-request-bytes` at startup. If a larger cap were ever configured without that check, a run would end FAILED with a clear `JOB_FAILED`, not crash.
+- E7c: a 413 from the request body limit, and every other API error, is a ProblemDetail produced inside Spring MVC. A body rejected while it is still being sent can make some clients report a connection error instead of the 413, so the page should check `limits.uploadMaxBytes` before uploading.
 
 ---
 
@@ -125,5 +164,7 @@
   Linux (Docker, 2 CPUs): 915 tests, 0 failures, 1 skipped.
   Test resource framework-events.log was excluded by .gitignore; fixed with a narrow exception.
 - 2026-10-09 E7b done: MapReduce workers on ports().mapreduce() (730k) with task retry over TCP; backend 1000 tests (3 consecutive runs: 1000/1000/1000, baseline 960); new test classes: 40 tests (5 consecutive runs: 40/40/40/40/40); deviations: two package-private test accessors (workerPool(), inboundConnections()) in MapReduceNodeService so tests wait without sleeping
+- 2026-10-09 E7c done: MapReduceModule (lab 7), REST API under /api/modules/mapreduce (202 runs on a module run thread, history of 20, 400/404/409/413 errors), three inputs (bundled sample, Base64 JSON upload held in memory, live event-log snapshot with byte cap), crash-a-worker run with retry and identical result, EventLogExporter and GET /api/events/export (L5), metrics, 31 real fixtures; backend 1162 tests (3 consecutive runs: 1162/1162/1162, 1 skipped, baseline 1080); new and changed test classes 113 tests (5 consecutive runs: 113/113/113/113/113); mapreduce package in reverse order 172/172; frontend 537 tests in 71 files (no frontend code changed, fixtures only); deviations: approved add-only TaskAttemptListener hook in MapReducePipeline (E7a); approved Awaitility hardening of 6 presence checks in MapReduceNodeServiceTest (E7b, test only); upload sent as JSON with Base64 instead of multipart (approved, R3); upload cap limited to a quarter of max-request-bytes (approved, C7); request body limit is a RequestBodyAdvice inside Spring MVC rather than a servlet filter (allowed by C3 as a wrapper); MapReduceControllerTest closes its context after the class (@DirtiesContext) so no udcf-mapreduce threads outlive it; the empty-event-log fixture replaced by run-event-log-empty-result.json (known issue)
+  Linux (Docker, --cpus=2): 113 tests x 5 runs on the new/changed classes, 0 failures; full suite 1162 tests, 0 failures, 1 skipped; clean-clone full suite 1162 tests, 0 failures, 1 skipped; frontend lint, build and 537 tests green.
 
 
