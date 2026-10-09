@@ -101,7 +101,16 @@ udcf:
       max-work-units: 5000
       max-concurrency: 50
       max-total-work: 500000
-<<<<<<< HEAD
+
+  # Experiment 7 (lab 7). MapReduce workers over TCP 730k (Appendix B timings).
+  mapreduce:
+    task-timeout-millis: 15000
+    socket-read-timeout-millis: 15000
+    max-request-bytes: 4194304
+    listen-backlog: 50
+    worker-threads: 4
+    queue-capacity: 32
+
   # Experiment 8 (lab 8). Failover on the replication service (TCP 710k) and the shared failure
   # detector (link L2: timings are udcf.election.heartbeat-*). The client must outlast the worst
   # failover: detection (2500 + 700) + 2 x promotion attempt (catch-up 1000 + term record 2 x 1500)
@@ -118,16 +127,7 @@ udcf:
       # The chosen node's catch-up from the other live peers (in parallel); a peer not done is skipped.
       catch-up-timeout-millis: 1000
     history-limit: 10
-=======
-  # Experiment 7 (lab 7). MapReduce workers over TCP 730k (Appendix B timings).
-  mapreduce:
-    task-timeout-millis: 15000
-    socket-read-timeout-millis: 15000
-    max-request-bytes: 4194304
-    listen-backlog: 50
-    worker-threads: 4
-    queue-capacity: 32
->>>>>>> origin/main
+    
 
 management:
   endpoints:
