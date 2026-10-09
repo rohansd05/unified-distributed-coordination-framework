@@ -28,7 +28,7 @@
 
 ### Steps
 
-- [ ] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
+- [x] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
 - [ ] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
 - [ ] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
 - [ ] E8d — page and end-to-end check. Needs: E8c, E2d.
@@ -124,6 +124,56 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - `RECOVER`: The node recovered from a crash.
 - `UNKNOWN_SENDER`: An unrecognized message was received.
 - `LATE_MESSAGE`: A message for a stale election was safely ignored.
+
+### E8a interfaces: fault tolerance as pure classes (`com.udcf.modules.faulttolerance`), for E8b and E8c
+
+No sockets, threads, timers, Spring or ports. Nothing reads a clock: every instant is a `long …Nanos` parameter, stamped by the caller. **All stampers in the module must use one shared `LongSupplier` nano-clock instance**, so instants from different threads compare.
+
+**Reused, not duplicated (Track C, `com.udcf.modules.replication`):** `DataStore` is the store and the write fence (no `UpdateStore`); `DataItem` is the stamped update; `ConsistencyModel` is the sync/async enum; `WriteResult` feeds the ledger and carries the simulated delay. `DataStore.INITIAL_EPOCH` is 1.
+
+**Epoch rules**
+- `FailoverRole { PRIMARY, BACKUP }` (module-local; liveness is separate). `EpochVerdict { REFUSE_STALE, ACCEPT, ADOPT_HIGHER }`.
+- `EpochRules` (static): `EpochVerdict judge(long knownEpoch, long incomingEpoch)` (lower refused, **equal accepted as the same term**, higher adopted; matches `DataStore.apply`, checked by a test); `long afterObserving(long known, long observed)` (never decreases); `boolean mustDemote(FailoverRole role, long primaryEpoch, long observedEpoch)`; `Optional<Integer> currentPrimary(List<RoleReport>)`; `RejoinDecision resolveRejoin(int selfId, FailoverRole ownRole, long ownEpoch, List<RoleReport> replies)` (`ownRole` = the role held before the crash).
+- `RoleReport(int nodeId, FailoverRole role, long epoch, Integer believedPrimaryId)`: the answer to a role query. `RejoinDecision(Action action, long epoch, Integer primaryId)` with `Action { STAY, DEMOTE_AND_RESYNC, ADOPT_AND_RESYNC, NO_ANSWER }`, `resync()`, `viewConfirmed()`.
+- `EpochAuthority` (synchronized): `Optional<Promotion> onLeaderElected(int nodeId, long observedAtNanos)` (**the seam for the elected primary, `// TODO(L1)`**); `long observeEpoch(long)`; `long highestEpoch()`; `Optional<Promotion> current()`; `reset()`. Epoch = `max(last issued, highest observed) + 1`, highest observed starting at `INITIAL_EPOCH`, so the first promotion is 2 and no promotion epoch ever equals 1, an observed epoch or an issued one. A result naming the current primary, or observed before the promotion in force, returns empty. A leader change with no failure (planned handover) is epoch + 1 with no failover run.
+- `Promotion(int nodeId, long epoch, Integer previousPrimaryId, long observedAtNanos)`; `epoch > INITIAL_EPOCH` is enforced.
+
+**Failover state machine and measurements**
+- `FailoverPhase { STEADY, SUSPECTED, PROMOTING, RESTORED }` (a crash leaves the phase at STEADY: the cluster has not noticed yet). `InstantSource { ACTION, OBSERVED }`.
+- `FailoverStateMachine(int historyLimit)` (synchronized). Every event returns `EventResult { APPLIED, IGNORED, REJECTED_OUT_OF_ORDER }`: `onPrimaryCrashed(int nodeId, InstantSource source, long atNanos)`, `onSuspected(int observerId, int suspectedId, long atNanos)`, `onPrimaryAlive(int nodeId, long atNanos)`, `onPromotionChosen(Promotion)`, `onPromotionFailed(int nodeId, long atNanos)`, `onPromoted(int nodeId, long epoch, long atNanos)`, `onWriteAccepted(int nodeId, long epoch, long atNanos)`, `onOldPrimaryRecovered(int nodeId, long atNanos)`, `onDemoted(int nodeId, long epoch, long atNanos)`, `onResynchronised(int nodeId, long atNanos)`. Queries: `phase()`, `primaryId()`, `primaryEpoch()`, `latestRun()`, `runs()`, `rejectedEventCount()`, `reset()`.
+- `FailoverRun(...)`: run id, old primary and epoch, crash instant and its `InstantSource`, detection instant and observer, elected, new primary and epoch, promoted, restored, recovered, demoted, resynced (each `Long`, null if it never happened), `Outcome { IN_PROGRESS, RESTORED, PRIMARY_RETURNED, INTERRUPTED }`, `measurements()`.
+- `FailoverMeasurements(Double detectionMillis, Double failoverMillis, Double serviceRestoredMillis, Double outageMillis, Double recoveryMillis)`: crash to detection; detection to promoted; promoted to first accepted write; crash to first accepted write (directly, not a sum); old primary recovered to demoted and resynchronised (the later). Incomplete intervals are null, never 0. Detection with the shared detector (700 ms / 2500 ms) is **estimated** at 1.8 to 3.2 s after the crash until E8c measures it.
+
+**Data loss**
+- `SystemUpdate(int sequence, String key, String value)`, `numbered(seq)` gives `setting-0001` / `v1` (`Locale.ROOT`).
+- `AcknowledgedLedger` (synchronized): `AcknowledgedUpdate record(int sequence, WriteResult result, long acknowledgedAtNanos)`, `snapshot()`, `size()`, `contains(key)`, `clear()`. `AcknowledgedUpdate(int sequence, DataItem item, ConsistencyModel model, long simulatedDelayMillis, long acknowledgedAtNanos)`.
+- `DataLoss.measure(List<AcknowledgedUpdate>, Map<String, DataItem> newPrimaryStore)` returns `DataLossReport(int acknowledged, Integer lost, List<String> lostKeys, Integer lostSynchronous, Integer lostAsynchronous, boolean simulated, long simulatedDelayMillis, NotAssessed notAssessed)`. A key is lost if it is missing or held at an older version. Nothing acknowledged or no primary store: counts null with `NOTHING_ACKNOWLEDGED` / `NO_PRIMARY_STORE`. `simulated` and `simulatedDelayMillis` come from the reported `WriteResult.simulatedDelayMillis` (450 today), never a typed value.
+
+**Client retry**
+- `UpdateRetryPolicy(int maxAttempts, long retryDelayMillis)`, `UpdateAttempt begin(Integer knownPrimaryId)`. `UpdateAttempt` (one update, one thread): `first()`, `after(AttemptOutcome)`, `afterDiscovery(Optional<Integer>)`, `attempts()`, `last()`. `AttemptOutcome(Kind { ACCEPTED, NOT_PRIMARY, UNREACHABLE }, int nodeId, Integer primaryHint)`. `RetryDecision(Action { SEND, DISCOVER, DONE, GIVE_UP }, Integer targetNodeId, long delayMillis)`. Redirects are followed at once unless they point back at a node that already redirected this update; every send and discovery uses an attempt; then `GIVE_UP`.
+
+**Split brain**
+- `SplitBrainChecker.check(List<NodeRoleSnapshot>)` returns `SplitBrainReport(boolean passed, Long highestEpoch, List<Integer> livePrimaries, List<SplitBrainViolation> violations)`. `NodeRoleSnapshot(int nodeId, boolean alive, FailoverRole role, long epoch)`. `SplitBrainViolation(Kind { DUPLICATE_PRIMARY, STALE_PRIMARY }, List<Integer> nodeIds, long epoch, long highestEpoch)`. Strict: either kind fails `passed`; crashed nodes are ignored; no primary is not a violation. A live stale primary should never appear (see note 3 below); if it does, it is a bug.
+
+**Concurrency and lock order:** `EpochRules`, `SplitBrainChecker`, `DataLoss` and the records are stateless; `UpdateRetryPolicy` is immutable; `EpochAuthority`, `FailoverStateMachine` and `AcknowledgedLedger` each hold one intrinsic lock and never call out (no listeners, no other E8a class, no `DataStore` lock) while holding it, so they are leaf locks: E8b may call them while holding its own lock, never the reverse. `UpdateAttempt` is confined to one thread.
+
+**What E8b must wire**
+- Start the election services itself with `ElectionNodeService.on(node, cluster, properties, bus)` on every node: the shared FailureDetector is idle until the first election request (E4c lazy start). Then `failureDetector().addListener(...)`: `onSuspected(peer == primary)` maps to `FailoverStateMachine.onSuspected`, `onAlive` to `onPrimaryAlive`. Listeners run on the election worker and must not block.
+- Stamp every instant from the one shared `LongSupplier`. E8c's crash action stamps `InstantSource.ACTION` immediately before `Cluster.crash(primary)`; a crash seen only through `NODE_CRASHED` is stamped `OBSERVED` on delivery.
+- Call `EpochAuthority.observeEpoch(service.epoch())` for every live node before the first promotion and on every role-query answer; then `becomePrimary(promotion.epoch())`, and `onPromoted` right after it returns.
+- Feed the ledger from every confirmed `WriteResult` (`record(sequence, result, now)`), and `onWriteAccepted` from the stream.
+- Events to publish (module `faulttolerance`, sentence case, no all-capital words in messages; do not repeat what the replication module already publishes, such as `PRIMARY_ACTIVE` and `PRIMARY_SUPERSEDED`): E8b `PRIMARY_SUSPECTED` (observer, peer = primary), `PRIMARY_PROMOTED` (data `{epoch, previousPrimaryId}`), `SERVICE_RESTORED`, `ROLE_QUERY` (data `{action, epoch, primaryId, replies}`), `PRIMARY_DEMOTED`, `RESYNCHRONISED`; E8c `STREAM_STARTED`, `STREAM_STOPPED`, `PRIMARY_CRASHED` (data `{source}`), `FAILOVER_MEASURED` (the five intervals, nulls kept), `DATA_LOSS_MEASURED` (data includes `simulated` and `simulatedDelayMillis`), `SPLIT_BRAIN_CHECKED`.
+
+**Notes for E8b, E8c and Phase 9A.1**
+1. E8b feeds the seam from a module-local selector (highest live id, the legacy rule) marked `// TODO(L1)`; it does not call the election module. It consults the selector only when the current primary fails.
+2. Until 9A.1 the Exp 8 primary and the Exp 4 leader are independent, so crashing the Exp 4 leader can start an Exp 4 re-election while Exp 8 runs its own failover.
+3. A recovering node comes back as a non-primary until its role query returns (`stepDown()` on its replication service before it can serve), and `NO_ANSWER` keeps it from writing. Before 9A a recovered old primary demotes and stays a backup (no handover).
+4. E8b logs every event the state machine rejects (`REJECTED_OUT_OF_ORDER`, also counted in `rejectedEventCount()`).
+5. The client retry window (`maxAttempts x retryDelayMillis`, 14 x 120 ms = 1.7 s in the legacy demo) is shorter than the estimated detection time (1.8 to 3.2 s), so E8c must size it in YAML to cover a whole failover (about 6 s at least), or the update stream gives up during every failover.
+6. Phase 9A.1: a planned handover (leader change with no primary failure) must resynchronise the handover target before the handover is applied.
+7. The asynchronous delay is whatever `WriteResult.simulatedDelayMillis` reports (Exp 5's `udcf.replication.async-delay-millis`, 450 today); the UI shows the reported value with the Simulated badge, never a typed 220 or 450.
+
+**Tests:** backend baseline 960 (0 failures, 1 skipped); after E8a 1040 (0 failures, 1 skipped) in three identical sequential runs; 80 new tests in `AcknowledgedLedgerTest` (4), `DataLossTest` (7), `EpochAuthorityTest` (10), `EpochRulesTest` (11), `FailoverMeasurementsTest` (8), `FailoverStateMachineTest` (15), `FaultToleranceRecordsTest` (9), `SplitBrainCheckerTest` (7), `UpdateRetryPolicyTest` (9).
 
 ---
 
@@ -241,6 +291,11 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 ## Deviations
 
 - L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: at about 11 ticks per second per node (5 nodes) the Lamport values shown by Experiment 3 would change without any user action. Awaiting Rohan's sign-off at PR review.
+- E8a: the step names `SystemUpdate`, `UpdateStore` and `FailoverMetrics` changed (approved). `UpdateStore` is not ported (the shared `DataStore` is the store and its epoch fence); `SystemUpdate` is the client's unstamped request (the stamped update is `DataItem`); `FailoverMetrics` is renamed `FailoverMeasurements`, because "Metrics" classes in this codebase are Micrometer meters.
+- E8a: the asynchronous replication delay is not Appendix B's 220 ms for Experiment 8. Exp 8 reuses the replication service, whose delay is `udcf.replication.async-delay-millis` (450 ms today); E8a carries whatever `WriteResult.simulatedDelayMillis` reports and Track C's code is unchanged (approved).
+- E8a: detection uses the shared FailureDetector (700 ms / 2500 ms), not the legacy demo's 300 ms / 1200 ms; there is no separate Exp 8 detector configuration (approved, link L2).
+- E8a: the intervals differ from the legacy `FailoverMetrics`: failover is measured from detection (legacy: from the crash), "service restored" from the promotion (legacy "recovery": crash to first write); outage (crash to first accepted write) and recovery (old primary recovered to demoted and resynchronised) are new; incomplete intervals are null (legacy 0) and values are not rounded.
+- E8a: promotion epochs start at `INITIAL_EPOCH + 1` = 2 (legacy: the initial primary held epoch 1), so no promotion ever shares the stores' initial epoch.
 
 ---
 
@@ -251,15 +306,20 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - E4b: the E4a algorithms still keep a private Lamport counter. The transport replaces it on the wire and in every event with the node clock, so the private value is never published (no E4a edit, by decision).
 - E4b: E4a's `getCoordinatorId()` reads a non-volatile field. The transport only reads it on the worker thread and exposes its own volatile `coordinatorId()`; other code should use that (no E4a edit, by decision).
 - E4b: a Ring election started when every other node is dead never elects anyone (E4a ring-of-one behaviour): it ends in `ELECTION_TIMEOUT` after 5000 ms. E4c should use Bully for automatic re-election.
-- E4b: verified on Windows only (three full runs). The five Linux (Docker, 2 CPUs) runs of the new classes are still to be done by Swanand.
+- E4b: Linux (Docker, 2 CPUs): the new classes passed 5 runs in a row (41 tests each); full backend suite 852 tests, 0 failures, 1 skipped
 - E4c: a Ring election with only one live node never elects anyone and its round ends TIMED_OUT after `round-timeout-millis` (10000 ms), unmeasured. Automatic re-election therefore always uses Bully.
 - E4c: the duration of a LEADER_FAILURE round is measured from the detection (the first node's failure detector suspecting the leader, about 2500 ms after the crash), not from the crash itself.
 - E4c: nothing starts the election services at boot, so the FailureDetector is idle until the first election request. E8b and any other module that needs the detector must start the services itself with `ElectionNodeService.on(...)`.
 - E4c: between a leader crash and the agreement on a new leader (about 2.5 to 3 s with the default timings) the cluster has no LEADER; the top bar shows "None elected" during that gap.
-- E4c: verified on Windows only (three backend and three frontend runs). The Linux (Docker) runs of the new classes are still to be done by Swanand.
+- E4c: Linux (Docker, 2 CPUs): the election subset passed 5 runs in a row (82 tests each); full backend suite 893 tests, 0 failures, 1 skipped
 - E4d: `GET /api/modules/election` closes a timed-out round lazily, only when it is read (also by `status()`). The page therefore refreshes once at the overview's `roundTimeoutMillis` + 250 ms while a round is open; nothing else polls.
 - E4d: the per-node figures count since the backend started; a cluster reset does not reset them (Prometheus counter semantics), and the page says so.
 - E4d: the 1280x800 and 375x740 checks were run in same-origin iframes of exactly those CSS sizes (the Chrome window could not be set to an exact viewport at 125 % display scaling). Keyboard-only use and reduced motion were checked by the component tests, not by hand.
+- E8a: the 1.8 to 3.2 s detection time is an estimate from the detector settings, not a measurement; E8c measures it.
+- E8a: a crash started outside Exp 8 (for example on the Cluster page) is stamped when `NODE_CRASHED` is delivered (`InstantSource.OBSERVED`), slightly late, so its detection time is slightly short; E8d labels such values.
+- E8a: a write accepted by the new primary before E8b records `onPromoted` does not count as "service restored", so that interval can be overstated by up to one write interval of the stream.
+- E8a: `AcknowledgedLedger` is unbounded (data loss must check every acknowledged key); E8c bounds it by bounding the update stream.
+- E8a: verified on Windows only (three sequential full runs). An earlier set of three runs was started in parallel by mistake (shared `target/` and ports); all three passed (1040 tests, 0 failures, 1 skipped) but are not counted.
 
 ---
 
@@ -270,3 +330,4 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - 2026-10-09 E4b done: election UDP transport (`ElectionNodeService`, worker-only algorithm work, joined lifecycle) and the shared `core/failure/FailureDetector` (700/2500 ms heartbeats, PEER_SUSPECTED/PEER_ALIVE); backend 852 tests (baseline 817 + 35), frontend not run (no frontend change); deviations: heartbeats exempt from L4 (awaiting Rohan's sign-off), `HEARTBEAT` added to E4a's `ElectionMessageType` (approved).
 - 2026-10-09 E4c done: `ElectionModule` (lab 4: Bully/Ring from any node, sticky LEADER role, consensus check, automatic Bully re-election on leader failure, rounds with timeout, clean-slate reset), cluster roles API (`NodeRole`, `ClusterNode.roles`, `Cluster.assignLeader`, `LEADER_CHANGED`, `NodeDto.roles`), REST, metrics, 22 live contract fixtures, `isLeader` in top bar and topology; backend 893 tests (baseline 852 + 41), frontend 391 tests (baseline 388 + 3); deviations: none beyond the approved plan (added `ElectionRound` record; `ElectionNodeService.halt/resetState` and `FailureDetector.reset` as approved in Q7).
 - 2026-10-09 E4d done: Election page (node ring with live message arrows, result panel with honest states, leader changes from the cluster log, per-node figures, crash and recover without confirmation), sentence-case election event messages, per-node `electionsWon`/`roundsTimed`/`meanDurationMillis` in the overview, fixtures recaptured plus `overview-ring-timed-out.json`; backend 897 tests (baseline 893 + 4), frontend 537 tests (baseline 464 + 73); deviations: extra fixture `overview-ring-timed-out.json`; shared edits `registry.test.js` and `ExperimentPage.test.jsx` (election to matrix, both approved), `experiments.js` concept and `routes.test.jsx` spies (add-only).
+- 2026-10-09 E8a done: Experiment 8 pure classes in `com.udcf.modules.faulttolerance` (epoch rules and `EpochAuthority` with the `onLeaderElected` TODO(L1) seam, `FailoverStateMachine` with rejected-event counter and `InstantSource`, `FailoverMeasurements` incl. outage, `AcknowledgedLedger` and `DataLoss` with the simulated marker, bounded `UpdateRetryPolicy`, strict `SplitBrainChecker`), reusing Track C's `DataStore`, `DataItem`, `ConsistencyModel` and `WriteResult`; backend 1040 tests (baseline 960 + 80), frontend not run (no frontend change); deviations: step class names changed (`UpdateStore` not ported, `FailoverMetrics` renamed `FailoverMeasurements`), async delay as reported (450 ms, not 220), shared detector timings, redefined intervals, first promotion epoch 2.
