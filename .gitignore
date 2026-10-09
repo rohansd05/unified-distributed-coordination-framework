@@ -72,3 +72,4 @@ frontend/public/uploads/
 .gradle/
 build/
 out/
+!backend/src/test/resources/**/*.log

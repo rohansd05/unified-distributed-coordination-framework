@@ -1,0 +1,320 @@
+2026-09-18 14:33:28.151 | node=2 | category=RECV | latency=10.48 | message received from peer
+2026-09-18 14:33:28.212 | node=1 | category=RECV | latency=3.92 | message received from peer
+2026-09-18 14:33:28.282 | node=2 | category=DISPATCH | latency=12.35 | request dispatched to worker
+2026-09-18 14:33:28.330 | node=1 | category=RECV | latency=4.79 | message received from peer
+2026-09-18 14:33:28.401 | node=2 | category=RECV | latency=12.83 | message received from peer
+2026-09-18 14:33:28.469 | node=2 | category=SEND | latency=2.97 | message dispatched to peer
+2026-09-18 14:33:28.516 | node=2 | category=DETECT | latency=10.06 | coordinator unreachable, no heartbeat
+2026-09-18 14:33:28.573 | node=3 | category=RECV | latency=15.90 | message received from peer
+2026-09-18 14:33:28.640 | node=1 | category=COORD | latency=3.07 | coordinator announcement accepted
+2026-09-18 14:33:28.684 | node=1 | category=SEND | latency=4.04 | message dispatched to peer
+2026-09-18 14:33:28.742 | node=3 | category=RECV | latency=24.52 | message received from peer
+2026-09-18 14:33:28.785 | node=3 | category=ACK | latency=27.08 | backup acknowledged the update
+2026-09-18 14:33:28.863 | node=1 | category=RECV | latency=2.27 | message received from peer
+2026-09-18 14:33:28.900 | node=1 | category=SEND | latency=6.13 | message dispatched to peer
+2026-09-18 14:33:28.937 | node=2 | category=SEND | latency=9.92 | message dispatched to peer
+2026-09-18 14:33:28.981 | node=1 | category=RECV | latency=3.27 | message received from peer
+2026-09-18 14:33:29.036 | node=2 | category=RECV | latency=13.15 | message received from peer
+2026-09-18 14:33:29.123 | node=2 | category=APPLY | latency=13.17 | replicated item stored locally
+2026-09-18 14:33:29.189 | node=3 | category=ACK | latency=29.74 | backup acknowledged the update
+2026-09-18 14:33:29.247 | node=1 | category=RECV | latency=2.33 | message received from peer
+2026-09-18 14:33:29.316 | node=2 | category=SEND | latency=10.85 | message dispatched to peer
+2026-09-18 14:33:29.344 | node=1 | category=COORD | latency=4.37 | coordinator announcement accepted
+2026-09-18 14:33:29.365 | node=1 | category=SEND | latency=5.01 | message dispatched to peer
+2026-09-18 14:33:29.376 | node=1 | category=SEND | latency=4.75 | message dispatched to peer
+2026-09-18 14:33:29.432 | node=1 | category=SEND | latency=3.28 | message dispatched to peer
+2026-09-18 14:33:29.455 | node=1 | category=RECV | latency=5.03 | message received from peer
+2026-09-18 14:33:29.522 | node=2 | category=RECV | latency=12.05 | message received from peer
+2026-09-18 14:33:29.563 | node=2 | category=APPLY | latency=12.89 | replicated item stored locally
+2026-09-18 14:33:29.637 | node=1 | category=DISPATCH | latency=3.27 | request dispatched to worker
+2026-09-18 14:33:29.714 | node=3 | category=APPLY | latency=20.31 | replicated item stored locally
+2026-09-18 14:33:29.760 | node=3 | category=WRITE | latency=19.21 | client write accepted by primary
+2026-09-18 14:33:29.814 | node=3 | category=RECV | latency=15.91 | message received from peer
+2026-09-18 14:33:29.850 | node=2 | category=ACK | latency=7.99 | backup acknowledged the update
+2026-09-18 14:33:29.882 | node=3 | category=ACK | latency=25.32 | backup acknowledged the update
+2026-09-18 14:33:29.919 | node=1 | category=RECV | latency=3.53 | message received from peer
+2026-09-18 14:33:29.962 | node=2 | category=SEND | latency=0.40 | message dispatched to peer
+2026-09-18 14:33:30.047 | node=3 | category=RECV | latency=40.03 | message received from peer
+2026-09-18 14:33:30.101 | node=1 | category=SEND | latency=2.49 | message dispatched to peer
+2026-09-18 14:33:30.169 | node=1 | category=SEND | latency=1.98 | message dispatched to peer
+2026-09-18 14:33:30.177 | node=2 | category=COORD | latency=4.52 | coordinator announcement accepted
+2026-09-18 14:33:30.267 | node=1 | category=COORD | latency=5.94 | coordinator announcement accepted
+2026-09-18 14:33:30.300 | node=2 | category=SEND | latency=6.21 | message dispatched to peer
+2026-09-18 14:33:30.389 | node=1 | category=ACK | latency=5.30 | backup acknowledged the update
+2026-09-18 14:33:30.448 | node=3 | category=SEND | latency=19.77 | message dispatched to peer
+2026-09-18 14:33:30.476 | node=1 | category=SEND | latency=5.67 | message dispatched to peer
+2026-09-18 14:33:30.567 | node=1 | category=ACK | latency=6.33 | backup acknowledged the update
+2026-09-18 14:33:30.635 | node=2 | category=RECV | latency=7.50 | message received from peer
+2026-09-18 14:33:30.644 | node=3 | category=APPLY | latency=19.89 | replicated item stored locally
+2026-09-18 14:33:30.665 | node=2 | category=DISPATCH | latency=3.49 | request dispatched to worker
+2026-09-18 14:33:30.700 | node=1 | category=SEND | latency=5.08 | message dispatched to peer
+2026-09-18 14:33:30.772 | node=1 | category=COORD | latency=3.92 | coordinator announcement accepted
+2026-09-18 14:33:30.796 | node=1 | category=APPLY | latency=5.37 | replicated item stored locally
+2026-09-18 14:33:30.862 | node=2 | category=ACK | latency=3.47 | backup acknowledged the update
+2026-09-18 14:33:30.934 | node=1 | category=SEND | latency=3.74 | message dispatched to peer
+2026-09-18 14:33:31.007 | node=1 | category=RECV | latency=4.05 | message received from peer
+2026-09-18 14:33:31.034 | node=1 | category=RECV | latency=4.11 | message received from peer
+2026-09-18 14:33:31.057 | node=2 | category=RECV | latency=5.24 | message received from peer
+2026-09-18 14:33:31.078 | node=3 | category=SEND | latency=19.98 | message dispatched to peer
+2026-09-18 14:33:31.110 | node=1 | category=ACK | latency=2.31 | backup acknowledged the update
+2026-09-18 14:33:31.126 | node=2 | category=COORD | latency=8.82 | coordinator announcement accepted
+2026-09-18 14:33:31.198 | node=2 | category=SEND | latency=8.40 | message dispatched to peer
+2026-09-18 14:33:31.267 | node=2 | category=SEND | latency=12.49 | message dispatched to peer
+2026-09-18 14:33:31.341 | node=3 | category=DISPATCH | latency=20.47 | request dispatched to worker
+2026-09-18 14:33:31.374 | node=3 | category=SEND | latency=29.86 | message dispatched to peer
+2026-09-18 14:33:31.397 | node=1 | category=RECV | latency=3.34 | message received from peer
+2026-09-18 14:33:31.432 | node=2 | category=ACK | latency=6.24 | backup acknowledged the update
+2026-09-18 14:33:31.459 | node=3 | category=COORD | latency=17.47 | coordinator announcement accepted
+2026-09-18 14:33:31.484 | node=3 | category=SEND | latency=24.95 | message dispatched to peer
+2026-09-18 14:33:31.504 | node=1 | category=RECV | latency=6.49 | message received from peer
+2026-09-18 14:33:31.532 | node=2 | category=DETECT | latency=8.64 | coordinator unreachable, no heartbeat
+2026-09-18 14:33:31.591 | node=1 | category=SEND | latency=3.12 | message dispatched to peer
+2026-09-18 14:33:31.601 | node=1 | category=RECV | latency=5.92 | message received from peer
+2026-09-18 14:33:31.611 | node=1 | category=ELECTION | latency=3.05 | election started challenging higher nodes
+2026-09-18 14:33:31.633 | node=3 | category=ACK | latency=37.92 | backup acknowledged the update
+2026-09-18 14:33:31.654 | node=1 | category=RECV | latency=4.69 | message received from peer
+2026-09-18 14:33:31.678 | node=3 | category=ACK | latency=18.55 | backup acknowledged the update
+2026-09-18 14:33:31.772 | node=3 | category=SEND | latency=30.19 | message dispatched to peer
+2026-09-18 14:33:31.853 | node=2 | category=RECV | latency=14.37 | message received from peer
+2026-09-18 14:33:31.896 | node=1 | category=APPLY | latency=3.54 | replicated item stored locally
+2026-09-18 14:33:31.906 | node=2 | category=ACK | latency=9.52 | backup acknowledged the update
+2026-09-18 14:33:31.924 | node=2 | category=SEND | latency=8.86 | message dispatched to peer
+2026-09-18 14:33:31.933 | node=1 | category=ELECTION | latency=4.67 | election started challenging higher nodes
+2026-09-18 14:33:31.975 | node=2 | category=SEND | latency=7.24 | message dispatched to peer
+2026-09-18 14:33:32.003 | node=1 | category=SEND | latency=0.99 | message dispatched to peer
+2026-09-18 14:33:32.050 | node=2 | category=ELECTION | latency=9.88 | election started challenging higher nodes
+2026-09-18 14:33:32.144 | node=1 | category=RECV | latency=5.38 | message received from peer
+2026-09-18 14:33:32.154 | node=3 | category=SEND | latency=29.17 | message dispatched to peer
+2026-09-18 14:33:32.186 | node=2 | category=SEND | latency=9.41 | message dispatched to peer
+2026-09-18 14:33:32.251 | node=1 | category=ACK | latency=2.60 | backup acknowledged the update
+2026-09-18 14:33:32.309 | node=3 | category=RECV | latency=24.35 | message received from peer
+2026-09-18 14:33:32.344 | node=3 | category=RECV | latency=26.37 | message received from peer
+2026-09-18 14:33:32.433 | node=1 | category=STALE | latency=2.20 | stale update rejected by version check
+2026-09-18 14:33:32.447 | node=3 | category=SEND | latency=10.94 | message dispatched to peer
+2026-09-18 14:33:32.510 | node=1 | category=SEND | latency=2.07 | message dispatched to peer
+2026-09-18 14:33:32.566 | node=3 | category=APPLY | latency=19.97 | replicated item stored locally
+2026-09-18 14:33:32.611 | node=1 | category=SEND | latency=4.96 | message dispatched to peer
+2026-09-18 14:33:32.653 | node=2 | category=RECV | latency=16.74 | message received from peer
+2026-09-18 14:33:32.731 | node=1 | category=SEND | latency=3.16 | message dispatched to peer
+2026-09-18 14:33:32.778 | node=1 | category=SEND | latency=3.72 | message dispatched to peer
+2026-09-18 14:33:32.821 | node=2 | category=SEND | latency=10.07 | message dispatched to peer
+2026-09-18 14:33:32.893 | node=3 | category=SEND | latency=22.58 | message dispatched to peer
+2026-09-18 14:33:32.976 | node=1 | category=SEND | latency=3.33 | message dispatched to peer
+2026-09-18 14:33:33.022 | node=2 | category=SEND | latency=14.61 | message dispatched to peer
+2026-09-18 14:33:33.049 | node=2 | category=APPLY | latency=7.47 | replicated item stored locally
+2026-09-18 14:33:33.133 | node=1 | category=RECV | latency=4.75 | message received from peer
+2026-09-18 14:33:33.220 | node=2 | category=SEND | latency=8.84 | message dispatched to peer
+2026-09-18 14:33:33.293 | node=2 | category=APPLY | latency=9.62 | replicated item stored locally
+2026-09-18 14:33:33.368 | node=3 | category=ELECTION | latency=17.49 | election started challenging higher nodes
+2026-09-18 14:33:33.378 | node=3 | category=COORD | latency=29.21 | coordinator announcement accepted
+2026-09-18 14:33:33.468 | node=1 | category=SEND | latency=2.75 | message dispatched to peer
+2026-09-18 14:33:33.493 | node=2 | category=DISPATCH | latency=6.68 | request dispatched to worker
+2026-09-18 14:33:33.507 | node=2 | category=COORD | latency=11.28 | coordinator announcement accepted
+2026-09-18 14:33:33.602 | node=1 | category=RECV | latency=3.51 | message received from peer
+2026-09-18 14:33:33.674 | node=3 | category=SEND | latency=21.71 | message dispatched to peer
+2026-09-18 14:33:33.749 | node=1 | category=APPLY | latency=3.99 | replicated item stored locally
+2026-09-18 14:33:33.790 | node=1 | category=APPLY | latency=4.52 | replicated item stored locally
+2026-09-18 14:33:33.827 | node=2 | category=STALE | latency=6.09 | stale update rejected by version check
+2026-09-18 14:33:33.896 | node=3 | category=RECV | latency=21.26 | message received from peer
+2026-09-18 14:33:33.909 | node=2 | category=COORD | latency=10.48 | coordinator announcement accepted
+2026-09-18 14:33:33.949 | node=2 | category=APPLY | latency=9.78 | replicated item stored locally
+2026-09-18 14:33:34.036 | node=2 | category=SEND | latency=11.18 | message dispatched to peer
+2026-09-18 14:33:34.130 | node=1 | category=SEND | latency=4.39 | message dispatched to peer
+2026-09-18 14:33:34.200 | node=1 | category=ELECTION | latency=2.56 | election started challenging higher nodes
+2026-09-18 14:33:34.223 | node=3 | category=ELECTION | latency=22.71 | election started challenging higher nodes
+2026-09-18 14:33:34.270 | node=3 | category=DISPATCH | latency=28.63 | request dispatched to worker
+2026-09-18 14:33:34.342 | node=3 | category=RECV | latency=21.84 | message received from peer
+2026-09-18 14:33:34.384 | node=1 | category=WRITE | latency=4.47 | client write accepted by primary
+2026-09-18 14:33:34.403 | node=1 | category=ELECTION | latency=3.78 | election started challenging higher nodes
+2026-09-18 14:33:34.457 | node=1 | category=ACK | latency=1.25 | backup acknowledged the update
+2026-09-18 14:33:34.511 | node=1 | category=WRITE | latency=3.85 | client write accepted by primary
+2026-09-18 14:33:34.581 | node=1 | category=SEND | latency=5.90 | message dispatched to peer
+2026-09-18 14:33:34.640 | node=1 | category=SEND | latency=3.38 | message dispatched to peer
+2026-09-18 14:33:34.692 | node=1 | category=SEND | latency=3.43 | message dispatched to peer
+2026-09-18 14:33:34.743 | node=3 | category=SEND | latency=26.35 | message dispatched to peer
+2026-09-18 14:33:34.776 | node=2 | category=WRITE | latency=8.29 | client write accepted by primary
+2026-09-18 14:33:34.834 | node=1 | category=WRITE | latency=5.23 | client write accepted by primary
+2026-09-18 14:33:34.851 | node=1 | category=RECV | latency=3.93 | message received from peer
+2026-09-18 14:33:34.872 | node=1 | category=COORD | latency=4.41 | coordinator announcement accepted
+2026-09-18 14:33:34.961 | node=3 | category=SEND | latency=20.18 | message dispatched to peer
+2026-09-18 14:33:34.993 | node=3 | category=ACK | latency=29.25 | backup acknowledged the update
+2026-09-18 14:33:35.055 | node=3 | category=ACK | latency=10.57 | backup acknowledged the update
+2026-09-18 14:33:35.133 | node=2 | category=APPLY | latency=4.19 | replicated item stored locally
+2026-09-18 14:33:35.147 | node=3 | category=RECV | latency=18.16 | message received from peer
+2026-09-18 14:33:35.191 | node=2 | category=WRITE | latency=7.93 | client write accepted by primary
+2026-09-18 14:33:35.269 | node=1 | category=RECV | latency=3.38 | message received from peer
+2026-09-18 14:33:35.360 | node=1 | category=COORD | latency=4.92 | coordinator announcement accepted
+2026-09-18 14:33:35.406 | node=2 | category=COORD | latency=12.11 | coordinator announcement accepted
+2026-09-18 14:33:35.423 | node=1 | category=WRITE | latency=5.30 | client write accepted by primary
+2026-09-18 14:33:35.494 | node=2 | category=RECV | latency=6.51 | message received from peer
+2026-09-18 14:33:35.556 | node=1 | category=SEND | latency=5.93 | message dispatched to peer
+2026-09-18 14:33:35.575 | node=1 | category=ELECTION | latency=3.47 | election started challenging higher nodes
+2026-09-18 14:33:35.655 | node=1 | category=SEND | latency=5.15 | message dispatched to peer
+2026-09-18 14:33:35.715 | node=1 | category=APPLY | latency=4.26 | replicated item stored locally
+2026-09-18 14:33:35.730 | node=2 | category=ELECTION | latency=11.28 | election started challenging higher nodes
+2026-09-18 14:33:35.784 | node=1 | category=ELECTION | latency=2.19 | election started challenging higher nodes
+2026-09-18 14:33:35.819 | node=1 | category=WRITE | latency=2.09 | client write accepted by primary
+2026-09-18 14:33:35.876 | node=1 | category=RECV | latency=6.46 | message received from peer
+2026-09-18 14:33:35.886 | node=1 | category=RECV | latency=3.27 | message received from peer
+2026-09-18 14:33:35.954 | node=3 | category=RECV | latency=35.33 | message received from peer
+2026-09-18 14:33:36.029 | node=3 | category=STALE | latency=28.09 | stale update rejected by version check
+2026-09-18 14:33:36.068 | node=3 | category=SEND | latency=31.69 | message dispatched to peer
+2026-09-18 14:33:36.089 | node=3 | category=APPLY | latency=36.12 | replicated item stored locally
+2026-09-18 14:33:36.179 | node=3 | category=WRITE | latency=31.33 | client write accepted by primary
+2026-09-18 14:33:36.187 | node=3 | category=SEND | latency=27.11 | message dispatched to peer
+2026-09-18 14:33:36.199 | node=2 | category=RECV | latency=10.57 | message received from peer
+2026-09-18 14:33:36.288 | node=2 | category=APPLY | latency=10.63 | replicated item stored locally
+2026-09-18 14:33:36.308 | node=1 | category=ELECTION | latency=2.87 | election started challenging higher nodes
+2026-09-18 14:33:36.344 | node=3 | category=SEND | latency=17.58 | message dispatched to peer
+2026-09-18 14:33:36.420 | node=1 | category=RECV | latency=5.84 | message received from peer
+2026-09-18 14:33:36.459 | node=2 | category=SEND | latency=7.91 | message dispatched to peer
+2026-09-18 14:33:36.498 | node=1 | category=RECV | latency=3.74 | message received from peer
+2026-09-18 14:33:36.530 | node=2 | category=APPLY | latency=8.19 | replicated item stored locally
+2026-09-18 14:33:36.591 | node=1 | category=SEND | latency=2.87 | message dispatched to peer
+2026-09-18 14:33:36.662 | node=1 | category=RECV | latency=4.58 | message received from peer
+2026-09-18 14:33:36.723 | node=1 | category=RECV | latency=5.10 | message received from peer
+2026-09-18 14:33:36.795 | node=1 | category=RECV | latency=4.05 | message received from peer
+2026-09-18 14:33:36.828 | node=1 | category=ACK | latency=4.11 | backup acknowledged the update
+2026-09-18 14:33:36.873 | node=1 | category=COORD | latency=4.93 | coordinator announcement accepted
+2026-09-18 14:33:36.959 | node=1 | category=SEND | latency=2.31 | message dispatched to peer
+2026-09-18 14:33:37.043 | node=1 | category=RECV | latency=4.97 | message received from peer
+2026-09-18 14:33:37.078 | node=1 | category=COORD | latency=2.21 | coordinator announcement accepted
+2026-09-18 14:33:37.109 | node=1 | category=WRITE | latency=5.05 | client write accepted by primary
+2026-09-18 14:33:37.157 | node=2 | category=DETECT | latency=11.41 | coordinator unreachable, no heartbeat
+2026-09-18 14:33:37.188 | node=2 | category=ELECTION | latency=7.89 | election started challenging higher nodes
+2026-09-18 14:33:37.255 | node=1 | category=COORD | latency=3.08 | coordinator announcement accepted
+2026-09-18 14:33:37.305 | node=2 | category=SEND | latency=10.99 | message dispatched to peer
+2026-09-18 14:33:37.323 | node=1 | category=RECV | latency=4.65 | message received from peer
+2026-09-18 14:33:37.357 | node=1 | category=APPLY | latency=3.81 | replicated item stored locally
+2026-09-18 14:33:37.404 | node=3 | category=RECV | latency=28.48 | message received from peer
+2026-09-18 14:33:37.459 | node=2 | category=RECV | latency=10.02 | message received from peer
+2026-09-18 14:33:37.508 | node=1 | category=WRITE | latency=5.33 | client write accepted by primary
+2026-09-18 14:33:37.596 | node=3 | category=SEND | latency=22.35 | message dispatched to peer
+2026-09-18 14:33:37.608 | node=2 | category=ACK | latency=10.81 | backup acknowledged the update
+2026-09-18 14:33:37.624 | node=3 | category=RECV | latency=22.73 | message received from peer
+2026-09-18 14:33:37.666 | node=1 | category=DISPATCH | latency=6.11 | request dispatched to worker
+2026-09-18 14:33:37.714 | node=3 | category=RECV | latency=24.10 | message received from peer
+2026-09-18 14:33:37.798 | node=3 | category=COORD | latency=22.44 | coordinator announcement accepted
+2026-09-18 14:33:37.835 | node=1 | category=APPLY | latency=3.90 | replicated item stored locally
+2026-09-18 14:33:37.902 | node=3 | category=RECV | latency=20.95 | message received from peer
+2026-09-18 14:33:37.973 | node=1 | category=RECV | latency=5.40 | message received from peer
+2026-09-18 14:33:37.982 | node=3 | category=APPLY | latency=26.27 | replicated item stored locally
+2026-09-18 14:33:38.067 | node=1 | category=WRITE | latency=1.96 | client write accepted by primary
+2026-09-18 14:33:38.133 | node=1 | category=ACK | latency=4.77 | backup acknowledged the update
+2026-09-18 14:33:38.161 | node=1 | category=SEND | latency=4.42 | message dispatched to peer
+2026-09-18 14:33:38.173 | node=2 | category=ELECTION | latency=10.67 | election started challenging higher nodes
+2026-09-18 14:33:38.194 | node=3 | category=RECV | latency=27.19 | message received from peer
+2026-09-18 14:33:38.212 | node=1 | category=RECV | latency=7.52 | message received from peer
+2026-09-18 14:33:38.242 | node=1 | category=RECV | latency=3.74 | message received from peer
+2026-09-18 14:33:38.329 | node=3 | category=SEND | latency=9.40 | message dispatched to peer
+2026-09-18 14:33:38.352 | node=3 | category=RECV | latency=18.13 | message received from peer
+2026-09-18 14:33:38.395 | node=2 | category=RECV | latency=8.85 | message received from peer
+2026-09-18 14:33:38.434 | node=1 | category=SEND | latency=3.12 | message dispatched to peer
+2026-09-18 14:33:38.478 | node=3 | category=ELECTION | latency=17.79 | election started challenging higher nodes
+2026-09-18 14:33:38.517 | node=2 | category=SEND | latency=11.65 | message dispatched to peer
+2026-09-18 14:33:38.537 | node=2 | category=DETECT | latency=11.70 | coordinator unreachable, no heartbeat
+2026-09-18 14:33:38.574 | node=3 | category=WRITE | latency=25.72 | client write accepted by primary
+2026-09-18 14:33:38.587 | node=3 | category=SEND | latency=29.92 | message dispatched to peer
+2026-09-18 14:33:38.669 | node=1 | category=SEND | latency=4.56 | message dispatched to peer
+2026-09-18 14:33:38.742 | node=3 | category=RECV | latency=20.25 | message received from peer
+2026-09-18 14:33:38.750 | node=1 | category=COORD | latency=6.28 | coordinator announcement accepted
+2026-09-18 14:33:38.837 | node=1 | category=SEND | latency=3.79 | message dispatched to peer
+2026-09-18 14:33:38.877 | node=1 | category=APPLY | latency=4.33 | replicated item stored locally
+2026-09-18 14:33:38.911 | node=3 | category=ACK | latency=15.38 | backup acknowledged the update
+2026-09-18 14:33:38.998 | node=1 | category=SEND | latency=4.69 | message dispatched to peer
+2026-09-18 14:33:39.069 | node=2 | category=SEND | latency=11.39 | message dispatched to peer
+2026-09-18 14:33:39.147 | node=1 | category=ELECTION | latency=4.79 | election started challenging higher nodes
+2026-09-18 14:33:39.238 | node=1 | category=APPLY | latency=3.09 | replicated item stored locally
+2026-09-18 14:33:39.285 | node=2 | category=SEND | latency=10.30 | message dispatched to peer
+2026-09-18 14:33:39.365 | node=3 | category=RECV | latency=32.75 | message received from peer
+2026-09-18 14:33:39.419 | node=2 | category=RECV | latency=9.58 | message received from peer
+2026-09-18 14:33:39.478 | node=1 | category=SEND | latency=5.13 | message dispatched to peer
+2026-09-18 14:33:39.497 | node=2 | category=WRITE | latency=7.19 | client write accepted by primary
+2026-09-18 14:33:39.563 | node=3 | category=SEND | latency=24.64 | message dispatched to peer
+2026-09-18 14:33:39.621 | node=1 | category=COORD | latency=4.23 | coordinator announcement accepted
+2026-09-18 14:33:39.676 | node=2 | category=SEND | latency=7.98 | message dispatched to peer
+2026-09-18 14:33:39.705 | node=3 | category=SEND | latency=24.36 | message dispatched to peer
+2026-09-18 14:33:39.775 | node=3 | category=ACK | latency=22.98 | backup acknowledged the update
+2026-09-18 14:33:39.788 | node=3 | category=RECV | latency=15.47 | message received from peer
+2026-09-18 14:33:39.802 | node=2 | category=COORD | latency=13.02 | coordinator announcement accepted
+2026-09-18 14:33:39.830 | node=2 | category=ACK | latency=11.42 | backup acknowledged the update
+2026-09-18 14:33:39.917 | node=2 | category=ACK | latency=9.90 | backup acknowledged the update
+2026-09-18 14:33:39.952 | node=1 | category=DISPATCH | latency=3.26 | request dispatched to worker
+2026-09-18 14:33:39.980 | node=1 | category=SEND | latency=4.04 | message dispatched to peer
+2026-09-18 14:33:40.012 | node=1 | category=ELECTION | latency=6.12 | election started challenging higher nodes
+2026-09-18 14:33:40.106 | node=1 | category=ACK | latency=5.32 | backup acknowledged the update
+2026-09-18 14:33:40.184 | node=3 | category=ACK | latency=27.32 | backup acknowledged the update
+2026-09-18 14:33:40.275 | node=2 | category=COORD | latency=5.11 | coordinator announcement accepted
+2026-09-18 14:33:40.340 | node=2 | category=SEND | latency=10.96 | message dispatched to peer
+2026-09-18 14:33:40.348 | node=2 | category=RECV | latency=9.47 | message received from peer
+2026-09-18 14:33:40.414 | node=3 | category=ACK | latency=32.72 | backup acknowledged the update
+2026-09-18 14:33:40.473 | node=1 | category=SEND | latency=3.48 | message dispatched to peer
+2026-09-18 14:33:40.537 | node=2 | category=COORD | latency=9.55 | coordinator announcement accepted
+2026-09-18 14:33:40.550 | node=2 | category=SEND | latency=8.47 | message dispatched to peer
+2026-09-18 14:33:40.623 | node=1 | category=APPLY | latency=1.72 | replicated item stored locally
+2026-09-18 14:33:40.679 | node=2 | category=ACK | latency=10.09 | backup acknowledged the update
+2026-09-18 14:33:40.765 | node=2 | category=ACK | latency=9.18 | backup acknowledged the update
+2026-09-18 14:33:40.797 | node=1 | category=WRITE | latency=3.43 | client write accepted by primary
+2026-09-18 14:33:40.826 | node=2 | category=APPLY | latency=14.27 | replicated item stored locally
+2026-09-18 14:33:40.862 | node=1 | category=RECV | latency=4.03 | message received from peer
+2026-09-18 14:33:40.948 | node=1 | category=ACK | latency=3.22 | backup acknowledged the update
+2026-09-18 14:33:40.974 | node=1 | category=DISPATCH | latency=2.25 | request dispatched to worker
+2026-09-18 14:33:41.060 | node=2 | category=RECV | latency=9.50 | message received from peer
+2026-09-18 14:33:41.072 | node=1 | category=RECV | latency=3.30 | message received from peer
+2026-09-18 14:33:41.121 | node=3 | category=SEND | latency=16.77 | message dispatched to peer
+2026-09-18 14:33:41.162 | node=1 | category=ELECTION | latency=3.18 | election started challenging higher nodes
+2026-09-18 14:33:41.227 | node=2 | category=COORD | latency=6.88 | coordinator announcement accepted
+2026-09-18 14:33:41.248 | node=1 | category=ELECTION | latency=5.34 | election started challenging higher nodes
+2026-09-18 14:33:41.303 | node=1 | category=DETECT | latency=2.31 | coordinator unreachable, no heartbeat
+2026-09-18 14:33:41.384 | node=1 | category=RECV | latency=4.83 | message received from peer
+2026-09-18 14:33:41.470 | node=3 | category=SEND | latency=23.45 | message dispatched to peer
+2026-09-18 14:33:41.544 | node=1 | category=COORD | latency=5.74 | coordinator announcement accepted
+2026-09-18 14:33:41.636 | node=3 | category=APPLY | latency=20.08 | replicated item stored locally
+2026-09-18 14:33:41.648 | node=1 | category=RECV | latency=3.03 | message received from peer
+2026-09-18 14:33:41.702 | node=3 | category=SEND | latency=15.88 | message dispatched to peer
+2026-09-18 14:33:41.739 | node=2 | category=SEND | latency=12.62 | message dispatched to peer
+2026-09-18 14:33:41.785 | node=1 | category=RECV | latency=4.57 | message received from peer
+2026-09-18 14:33:41.821 | node=2 | category=RECV | latency=10.89 | message received from peer
+2026-09-18 14:33:41.889 | node=1 | category=SEND | latency=4.94 | message dispatched to peer
+2026-09-18 14:33:41.928 | node=2 | category=RECV | latency=10.53 | message received from peer
+2026-09-18 14:33:42.021 | node=3 | category=RECV | latency=22.51 | message received from peer
+2026-09-18 14:33:42.062 | node=3 | category=SEND | latency=27.31 | message dispatched to peer
+2026-09-18 14:33:42.146 | node=2 | category=RECV | latency=3.34 | message received from peer
+2026-09-18 14:33:42.220 | node=2 | category=SEND | latency=9.73 | message dispatched to peer
+2026-09-18 14:33:42.296 | node=1 | category=SEND | latency=3.77 | message dispatched to peer
+2026-09-18 14:33:42.324 | node=1 | category=ACK | latency=5.67 | backup acknowledged the update
+2026-09-18 14:33:42.357 | node=1 | category=SEND | latency=4.13 | message dispatched to peer
+2026-09-18 14:33:42.442 | node=2 | category=COORD | latency=5.47 | coordinator announcement accepted
+2026-09-18 14:33:42.515 | node=1 | category=RECV | latency=4.92 | message received from peer
+2026-09-18 14:33:42.529 | node=3 | category=APPLY | latency=12.47 | replicated item stored locally
+2026-09-18 14:33:42.585 | node=3 | category=APPLY | latency=22.19 | replicated item stored locally
+2026-09-18 14:33:42.652 | node=1 | category=COORD | latency=6.01 | coordinator announcement accepted
+2026-09-18 14:33:42.693 | node=1 | category=SEND | latency=7.97 | message dispatched to peer
+2026-09-18 14:33:42.743 | node=3 | category=DISPATCH | latency=26.07 | request dispatched to worker
+2026-09-18 14:33:42.757 | node=1 | category=ELECTION | latency=3.64 | election started challenging higher nodes
+2026-09-18 14:33:42.820 | node=2 | category=WRITE | latency=11.45 | client write accepted by primary
+2026-09-18 14:33:42.855 | node=1 | category=ELECTION | latency=3.81 | election started challenging higher nodes
+2026-09-18 14:33:42.884 | node=1 | category=SEND | latency=3.88 | message dispatched to peer
+2026-09-18 14:33:42.933 | node=1 | category=RECV | latency=0.83 | message received from peer
+2026-09-18 14:33:43.017 | node=1 | category=WRITE | latency=2.62 | client write accepted by primary
+2026-09-18 14:33:43.110 | node=3 | category=ELECTION | latency=13.21 | election started challenging higher nodes
+2026-09-18 14:33:43.178 | node=3 | category=APPLY | latency=25.65 | replicated item stored locally
+2026-09-18 14:33:43.215 | node=2 | category=RECV | latency=6.51 | message received from peer
+2026-09-18 14:33:43.250 | node=1 | category=COORD | latency=3.26 | coordinator announcement accepted
+2026-09-18 14:33:43.262 | node=1 | category=SEND | latency=3.68 | message dispatched to peer
+2026-09-18 14:33:43.290 | node=1 | category=SEND | latency=4.38 | message dispatched to peer
+2026-09-18 14:33:43.380 | node=2 | category=APPLY | latency=9.16 | replicated item stored locally
+2026-09-18 14:33:43.393 | node=1 | category=COORD | latency=2.41 | coordinator announcement accepted
+2026-09-18 14:33:43.469 | node=3 | category=SEND | latency=30.67 | message dispatched to peer
+2026-09-18 14:33:43.526 | node=1 | category=SEND | latency=4.27 | message dispatched to peer
+2026-09-18 14:33:43.615 | node=1 | category=APPLY | latency=4.23 | replicated item stored locally
+2026-09-18 14:33:43.703 | node=1 | category=SEND | latency=5.81 | message dispatched to peer
+2026-09-18 14:33:43.737 | node=1 | category=RECV | latency=5.28 | message received from peer
+2026-09-18 14:33:43.778 | node=1 | category=SEND | latency=3.57 | message dispatched to peer
+2026-09-18 14:33:43.833 | node=3 | category=APPLY | latency=31.76 | replicated item stored locally
+2026-09-18 14:33:43.918 | node=2 | category=ACK | latency=8.45 | backup acknowledged the update
+2026-09-18 14:33:43.978 | node=1 | category=ELECTION | latency=3.78 | election started challenging higher nodes
+2026-09-18 14:33:43.998 | node=1 | category=APPLY | latency=3.10 | replicated item stored locally
+2026-09-18 14:33:44.017 | node=2 | category=RECV | latency=8.51 | message received from peer
+2026-09-18 14:33:44.080 | node=1 | category=SEND | latency=4.28 | message dispatched to peer
+2026-09-18 14:33:44.088 | node=1 | category=SEND | latency=0.40 | message dispatched to peer
