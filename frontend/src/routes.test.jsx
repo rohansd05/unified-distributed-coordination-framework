@@ -10,6 +10,8 @@ import loadBalancingOverviewBefore from '@/test/fixtures/loadbalancing/overview-
 import { replicationApi } from '@/modules/replication/replicationApi'
 import { clockSyncApi } from '@/modules/clocksync/clockSyncApi'
 import { electionApi } from '@/modules/election/electionApi'
+import { mapReduceApi } from '@/modules/mapreduce/mapReduceApi'
+import mapReduceOverviewIdle from '@/test/fixtures/mapreduce/overview-idle.json'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -25,6 +27,9 @@ beforeEach(() => {
   vi.spyOn(clockSyncApi, 'getVerification').mockResolvedValue(null)
   vi.spyOn(electionApi, 'getOverview').mockResolvedValue(null)
   vi.spyOn(electionApi, 'getEvents').mockResolvedValue([])
+  vi.spyOn(mapReduceApi, 'getOverview').mockResolvedValue(mapReduceOverviewIdle)
+  vi.spyOn(mapReduceApi, 'getRuns').mockResolvedValue([])
+  vi.spyOn(mapReduceApi, 'getLatestRun').mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -52,6 +57,12 @@ describe('routes', () => {
   it.each(EXPERIMENTS.map((e) => [e.slug, e.title]))('/experiments/%s renders "%s"', (slug, title) => {
     renderRoute(`/experiments/${slug}`)
     expect(heading()).toBe(title)
+  })
+
+  it('/experiments/7-mapreduce renders the MapReduce page with its concept', async () => {
+    renderRoute('/experiments/7-mapreduce')
+    expect(heading()).toBe('MapReduce')
+    expect(await screen.findByText('Split one big job across the workers, then combine their partial answers into one exact result.')).toBeTruthy()
   })
 
   it.each(['/experiments/99-nope', '/does-not-exist'])('%s renders NotFound', (path) => {
