@@ -98,6 +98,8 @@
     - `SERVICE_START_FAILED`: published on socket bind failure
   - **Role Selector:** `MapReduceRoleSelector.selectCoordinator(cluster)` returns lowest live node ID; `MapReduceRoleSelector.selectWorkers(cluster)` returns all live nodes (`// TODO(L1)`).
 
+  Linux (Docker, 2 CPUs): the five new test classes (40 tests) passed 5 runs in a row; full backend suite <total> tests, 0 failures, 1 skipped.
+
 ---
 
 ## Known issues
