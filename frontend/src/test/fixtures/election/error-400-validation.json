@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: nodeId","instance":"/api/modules/election/elections","errors":{"nodeId":"must be greater than or equal to 1"}}

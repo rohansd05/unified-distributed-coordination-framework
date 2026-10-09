@@ -52,7 +52,7 @@ class ElectionNodeServiceTest {
 
     private static final ClusterProperties CLUSTER = new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
             new ClusterProperties.Ports(26100, 26110, 26120, 26130, 26140, 26150));
-    private static final ElectionProperties PROPERTIES = new ElectionProperties(400, 1500, 150, 3000, 100, 1500);
+    private static final ElectionProperties PROPERTIES = new ElectionProperties(400, 1500, 150, 3000, 100, 1500, 10000);
     private static final IntUnaryOperator ELECTION_PORTS = id -> 26120 + id;
     private static final int SQUATTER = 26190;
     private static final int UNBOUND = 26199;
@@ -346,6 +346,48 @@ class ElectionNodeServiceTest {
         within().until(() -> seen.containsAll(List.of("TOKEN_FORWARDED", "ELECTION_RESTART", "ELECTED", "SUSPECTED 3")));
         assertThat(threads).isNotEmpty().containsOnly("udcf-election-n1-worker");
         assertThat(peer2.received(ElectionMessageType.RING_ELECTION)).extracting(ElectionMessage::payload).contains("2,1");
+    }
+
+    @Test
+    @DisplayName("halt joins every udcf-election-n1 thread, frees the port, publishes nothing and reports whether it ran")
+    void haltJoinsThreadsAndReportsWasRunning() throws SocketException {
+        ElectionNodeService service = service();
+        assertThat(service.halt()).isFalse();
+        service.start();
+        service.startBully();   // leaves an OK timeout pending on the worker; halting drops it with the worker
+        assertThat(service.halt()).isTrue();
+        assertThat(service.isRunning()).isFalse();
+        assertThat(liveElectionThreads(1)).isEmpty();
+        try (DatagramSocket rebound = bind(26121)) {
+            assertThat(rebound.isBound()).isTrue();
+        }
+        assertThat(events()).extracting(ClusterEvent::type).doesNotContain("CRASH", "ELECTED");
+    }
+
+    @Test
+    @DisplayName("resetState gives a fresh coordinator-less service with a fresh detector view, reopened only if asked")
+    void resetStateClearsCoordinatorAndReopens() throws SocketException {
+        RawPeer peer2 = rawPeer(2);
+        ElectionNodeService service = service();
+        service.start();
+        peer2.send(26121, "COORDINATOR|2|5|2");
+        within().until(() -> Integer.valueOf(2).equals(service.coordinatorId())
+                && service.failureDetector().peers().get(0).millisSinceLastHeartbeat() == null
+                && service.failureDetector().isSuspected(3));   // node 3 never answers: suspected after 1500 ms
+        service.halt();
+        service.resetState(false);
+        assertThat(service.isRunning()).isFalse();
+        assertThat(service.coordinatorId()).isNull();
+        assertThat(service.failureDetector().suspectedPeers()).isEmpty();
+
+        service.resetState(true);
+        assertThat(service.isRunning()).isTrue();
+        assertThat(service.coordinatorId()).isNull();
+        assertThat(service.failureDetector().suspectedPeers()).isEmpty();
+        assertThat(liveElectionThreads(1))
+                .containsExactlyInAnyOrder("udcf-election-n1-listener", "udcf-election-n1-worker");
+        peer2.send(26121, "ELECTION|2|9|");   // the fresh algorithms answer
+        within().until(() -> !peer2.received(ElectionMessageType.OK).isEmpty());
     }
 
     /** A bare UDP socket speaking the election wire format, standing in for a peer node. */

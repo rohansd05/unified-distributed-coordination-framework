@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
  */
 class ElectionPropertiesTest {
 
-    private static final ElectionProperties APPENDIX_B = new ElectionProperties(900, 2200, 300, 5000, 700, 2500);
+    private static final ElectionProperties APPENDIX_B = new ElectionProperties(900, 2200, 300, 5000, 700, 2500, 10000);
 
     /** Production registers ElectionProperties by scan; the runner needs it explicitly. */
     @Configuration(proxyBeanMethods = false)
@@ -53,7 +53,17 @@ class ElectionPropertiesTest {
                 .run(context -> assertThat(context).hasFailed().getFailure().hasStackTraceContaining("probeTimeoutMillis"));
         runner.withPropertyValues("udcf.election.heartbeat-timeout-millis=700")
                 .run(context -> assertThat(context).hasFailed().getFailure().hasStackTraceContaining("timeoutMillis"));
-        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 2200, 300, 0, 700, 2500));
-        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 2200, 300, 5000, 0, 2500));
+        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 2200, 300, 0, 700, 2500, 10000));
+        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 2200, 300, 5000, 0, 2500, 10000));
+    }
+
+    @Test
+    @DisplayName("the round timeout must exceed the ring completion timeout and OK + coordinator timeouts")
+    void rejectsRoundTimeoutNotAboveElectionTimeouts() {
+        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 2200, 300, 5000, 700, 2500, 5000));
+        assertThatIllegalArgumentException().isThrownBy(() -> new ElectionProperties(900, 4200, 300, 3000, 700, 2500, 5100));
+        assertThat(new ElectionProperties(900, 2200, 300, 5000, 700, 2500, 5001).roundTimeoutMillis()).isEqualTo(5001);
+        runner.withPropertyValues("udcf.election.round-timeout-millis=5000")
+                .run(context -> assertThat(context).hasFailed().getFailure().hasStackTraceContaining("roundTimeoutMillis"));
     }
 }

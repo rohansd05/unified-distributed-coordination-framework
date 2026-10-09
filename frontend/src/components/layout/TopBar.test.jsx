@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { TopBar } from './TopBar'
 import { StompContext } from '@/services/stomp/StompContext'
 import { ClusterContext } from '@/services/cluster/ClusterContext'
+import clusterWithLeader from '@/test/fixtures/election/cluster-with-leader.json'
+import clusterLeaderCrashed from '@/test/fixtures/election/cluster-leader-crashed.json'
 
 afterEach(cleanup)
 
@@ -100,6 +102,16 @@ describe('TopBar', () => {
     })
     const leaderDtElected = screen.getByText('Leader')
     expect(leaderDtElected.nextElementSibling.textContent).toBe('2')
+  })
+
+  it('shows the leader from the real GET /api/cluster captures, and "None elected" after it crashed', () => {
+    renderTopBar({ cluster: { loading: false, cluster: clusterWithLeader } })
+    expect(screen.getByText('Leader').nextElementSibling.textContent).toBe('5')
+
+    cleanup()
+
+    renderTopBar({ cluster: { loading: false, cluster: clusterLeaderCrashed } })
+    expect(screen.getByText('Leader').nextElementSibling.textContent).toBe('None elected')
   })
 
   it('renders "5/5" and "4/5" node counts, and "—" while loading', () => {

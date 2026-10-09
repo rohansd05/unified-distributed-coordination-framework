@@ -105,9 +105,12 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
     private final ClusterEventBus bus;
     private final long heartbeatIntervalMillis;
     private final String threadPrefix;
-    private final BullyAlgorithm bully;
-    private final RingAlgorithm ring;
+    private final ElectionConfig config;
+    private final Clock wallClock;
+    private final LongSupplier nanoClock;
     private final FailureDetector detector;
+    private volatile BullyAlgorithm bully;   // replaced only by resetState(), while no election thread runs
+    private volatile RingAlgorithm ring;
     private final List<ElectionEventListener> electionListeners = new CopyOnWriteArrayList<>();
 
     private volatile DatagramSocket socket;
@@ -130,16 +133,22 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
         this.peerPort = Objects.requireNonNull(peerPort, "peerPort must not be null");
         Objects.requireNonNull(properties, "properties must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
-        Objects.requireNonNull(wallClock, "wallClock must not be null");
-        Objects.requireNonNull(nanoClock, "nanoClock must not be null");
+        this.wallClock = Objects.requireNonNull(wallClock, "wallClock must not be null");
+        this.nanoClock = Objects.requireNonNull(nanoClock, "nanoClock must not be null");
         if (!nodeIds.contains(node.id())) {
             throw new IllegalArgumentException("nodeIds " + nodeIds + " must contain node " + node.id());
         }
         this.nodeIds = List.copyOf(new TreeSet<>(nodeIds));
         this.heartbeatIntervalMillis = properties.heartbeatIntervalMillis();
         this.threadPrefix = "udcf-election-n" + node.id() + "-";
+        this.config = properties.toElectionConfig();
+        this.detector = new FailureDetector(node, this.nodeIds, properties.toFailureDetectorConfig(),
+                MODULE, this::sendHeartbeat, bus, nanoClock);
+        buildAlgorithms();
+    }
 
-        ElectionConfig config = properties.toElectionConfig();
+    /** Fresh E4a algorithms (no coordinator, no election in progress) and a fresh prober. */
+    private void buildAlgorithms() {
         ElectionMessenger messenger = this::sendElectionMessage;
         ElectionTimer timer = this::schedule;
         LivenessProber prober = new DefaultLivenessProber(node.id(), messenger, timer, config.probeTimeoutMs());
@@ -147,8 +156,6 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
                 event -> onAlgorithmEvent(BULLY, event), timer, nanoClock, wallClock);
         this.ring = new RingAlgorithm(node.id(), this.nodeIds, config, messenger,
                 event -> onAlgorithmEvent(RING, event), timer, wallClock, prober);
-        this.detector = new FailureDetector(node, this.nodeIds, properties.toFailureDetectorConfig(),
-                MODULE, this::sendHeartbeat, bus, nanoClock);
     }
 
     /** Returns this node's election service, creating and starting it on first use. */
@@ -220,6 +227,43 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
     public boolean isRunning() {
         Thread listener = listenerThread;
         return running && listener != null && listener.isAlive();
+    }
+
+    /**
+     * First half of a clean-slate reset: closes the socket and joins every
+     * {@code udcf-election-n<k>-*} thread, which also drops every pending timer. No events,
+     * and the algorithms are left as they are. Halt every node's service before calling
+     * {@link #resetState} on any of them, so no message from an old election reaches a fresh one.
+     *
+     * @return whether the service was running
+     * @throws IllegalStateException if a thread did not exit within 5 s
+     */
+    public synchronized boolean halt() {
+        boolean wasRunning = running;
+        IllegalStateException failure = close();
+        if (failure != null) {
+            throw failure;
+        }
+        return wasRunning;
+    }
+
+    /**
+     * Second half of a clean-slate reset: fresh Bully and Ring algorithms and prober (no
+     * coordinator, no election in progress), no learned coordinator, and a fresh failure
+     * detector view (no suspicions, every peer's silence counted from now). Reopens the socket
+     * if {@code reopen} and the node is up. Publishes nothing; starts no election. Halts first
+     * if still running.
+     */
+    public synchronized void resetState(boolean reopen) {
+        if (running || listenerThread != null || worker != null) {
+            halt();
+        }
+        buildAlgorithms();
+        coordinatorId = null;
+        detector.reset();
+        if (reopen && node.isUp()) {
+            open();
+        }
     }
 
     // ------------------------------------------------------------------ election API
