@@ -1,0 +1,90 @@
+failure is inferred from silence because nothing announces a crash
+the leader is elected by the nodes themselves not assigned
+the lamport clock orders events without agreeing on wall clock time
+the primary accepts every write and pushes it to the backups
+a distributed system has no shared memory and no global clock
+nodes coordinate only by exchanging messages over the network
+causal order means an effect never appears before its cause
+map reduce splits the work and then combines the partial results
+nodes coordinate only by exchanging messages over the network
+failure is inferred from silence because nothing announces a crash
+consistency and latency pull against each other in every design
+a distributed system has no shared memory and no global clock
+the slow node becomes the bottleneck when work is split evenly
+map reduce splits the work and then combines the partial results
+replication keeps the same data on more than one node
+a distributed system has no shared memory and no global clock
+nodes coordinate only by exchanging messages over the network
+the lamport clock orders events without agreeing on wall clock time
+the lamport clock orders events without agreeing on wall clock time
+nodes coordinate only by exchanging messages over the network
+replication keeps the same data on more than one node
+nodes coordinate only by exchanging messages over the network
+map reduce splits the work and then combines the partial results
+the lamport clock orders events without agreeing on wall clock time
+a distributed system has no shared memory and no global clock
+causal order means an effect never appears before its cause
+consistency and latency pull against each other in every design
+nodes coordinate only by exchanging messages over the network
+replication keeps the same data on more than one node
+the primary accepts every write and pushes it to the backups
+the primary accepts every write and pushes it to the backups
+consistency and latency pull against each other in every design
+a distributed system has no shared memory and no global clock
+consistency and latency pull against each other in every design
+consistency and latency pull against each other in every design
+the lamport clock orders events without agreeing on wall clock time
+a distributed system has no shared memory and no global clock
+replication keeps the same data on more than one node
+a distributed system has no shared memory and no global clock
+map reduce splits the work and then combines the partial results
+causal order means an effect never appears before its cause
+the leader is elected by the nodes themselves not assigned
+a load balancer decides which worker should serve each request
+the lamport clock orders events without agreeing on wall clock time
+the leader is elected by the nodes themselves not assigned
+map reduce splits the work and then combines the partial results
+nodes coordinate only by exchanging messages over the network
+consistency and latency pull against each other in every design
+a load balancer decides which worker should serve each request
+map reduce splits the work and then combines the partial results
+causal order means an effect never appears before its cause
+the primary accepts every write and pushes it to the backups
+the leader is elected by the nodes themselves not assigned
+nodes coordinate only by exchanging messages over the network
+consistency and latency pull against each other in every design
+consistency and latency pull against each other in every design
+the primary accepts every write and pushes it to the backups
+replication keeps the same data on more than one node
+failure is inferred from silence because nothing announces a crash
+nodes coordinate only by exchanging messages over the network
+map reduce splits the work and then combines the partial results
+equal request counts are not the same thing as equal load
+nodes coordinate only by exchanging messages over the network
+consistency and latency pull against each other in every design
+a distributed system has no shared memory and no global clock
+consistency and latency pull against each other in every design
+replication keeps the same data on more than one node
+a thread pool processes many client requests at the same time
+the primary accepts every write and pushes it to the backups
+map reduce splits the work and then combines the partial results
+the lamport clock orders events without agreeing on wall clock time
+a bounded queue lets a node refuse work instead of collapsing
+failure is inferred from silence because nothing announces a crash
+a thread pool processes many client requests at the same time
+consistency and latency pull against each other in every design
+the slow node becomes the bottleneck when work is split evenly
+a thread pool processes many client requests at the same time
+failure is inferred from silence because nothing announces a crash
+a load balancer decides which worker should serve each request
+replication keeps the same data on more than one node
+a bounded queue lets a node refuse work instead of collapsing
+the leader is elected by the nodes themselves not assigned
+equal request counts are not the same thing as equal load
+a bounded queue lets a node refuse work instead of collapsing
+replication keeps the same data on more than one node
+nodes coordinate only by exchanging messages over the network
+consistency and latency pull against each other in every design
+a load balancer decides which worker should serve each request
+map reduce splits the work and then combines the partial results
+a thread pool processes many client requests at the same time
