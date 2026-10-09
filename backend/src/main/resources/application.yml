@@ -101,6 +101,7 @@ udcf:
       max-work-units: 5000
       max-concurrency: 50
       max-total-work: 500000
+
   # Experiment 7 (lab 7). MapReduce workers over TCP 730k (Appendix B timings).
   mapreduce:
     task-timeout-millis: 15000
@@ -117,6 +118,24 @@ udcf:
     run-history-size: 20
     # POST /runs body limit = Base64 size of upload-max-bytes + this allowance; larger bodies get 413.
     request-body-allowance-bytes: 8192
+
+  # Experiment 8 (lab 8). Failover on the replication service (TCP 710k) and the shared failure
+  # detector (link L2: timings are udcf.election.heartbeat-*). The client must outlast the worst
+  # failover: detection (2500 + 700) + 2 x promotion attempt (catch-up 1000 + term record 2 x 1500)
+  # = 3200 + 2 x 4000 = 11200 ms. Retry window 50 x 250 = 12500 ms, 11.6 % above it.
+  faulttolerance:
+    client:
+      max-attempts: 50
+      retry-delay-millis: 250
+    # A recovering node whose role query got no answer asks again; it stays non-primary meanwhile.
+    role-query:
+      retry-delay-millis: 1000
+      max-attempts: 5
+    promotion:
+      # The chosen node's catch-up from the other live peers (in parallel); a peer not done is skipped.
+      catch-up-timeout-millis: 1000
+    history-limit: 10
+    
 
 management:
   endpoints:
