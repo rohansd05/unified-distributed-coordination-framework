@@ -28,7 +28,7 @@
 
 ### Steps
 
-- [x] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
+- [X] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
 - [ ] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
 - [ ] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
 - [ ] E8d — page and end-to-end check. Needs: E8c, E2d.
@@ -129,9 +129,12 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 No sockets, threads, timers, Spring or ports. Nothing reads a clock: every instant is a `long …Nanos` parameter, stamped by the caller. **All stampers in the module must use one shared `LongSupplier` nano-clock instance**, so instants from different threads compare.
 
+Linux (Docker, --cpus=2): the new package (80 tests) passed 5 runs in a row; full backend suite <total></total> tests, 0 failures, 1 skipped.
+
 **Reused, not duplicated (Track C, `com.udcf.modules.replication`):** `DataStore` is the store and the write fence (no `UpdateStore`); `DataItem` is the stamped update; `ConsistencyModel` is the sync/async enum; `WriteResult` feeds the ledger and carries the simulated delay. `DataStore.INITIAL_EPOCH` is 1.
 
 **Epoch rules**
+
 - `FailoverRole { PRIMARY, BACKUP }` (module-local; liveness is separate). `EpochVerdict { REFUSE_STALE, ACCEPT, ADOPT_HIGHER }`.
 - `EpochRules` (static): `EpochVerdict judge(long knownEpoch, long incomingEpoch)` (lower refused, **equal accepted as the same term**, higher adopted; matches `DataStore.apply`, checked by a test); `long afterObserving(long known, long observed)` (never decreases); `boolean mustDemote(FailoverRole role, long primaryEpoch, long observedEpoch)`; `Optional<Integer> currentPrimary(List<RoleReport>)`; `RejoinDecision resolveRejoin(int selfId, FailoverRole ownRole, long ownEpoch, List<RoleReport> replies)` (`ownRole` = the role held before the crash).
 - `RoleReport(int nodeId, FailoverRole role, long epoch, Integer believedPrimaryId)`: the answer to a role query. `RejoinDecision(Action action, long epoch, Integer primaryId)` with `Action { STAY, DEMOTE_AND_RESYNC, ADOPT_AND_RESYNC, NO_ANSWER }`, `resync()`, `viewConfirmed()`.
@@ -139,25 +142,30 @@ No sockets, threads, timers, Spring or ports. Nothing reads a clock: every insta
 - `Promotion(int nodeId, long epoch, Integer previousPrimaryId, long observedAtNanos)`; `epoch > INITIAL_EPOCH` is enforced.
 
 **Failover state machine and measurements**
+
 - `FailoverPhase { STEADY, SUSPECTED, PROMOTING, RESTORED }` (a crash leaves the phase at STEADY: the cluster has not noticed yet). `InstantSource { ACTION, OBSERVED }`.
 - `FailoverStateMachine(int historyLimit)` (synchronized). Every event returns `EventResult { APPLIED, IGNORED, REJECTED_OUT_OF_ORDER }`: `onPrimaryCrashed(int nodeId, InstantSource source, long atNanos)`, `onSuspected(int observerId, int suspectedId, long atNanos)`, `onPrimaryAlive(int nodeId, long atNanos)`, `onPromotionChosen(Promotion)`, `onPromotionFailed(int nodeId, long atNanos)`, `onPromoted(int nodeId, long epoch, long atNanos)`, `onWriteAccepted(int nodeId, long epoch, long atNanos)`, `onOldPrimaryRecovered(int nodeId, long atNanos)`, `onDemoted(int nodeId, long epoch, long atNanos)`, `onResynchronised(int nodeId, long atNanos)`. Queries: `phase()`, `primaryId()`, `primaryEpoch()`, `latestRun()`, `runs()`, `rejectedEventCount()`, `reset()`.
 - `FailoverRun(...)`: run id, old primary and epoch, crash instant and its `InstantSource`, detection instant and observer, elected, new primary and epoch, promoted, restored, recovered, demoted, resynced (each `Long`, null if it never happened), `Outcome { IN_PROGRESS, RESTORED, PRIMARY_RETURNED, INTERRUPTED }`, `measurements()`.
 - `FailoverMeasurements(Double detectionMillis, Double failoverMillis, Double serviceRestoredMillis, Double outageMillis, Double recoveryMillis)`: crash to detection; detection to promoted; promoted to first accepted write; crash to first accepted write (directly, not a sum); old primary recovered to demoted and resynchronised (the later). Incomplete intervals are null, never 0. Detection with the shared detector (700 ms / 2500 ms) is **estimated** at 1.8 to 3.2 s after the crash until E8c measures it.
 
 **Data loss**
+
 - `SystemUpdate(int sequence, String key, String value)`, `numbered(seq)` gives `setting-0001` / `v1` (`Locale.ROOT`).
 - `AcknowledgedLedger` (synchronized): `AcknowledgedUpdate record(int sequence, WriteResult result, long acknowledgedAtNanos)`, `snapshot()`, `size()`, `contains(key)`, `clear()`. `AcknowledgedUpdate(int sequence, DataItem item, ConsistencyModel model, long simulatedDelayMillis, long acknowledgedAtNanos)`.
 - `DataLoss.measure(List<AcknowledgedUpdate>, Map<String, DataItem> newPrimaryStore)` returns `DataLossReport(int acknowledged, Integer lost, List<String> lostKeys, Integer lostSynchronous, Integer lostAsynchronous, boolean simulated, long simulatedDelayMillis, NotAssessed notAssessed)`. A key is lost if it is missing or held at an older version. Nothing acknowledged or no primary store: counts null with `NOTHING_ACKNOWLEDGED` / `NO_PRIMARY_STORE`. `simulated` and `simulatedDelayMillis` come from the reported `WriteResult.simulatedDelayMillis` (450 today), never a typed value.
 
 **Client retry**
+
 - `UpdateRetryPolicy(int maxAttempts, long retryDelayMillis)`, `UpdateAttempt begin(Integer knownPrimaryId)`. `UpdateAttempt` (one update, one thread): `first()`, `after(AttemptOutcome)`, `afterDiscovery(Optional<Integer>)`, `attempts()`, `last()`. `AttemptOutcome(Kind { ACCEPTED, NOT_PRIMARY, UNREACHABLE }, int nodeId, Integer primaryHint)`. `RetryDecision(Action { SEND, DISCOVER, DONE, GIVE_UP }, Integer targetNodeId, long delayMillis)`. Redirects are followed at once unless they point back at a node that already redirected this update; every send and discovery uses an attempt; then `GIVE_UP`.
 
 **Split brain**
+
 - `SplitBrainChecker.check(List<NodeRoleSnapshot>)` returns `SplitBrainReport(boolean passed, Long highestEpoch, List<Integer> livePrimaries, List<SplitBrainViolation> violations)`. `NodeRoleSnapshot(int nodeId, boolean alive, FailoverRole role, long epoch)`. `SplitBrainViolation(Kind { DUPLICATE_PRIMARY, STALE_PRIMARY }, List<Integer> nodeIds, long epoch, long highestEpoch)`. Strict: either kind fails `passed`; crashed nodes are ignored; no primary is not a violation. A live stale primary should never appear (see note 3 below); if it does, it is a bug.
 
 **Concurrency and lock order:** `EpochRules`, `SplitBrainChecker`, `DataLoss` and the records are stateless; `UpdateRetryPolicy` is immutable; `EpochAuthority`, `FailoverStateMachine` and `AcknowledgedLedger` each hold one intrinsic lock and never call out (no listeners, no other E8a class, no `DataStore` lock) while holding it, so they are leaf locks: E8b may call them while holding its own lock, never the reverse. `UpdateAttempt` is confined to one thread.
 
 **What E8b must wire**
+
 - Start the election services itself with `ElectionNodeService.on(node, cluster, properties, bus)` on every node: the shared FailureDetector is idle until the first election request (E4c lazy start). Then `failureDetector().addListener(...)`: `onSuspected(peer == primary)` maps to `FailoverStateMachine.onSuspected`, `onAlive` to `onPrimaryAlive`. Listeners run on the election worker and must not block.
 - Stamp every instant from the one shared `LongSupplier`. E8c's crash action stamps `InstantSource.ACTION` immediately before `Cluster.crash(primary)`; a crash seen only through `NODE_CRASHED` is stamped `OBSERVED` on delivery.
 - Call `EpochAuthority.observeEpoch(service.epoch())` for every live node before the first promotion and on every role-query answer; then `becomePrimary(promotion.epoch())`, and `onPromoted` right after it returns.
@@ -165,6 +173,7 @@ No sockets, threads, timers, Spring or ports. Nothing reads a clock: every insta
 - Events to publish (module `faulttolerance`, sentence case, no all-capital words in messages; do not repeat what the replication module already publishes, such as `PRIMARY_ACTIVE` and `PRIMARY_SUPERSEDED`): E8b `PRIMARY_SUSPECTED` (observer, peer = primary), `PRIMARY_PROMOTED` (data `{epoch, previousPrimaryId}`), `SERVICE_RESTORED`, `ROLE_QUERY` (data `{action, epoch, primaryId, replies}`), `PRIMARY_DEMOTED`, `RESYNCHRONISED`; E8c `STREAM_STARTED`, `STREAM_STOPPED`, `PRIMARY_CRASHED` (data `{source}`), `FAILOVER_MEASURED` (the five intervals, nulls kept), `DATA_LOSS_MEASURED` (data includes `simulated` and `simulatedDelayMillis`), `SPLIT_BRAIN_CHECKED`.
 
 **Notes for E8b, E8c and Phase 9A.1**
+
 1. E8b feeds the seam from a module-local selector (highest live id, the legacy rule) marked `// TODO(L1)`; it does not call the election module. It consults the selector only when the current primary fails.
 2. Until 9A.1 the Exp 8 primary and the Exp 4 leader are independent, so crashing the Exp 4 leader can start an Exp 4 re-election while Exp 8 runs its own failover.
 3. A recovering node comes back as a non-primary until its role query returns (`stepDown()` on its replication service before it can serve), and `NO_ANSWER` keeps it from writing. Before 9A a recovered old primary demotes and stays a backup (no handover).
