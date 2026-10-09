@@ -21,6 +21,7 @@ import java.time.Duration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -103,6 +104,9 @@ class ElectionControllerTest {
                 .andExpect(jsonPath("$.leaderId").value(nullValue()))
                 .andExpect(jsonPath("$.nodes", hasSize(5)))
                 .andExpect(jsonPath("$.nodes[*].port", contains(26421, 26422, 26423, 26424, 26425)))
+                .andExpect(jsonPath("$.nodes[0].electionsWon").isNumber())
+                .andExpect(jsonPath("$.nodes[0].roundsTimed").isNumber())
+                .andExpect(jsonPath("$.nodes[0]", hasKey("meanDurationMillis")))
                 .andExpect(jsonPath("$.consensus.passed").value(false))
                 .andExpect(jsonPath("$.currentRound").value(nullValue()))
                 .andExpect(jsonPath("$.settings.okTimeoutMillis").value(400))

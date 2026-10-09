@@ -9,6 +9,7 @@ import { loadBalancingApi } from '@/modules/loadbalancing/loadBalancingApi'
 import loadBalancingOverviewBefore from '@/test/fixtures/loadbalancing/overview-before.json'
 import { replicationApi } from '@/modules/replication/replicationApi'
 import { clockSyncApi } from '@/modules/clocksync/clockSyncApi'
+import { electionApi } from '@/modules/election/electionApi'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -22,6 +23,8 @@ beforeEach(() => {
   vi.spyOn(clockSyncApi, 'getOverview').mockResolvedValue(null)
   vi.spyOn(clockSyncApi, 'getTimeline').mockResolvedValue(null)
   vi.spyOn(clockSyncApi, 'getVerification').mockResolvedValue(null)
+  vi.spyOn(electionApi, 'getOverview').mockResolvedValue(null)
+  vi.spyOn(electionApi, 'getEvents').mockResolvedValue([])
 })
 
 afterEach(() => {

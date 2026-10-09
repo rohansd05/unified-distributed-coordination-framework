@@ -13,11 +13,11 @@ function content() {
 
 describe('ExperimentPage', () => {
   it('shows the Section 8.4 headings in order', () => {
-    renderRoute('/experiments/4-election')
+    renderRoute('/experiments/10-matrix')
 
     const headings = content().getAllByRole('heading').map((h) => `${h.tagName} ${h.textContent}`)
     expect(headings).toEqual([
-      'H1 Bully and Ring Election',
+      'H1 Parallel Matrix Multiplication',
       'H2 How it works',
       'H2 Controls',
       'H2 Live visualisation',
@@ -36,8 +36,8 @@ describe('ExperimentPage', () => {
   })
 
   it('says which phase the module arrives in', () => {
-    renderRoute('/experiments/4-election')
-    expect(screen.getByText('This module arrives in Phase 5.')).toBeTruthy()
+    renderRoute('/experiments/10-matrix')
+    expect(screen.getByText('This module arrives in Phase 12.')).toBeTruthy()
   })
 })
 

@@ -233,7 +233,8 @@ public class ElectionModule implements ExperimentModule {
             nodes.add(new ElectionNodeDto(node.id(), node.status().name(), running.isPresent(),
                     running.map(ElectionNodeService::coordinatorId).orElse(null),
                     running.map(s -> s.failureDetector().suspectedPeers().stream().sorted().toList()).orElse(List.of()),
-                    node.ports().election()));
+                    node.ports().election(), metrics.electionsWon(node.id()), metrics.roundsTimed(node.id()),
+                    metrics.meanDurationMillis(node.id())));
         }
         return new ElectionOverviewDto(status().name(), cluster.leaderId().orElse(null), activated, List.copyOf(nodes),
                 consensus(), ElectionRoundDto.from(rounds.current().orElse(null)),
