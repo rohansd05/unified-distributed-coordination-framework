@@ -22,6 +22,9 @@ udcf:
       max-work-units: 500
       max-concurrency: 24
       max-total-work: 120000
+  # Smaller max-request-bytes for 512 MB RAM (docs/tracks/README.md Section 5).
+  mapreduce:
+    max-request-bytes: 1048576
 
 management:
   endpoints:

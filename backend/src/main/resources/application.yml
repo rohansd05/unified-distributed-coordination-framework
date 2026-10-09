@@ -101,6 +101,14 @@ udcf:
       max-work-units: 5000
       max-concurrency: 50
       max-total-work: 500000
+  # Experiment 7 (lab 7). MapReduce workers over TCP 730k (Appendix B timings).
+  mapreduce:
+    task-timeout-millis: 15000
+    socket-read-timeout-millis: 15000
+    max-request-bytes: 4194304
+    listen-backlog: 50
+    worker-threads: 4
+    queue-capacity: 32
 
 management:
   endpoints:
