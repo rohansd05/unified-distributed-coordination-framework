@@ -73,3 +73,4 @@ frontend/public/uploads/
 build/
 out/
 !backend/src/test/resources/**/*.log
+!backend/src/test/resources/**/*.log
