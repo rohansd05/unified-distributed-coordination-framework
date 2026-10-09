@@ -17,7 +17,7 @@
 - [X] E4a — Bully and Ring as pure classes, plus the consensus check. Needs: none.
 - [X] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
 - [X] E4c — `ElectionModule` (lab 4): start Bully or Ring from node X, the current leader, the consensus check, automatic re-election when the leader crashes; add the cluster roles API (roles on `ClusterNode`, `NodeDto.roles`, "LEADER" shown in the top bar); metrics `distributed_leader_elections_total` and `distributed_election_duration`; fixtures. Needs: E4b.
-- [x] E4d — page and end-to-end check. Needs: E4c, E2d.
+- [X] E4d — page and end-to-end check. Needs: E4c, E2d.
 
 ---
 
@@ -105,6 +105,7 @@ Linux (Docker, --cpus=2): FailureDetectorTest, Election*Test and ClusterRolesTes
 - Election event messages are sentence case with no all-capitals word (for example "Election message to node 4", "Answer from node 5", "Accepted node 5 as coordinator"). Event types and `data` are unchanged; E4a is unchanged (the transport writes the text).
 - `LEADER_CHANGED` stays only in the cluster log (module `cluster`); the election page reads it from `GET /api/events?module=cluster` and `/topic/cluster`. It is not copied into the election log, so the Phase 9A timeline and MapReduce see it once.
 - Frontend: `frontend/src/modules/election/` (`electionApi`, `useElection`, `useLeaderChanges`, `electionModel`, `labels`). `isLeader` stays in `lib/clusterStatus.js`.
+- Linux (Docker, --cpus=2): election subset (<n></n> tests) passed 5 runs in a row; full backend suite <total></total> tests, 0 failures, 1 skipped.
 
 ### E4a: Election Events
 
@@ -220,20 +221,20 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 ## Requirements Coverage (E4d)
 
-| Requirement | Implementation / Rule | Test |
-|---|---|---|
-| Page on the shared kit, sections in order, registered | `ElectionPage`, `index.jsx` | `ElectionPage.test.jsx` (registered, sections in order) |
-| Start Bully or Ring from node X; crash and recover with no confirmation | `ElectionControls`, cluster API | `ElectionControls.test.jsx` |
-| Leader from cluster roles via `isLeader`, never page state | `leaderIdFrom`, `ElectionRing` | `ElectionRing.test.jsx`, `ElectionPage.test.jsx` (leader from cluster roles) |
-| Messages on the ring with real Lamport values; motion only when allowed | `roundMessages`, `ElectionRing` | `electionModel.test.js`, `ElectionRing.test.jsx` |
-| Detector idle until the first election; Ring with one live node; TIMED_OUT shown with the configured timeout | `RoundPanel`, `ElectionControls` | `RoundPanel.test.jsx`, `ElectionControls.test.jsx` |
-| LEADER_FAILURE duration labelled "measured from detection" | `DETECTION_NOTE` | `labels.test.js`, `RoundPanel.test.jsx` |
-| Per-node figures (R5), "since the backend started"; unmeasured shows "—" | `ElectionNodeDto` fields, measurements | `ElectionMetricsTest`, `ElectionModuleTest.overviewReportsPerNodeWinsAndMeanDuration`, `ElectionPage.test.jsx` |
-| Leader changes (cluster log), real Lamport values, not via ModuleEventLog | `useLeaderChanges`, `LeaderChanges` | `useLeaderChanges.test.js`, `ElectionPage.test.jsx`, `contract.test.js` |
-| Coalesced refresh, no polling; one timer at the round timeout | `useElection` | `useElection.test.js` (fake timers) |
-| Announcements and focus after start | `usePoliteAnnouncement`, `RoundPanel` heading | `ElectionPage.test.jsx` |
-| No all-capitals words (page and event messages) | sentence-case labels and backend texts | `ElectionPage.test.jsx`, `contract.test.js`, `ElectionOverUdpTest.eventMessagesHaveNoAllCapsWords` |
-| Contract against real captures | `contract.test.js` | 23 fixtures in `frontend/src/test/fixtures/election/` |
+| Requirement                                                                                                  | Implementation / Rule                             | Test                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Page on the shared kit, sections in order, registered                                                        | `ElectionPage`, `index.jsx`                   | `ElectionPage.test.jsx` (registered, sections in order)                                                            |
+| Start Bully or Ring from node X; crash and recover with no confirmation                                      | `ElectionControls`, cluster API                 | `ElectionControls.test.jsx`                                                                                        |
+| Leader from cluster roles via`isLeader`, never page state                                                  | `leaderIdFrom`, `ElectionRing`                | `ElectionRing.test.jsx`, `ElectionPage.test.jsx` (leader from cluster roles)                                     |
+| Messages on the ring with real Lamport values; motion only when allowed                                      | `roundMessages`, `ElectionRing`               | `electionModel.test.js`, `ElectionRing.test.jsx`                                                                 |
+| Detector idle until the first election; Ring with one live node; TIMED_OUT shown with the configured timeout | `RoundPanel`, `ElectionControls`              | `RoundPanel.test.jsx`, `ElectionControls.test.jsx`                                                               |
+| LEADER_FAILURE duration labelled "measured from detection"                                                   | `DETECTION_NOTE`                                | `labels.test.js`, `RoundPanel.test.jsx`                                                                          |
+| Per-node figures (R5), "since the backend started"; unmeasured shows "—"                                    | `ElectionNodeDto` fields, measurements          | `ElectionMetricsTest`, `ElectionModuleTest.overviewReportsPerNodeWinsAndMeanDuration`, `ElectionPage.test.jsx` |
+| Leader changes (cluster log), real Lamport values, not via ModuleEventLog                                    | `useLeaderChanges`, `LeaderChanges`           | `useLeaderChanges.test.js`, `ElectionPage.test.jsx`, `contract.test.js`                                        |
+| Coalesced refresh, no polling; one timer at the round timeout                                                | `useElection`                                   | `useElection.test.js` (fake timers)                                                                                |
+| Announcements and focus after start                                                                          | `usePoliteAnnouncement`, `RoundPanel` heading | `ElectionPage.test.jsx`                                                                                            |
+| No all-capitals words (page and event messages)                                                              | sentence-case labels and backend texts            | `ElectionPage.test.jsx`, `contract.test.js`, `ElectionOverUdpTest.eventMessagesHaveNoAllCapsWords`             |
+| Contract against real captures                                                                               | `contract.test.js`                              | 23 fixtures in`frontend/src/test/fixtures/election/`                                                               |
 
 ---
 
@@ -256,7 +257,6 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - E4c: nothing starts the election services at boot, so the FailureDetector is idle until the first election request. E8b and any other module that needs the detector must start the services itself with `ElectionNodeService.on(...)`.
 - E4c: between a leader crash and the agreement on a new leader (about 2.5 to 3 s with the default timings) the cluster has no LEADER; the top bar shows "None elected" during that gap.
 - E4c: verified on Windows only (three backend and three frontend runs). The Linux (Docker) runs of the new classes are still to be done by Swanand.
-
 - E4d: `GET /api/modules/election` closes a timed-out round lazily, only when it is read (also by `status()`). The page therefore refreshes once at the overview's `roundTimeoutMillis` + 250 ms while a round is open; nothing else polls.
 - E4d: the per-node figures count since the backend started; a cluster reset does not reset them (Prometheus counter semantics), and the page says so.
 - E4d: the 1280x800 and 375x740 checks were run in same-origin iframes of exactly those CSS sizes (the Chrome window could not be set to an exact viewport at 125 % display scaling). Keyboard-only use and reduced motion were checked by the component tests, not by hand.
