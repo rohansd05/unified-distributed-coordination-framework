@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: jobId, inputType","instance":"/api/modules/mapreduce/runs","errors":{"jobId":"jobId is required","inputType":"inputType is required"}}

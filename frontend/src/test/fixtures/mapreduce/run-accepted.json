@@ -1,0 +1,1 @@
+{"runId":"d4055014","state":"RUNNING","jobId":"word-count","jobTitle":"Word count","inputType":"SAMPLE","inputName":"Bundled sample text","inputBytes":5603,"coordinatorId":1,"workerIds":[1,2,3,4,5],"crash":null,"startedAt":"2026-10-09T09:49:17.058498100Z","finishedAt":null,"report":null,"error":null,"notice":null}

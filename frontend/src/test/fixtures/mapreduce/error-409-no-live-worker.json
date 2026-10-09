@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"No live worker","status":409,"detail":"No live node is available to run a MapReduce job; recover a node on the Cluster page","instance":"/api/modules/mapreduce/runs","moduleId":"mapreduce"}

@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request parameter: crashWorkerId","instance":"/api/modules/mapreduce/runs","errors":{"crashWorkerId":"node 1 is the coordinator of this run; choose another live worker"}}

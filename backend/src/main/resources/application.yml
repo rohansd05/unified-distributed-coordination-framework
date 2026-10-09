@@ -109,6 +109,14 @@ udcf:
     listen-backlog: 50
     worker-threads: 4
     queue-capacity: 32
+    # E7c module and API. upload-max-bytes is also the byte cap of the event-log input. It must be at
+    # most a quarter of max-request-bytes (checked at startup): intermediate data can reach about 3.7x
+    # the input in one wire line (arithmetic in docs/tracks/track-d-rohan.md).
+    upload-max-bytes: 1048576
+    result-rows-max: 200
+    run-history-size: 20
+    # POST /runs body limit = Base64 size of upload-max-bytes + this allowance; larger bodies get 413.
+    request-body-allowance-bytes: 8192
 
 management:
   endpoints:
