@@ -29,7 +29,7 @@
 ### Steps
 
 - [X] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
-- [x] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
+- [X] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
 - [ ] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
 - [ ] E8d — page and end-to-end check. Needs: E8c, E2d.
 
@@ -129,7 +129,7 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 No sockets, threads, timers, Spring or ports. Nothing reads a clock: every instant is a `long …Nanos` parameter, stamped by the caller. **All stampers in the module must use one shared `LongSupplier` nano-clock instance**, so instants from different threads compare.
 
-Linux (Docker, --cpus=2): the new package (80 tests) passed 5 runs in a row; full backend suite <total></total> tests, 0 failures, 1 skipped.
+Linux (Docker, --cpus=2): the faulttolerance classes (124 tests) passed 5 runs in a row; full backend suite <total></total> tests, 0 failures, 1 skipped.
 
 **Reused, not duplicated (Track C, `com.udcf.modules.replication`):** `DataStore` is the store and the write fence (no `UpdateStore`); `DataItem` is the stamped update; `ConsistencyModel` is the sync/async enum; `WriteResult` feeds the ledger and carries the simulated delay. `DataStore.INITIAL_EPOCH` is 1.
 
@@ -210,14 +210,14 @@ Nothing in production creates it yet (as E4b): E8c's module owns one `FailoverCl
 
 **Configuration (`udcf.faulttolerance`)** and the window formula
 
-| Key | Value | Meaning |
-|---|---|---|
-| `client.max-attempts` | 50 | sends and discoveries per update |
-| `client.retry-delay-millis` | 250 | wait before a retry |
-| `role-query.retry-delay-millis` | 1000 | wait before asking again after no answer |
-| `role-query.max-attempts` | 5 | role queries before the node stops asking (stays non-primary) |
-| `promotion.catch-up-timeout-millis` | 1000 | the chosen node's catch-up from the other live peers, in parallel |
-| `history-limit` | 10 | failover runs kept |
+| Key                                   | Value | Meaning                                                           |
+| ------------------------------------- | ----- | ----------------------------------------------------------------- |
+| `client.max-attempts`               | 50    | sends and discoveries per update                                  |
+| `client.retry-delay-millis`         | 250   | wait before a retry                                               |
+| `role-query.retry-delay-millis`     | 1000  | wait before asking again after no answer                          |
+| `role-query.max-attempts`           | 5     | role queries before the node stops asking (stays non-primary)     |
+| `promotion.catch-up-timeout-millis` | 1000  | the chosen node's catch-up from the other live peers, in parallel |
+| `history-limit`                     | 10    | failover runs kept                                                |
 
 Worst-case failover (`FaultToleranceProperties.worstCaseFailoverMillis`, the only copy; `requireWindowCovers` applies it and `FailoverCluster` calls that at construction):
 
@@ -235,22 +235,22 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 
 **Events** (module `faulttolerance`, the node's Lamport clock; node 0 uses the cluster clock; sentence case; nulls kept)
 
-| Type | Node, peer | Data |
-|---|---|---|
-| `PRIMARY_CRASHED` | crashed primary | source (ACTION, OBSERVED), epoch |
-| `FAILURE_DETECTED` | first observer, peer = primary | silentMillis, timeoutMillis, epoch |
-| `PRIMARY_PROMOTED` | new primary, peer = previous | epoch, previousPrimaryId (null for the first), caughtUpFrom, skipped |
-| `CATCH_UP_SKIPPED` | new primary, peer = skipped peer | epoch, reason |
-| `PROMOTION_FAILED` | chosen node | reason (or epoch, reason if its term record was refused) |
-| `NO_CANDIDATE` | 0 | excluded |
-| `SERVICE_RESTORED` | new primary, peer = old primary | epoch, key, sequence, outageMillis |
-| `STALE_EPOCH_REFUSED` | the fenced sender, peer = refusing backup (null if a synchronous round, where the backup is unknown) | key, senderEpoch, backupEpoch, knownEpoch |
-| `ROLE_QUERY` | recovering node | action, epoch, primaryId, ownRole, ownEpoch, replies [{nodeId, role, epoch, believedPrimaryId}], silent |
-| `ROLE_QUERY_FAILED` | recovering node | attempt, maxAttempts, asked, ownRole, ownEpoch, retryInMillis (null on the last) |
-| `OLD_PRIMARY_DEMOTED` | recovering node, peer = new primary | previousEpoch, epoch, primaryId |
-| `PRIMARY_RESUMED` | recovering node | epoch, ownEpoch |
-| `RESYNCHRONISED` / `RESYNC_FAILED` | recovering node, peer = source | pulled, applied, sourceEpoch, storeEpoch / reason, attempt, maxAttempts, retryInMillis |
-| `SERVICE_START_FAILED` | node | service, error |
+| Type                                   | Node, peer                                                                                           | Data                                                                                                    |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `PRIMARY_CRASHED`                    | crashed primary                                                                                      | source (ACTION, OBSERVED), epoch                                                                        |
+| `FAILURE_DETECTED`                   | first observer, peer = primary                                                                       | silentMillis, timeoutMillis, epoch                                                                      |
+| `PRIMARY_PROMOTED`                   | new primary, peer = previous                                                                         | epoch, previousPrimaryId (null for the first), caughtUpFrom, skipped                                    |
+| `CATCH_UP_SKIPPED`                   | new primary, peer = skipped peer                                                                     | epoch, reason                                                                                           |
+| `PROMOTION_FAILED`                   | chosen node                                                                                          | reason (or epoch, reason if its term record was refused)                                                |
+| `NO_CANDIDATE`                       | 0                                                                                                    | excluded                                                                                                |
+| `SERVICE_RESTORED`                   | new primary, peer = old primary                                                                      | epoch, key, sequence, outageMillis                                                                      |
+| `STALE_EPOCH_REFUSED`                | the fenced sender, peer = refusing backup (null if a synchronous round, where the backup is unknown) | key, senderEpoch, backupEpoch, knownEpoch                                                               |
+| `ROLE_QUERY`                         | recovering node                                                                                      | action, epoch, primaryId, ownRole, ownEpoch, replies [{nodeId, role, epoch, believedPrimaryId}], silent |
+| `ROLE_QUERY_FAILED`                  | recovering node                                                                                      | attempt, maxAttempts, asked, ownRole, ownEpoch, retryInMillis (null on the last)                        |
+| `OLD_PRIMARY_DEMOTED`                | recovering node, peer = new primary                                                                  | previousEpoch, epoch, primaryId                                                                         |
+| `PRIMARY_RESUMED`                    | recovering node                                                                                      | epoch, ownEpoch                                                                                         |
+| `RESYNCHRONISED` / `RESYNC_FAILED` | recovering node, peer = source                                                                       | pulled, applied, sourceEpoch, storeEpoch / reason, attempt, maxAttempts, retryInMillis                  |
+| `SERVICE_START_FAILED`               | node                                                                                                 | service, error                                                                                          |
 
 **Metrics** (R5; `MetricNames` unchanged, no other module registers these names): `distributed_failures_total{node_id = failed primary}`; `distributed_recovery_duration{node_id = failed primary, interval = detection | failover | service_restored | outage | recovery}` (timer; only measured intervals are recorded). Checked beside the Exp 4 and Exp 5 meters in one Prometheus registry (`FaultToleranceMetricsTest`).
 
@@ -385,23 +385,23 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 
 ## Requirements Coverage (E8b)
 
-| # | Requirement | Implementation | Test |
-|---|---|---|---|
-| 1 | Per-node faulttolerance NodeService; starts, stops, crashes, recovers with its node (R10); restart-safe | `FaultToleranceNodeService` via `ClusterNode.ensureService` | `FaultToleranceNodeServiceTest` (all 7), `FailoverClusterTest.nodeDownAtStartJoinsOnRecovery`, `resetClearsState` |
-| 2 | Detection through the shared FailureDetector (L2), shared timings; who starts it | `FailoverCluster.start` (`ElectionNodeService.on`), listener in `FaultToleranceNodeService.start` | `FaultToleranceNodeServiceTest.startRegistersWithTheSharedDetector`, `startAfterFailure`, `FailoverClusterTest.electionServiceOnIsIdempotent` |
-| 3 | Module-local selector (lowest live id, `// TODO(L1)`) into `EpochAuthority.onLeaderElected`; first promotion epoch 2 | `FailoverRoleSelector`, `FailoverCluster.tryPromote` | `FailoverRoleSelectorTest`, `FailoverClusterTest.startAppointsFirstPrimaryAtEpochTwo`, `crashDetectedOncePromotedOnceAndMeasured` |
-| 4 | Promotion on the replication service; new epoch; backups refuse stale epochs | `FaultToleranceNodeService.promote` (`becomePrimary`, term record) | `FailoverClusterTest.staleEpochUpdateRefusedByBackups`, `crashDetectedOncePromotedOnceAndMeasured` |
-| 5 | Recovered old primary: non-primary until its role query returns; demote and resync; no answer keeps it non-primary | `FaultToleranceNodeService.crash` (step down), `rejoin`, `RoleQuery` | `FailoverClusterTest.recoveredOldPrimaryDemotesAndResyncs`, `noAnswerKeepsOldPrimaryNonPrimary`, `FaultToleranceNodeServiceTest.recoverRejoinsAsNonPrimary`, `RoleQueryTest` (4) |
-| 6 | Instants: crash (ACTION/OBSERVED), detection, promotion, service restored, recovery | `FailoverCluster.crashPrimary`, `nodeCrashed`, `onSuspected`, `accepted`, `nodeRecovered`; one nano clock | `FailoverClusterTest.crashDetectedOncePromotedOnceAndMeasured`, `crashFromElsewhereIsObserved`, `recoveredOldPrimaryDemotesAndResyncs` |
-| 7 | Ledger from confirmed `WriteResult`s; Java API for E8c | `FailoverCluster.submit`, `snapshot`, `measurements`, `splitBrain`, `dataLoss` | `FailoverClusterTest.synchronousModeLosesNothing`, `asynchronousModeReportsInFlightLoss`, `resetClearsState` |
-| 8 | Events under `faulttolerance`, node Lamport time, sentence case, nulls kept | `FailoverCluster.publish` | `FailoverFixture.assertEventsWellFormed` (5 tests), `FailoverRecordsTest.roleQueryAnswers` |
-| 9 | `udcf.faulttolerance` sized to the retry window; formula shared and fail-fast | `FaultToleranceProperties.worstCaseFailoverMillis`, `requireWindowCovers` | `FaultTolerancePropertiesTest` (5), `FailoverClusterTest.tooSmallWindowFailsConstruction` |
-| 10 | Metrics with `node_id` per meter, nothing fabricated, no tag-key clash | `FaultToleranceMetrics` | `FaultToleranceMetricsTest` (3), `FailoverClusterTest.crashDetectedOncePromotedOnceAndMeasured`, `recoveredOldPrimaryDemotesAndResyncs` |
-| T | Detection promotes once with two reporters | `FailoverStateMachine.onSuspected` + `EpochAuthority` | `FailoverClusterTest.concurrentSuspicionsPromoteOnce` |
-| T | No two primaries at any sampled instant | `SplitBrainChecker` over `roleSnapshot` | `FailoverClusterTest.neverTwoPrimaries` |
-| T | Listener thread does no blocking work | hand-off to `udcf-faulttolerance-n<k>-worker` | `FailoverClusterTest.detectorCallbackDoesNoBlockingWork` |
-| C2 | Term record with a dead backup, catch-up with a silent peer: both bounded | per-push and catch-up timeouts | `FailoverClusterTest.termRecordWithDeadBackupIsBounded`, `catchUpWithSilentPeerIsBounded`, `FaultToleranceNodeServiceTest.crashDuringBlockedRoleQueryIsBounded` |
-| R | Each promotion phase costs one bound whatever the number of peers (5 nodes: 3 silent live peers + dead old primary) | catch-up: one overall deadline (`allOf(...).get(timeout)`), peers on virtual threads; term record: Track C pushes all backups in parallel, each bounded by connect + read timeout | `FailoverClusterTest.promotionWithSeveralSilentAndDeadPeersIsBounded` |
+| #  | Requirement                                                                                                             | Implementation                                                                                                                                                                      | Test                                                                                                                                                                                     |
+| -- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | Per-node faulttolerance NodeService; starts, stops, crashes, recovers with its node (R10); restart-safe                 | `FaultToleranceNodeService` via `ClusterNode.ensureService`                                                                                                                     | `FaultToleranceNodeServiceTest` (all 7), `FailoverClusterTest.nodeDownAtStartJoinsOnRecovery`, `resetClearsState`                                                                  |
+| 2  | Detection through the shared FailureDetector (L2), shared timings; who starts it                                        | `FailoverCluster.start` (`ElectionNodeService.on`), listener in `FaultToleranceNodeService.start`                                                                             | `FaultToleranceNodeServiceTest.startRegistersWithTheSharedDetector`, `startAfterFailure`, `FailoverClusterTest.electionServiceOnIsIdempotent`                                      |
+| 3  | Module-local selector (lowest live id,`// TODO(L1)`) into `EpochAuthority.onLeaderElected`; first promotion epoch 2 | `FailoverRoleSelector`, `FailoverCluster.tryPromote`                                                                                                                            | `FailoverRoleSelectorTest`, `FailoverClusterTest.startAppointsFirstPrimaryAtEpochTwo`, `crashDetectedOncePromotedOnceAndMeasured`                                                  |
+| 4  | Promotion on the replication service; new epoch; backups refuse stale epochs                                            | `FaultToleranceNodeService.promote` (`becomePrimary`, term record)                                                                                                              | `FailoverClusterTest.staleEpochUpdateRefusedByBackups`, `crashDetectedOncePromotedOnceAndMeasured`                                                                                   |
+| 5  | Recovered old primary: non-primary until its role query returns; demote and resync; no answer keeps it non-primary      | `FaultToleranceNodeService.crash` (step down), `rejoin`, `RoleQuery`                                                                                                          | `FailoverClusterTest.recoveredOldPrimaryDemotesAndResyncs`, `noAnswerKeepsOldPrimaryNonPrimary`, `FaultToleranceNodeServiceTest.recoverRejoinsAsNonPrimary`, `RoleQueryTest` (4) |
+| 6  | Instants: crash (ACTION/OBSERVED), detection, promotion, service restored, recovery                                     | `FailoverCluster.crashPrimary`, `nodeCrashed`, `onSuspected`, `accepted`, `nodeRecovered`; one nano clock                                                                 | `FailoverClusterTest.crashDetectedOncePromotedOnceAndMeasured`, `crashFromElsewhereIsObserved`, `recoveredOldPrimaryDemotesAndResyncs`                                             |
+| 7  | Ledger from confirmed`WriteResult`s; Java API for E8c                                                                 | `FailoverCluster.submit`, `snapshot`, `measurements`, `splitBrain`, `dataLoss`                                                                                            | `FailoverClusterTest.synchronousModeLosesNothing`, `asynchronousModeReportsInFlightLoss`, `resetClearsState`                                                                       |
+| 8  | Events under`faulttolerance`, node Lamport time, sentence case, nulls kept                                            | `FailoverCluster.publish`                                                                                                                                                         | `FailoverFixture.assertEventsWellFormed` (5 tests), `FailoverRecordsTest.roleQueryAnswers`                                                                                           |
+| 9  | `udcf.faulttolerance` sized to the retry window; formula shared and fail-fast                                         | `FaultToleranceProperties.worstCaseFailoverMillis`, `requireWindowCovers`                                                                                                       | `FaultTolerancePropertiesTest` (5), `FailoverClusterTest.tooSmallWindowFailsConstruction`                                                                                            |
+| 10 | Metrics with`node_id` per meter, nothing fabricated, no tag-key clash                                                 | `FaultToleranceMetrics`                                                                                                                                                           | `FaultToleranceMetricsTest` (3), `FailoverClusterTest.crashDetectedOncePromotedOnceAndMeasured`, `recoveredOldPrimaryDemotesAndResyncs`                                            |
+| T  | Detection promotes once with two reporters                                                                              | `FailoverStateMachine.onSuspected` + `EpochAuthority`                                                                                                                           | `FailoverClusterTest.concurrentSuspicionsPromoteOnce`                                                                                                                                  |
+| T  | No two primaries at any sampled instant                                                                                 | `SplitBrainChecker` over `roleSnapshot`                                                                                                                                         | `FailoverClusterTest.neverTwoPrimaries`                                                                                                                                                |
+| T  | Listener thread does no blocking work                                                                                   | hand-off to`udcf-faulttolerance-n<k>-worker`                                                                                                                                      | `FailoverClusterTest.detectorCallbackDoesNoBlockingWork`                                                                                                                               |
+| C2 | Term record with a dead backup, catch-up with a silent peer: both bounded                                               | per-push and catch-up timeouts                                                                                                                                                      | `FailoverClusterTest.termRecordWithDeadBackupIsBounded`, `catchUpWithSilentPeerIsBounded`, `FaultToleranceNodeServiceTest.crashDuringBlockedRoleQueryIsBounded`                    |
+| R  | Each promotion phase costs one bound whatever the number of peers (5 nodes: 3 silent live peers + dead old primary)     | catch-up: one overall deadline (`allOf(...).get(timeout)`), peers on virtual threads; term record: Track C pushes all backups in parallel, each bounded by connect + read timeout | `FailoverClusterTest.promotionWithSeveralSilentAndDeadPeersIsBounded`                                                                                                                  |
 
 ---
 
