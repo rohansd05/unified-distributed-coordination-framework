@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import static com.udcf.core.cluster.NodeCapacity.FAST;
 import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
@@ -140,6 +141,36 @@ class ElectionOverUdpTest {
         assertThat(live).allSatisfy(id -> assertThat(service(id).failureDetector().isSuspected(5)).isFalse());
         assertThat(events(FailureDetector.PEER_SUSPECTED)).extracting(ClusterEvent::peerId).containsOnly(5);
         assertThat(service(5).failureDetector().suspectedPeers()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("no event message has an all-capitals word: neither real Bully and Ring traffic nor any text template")
+    void eventMessagesHaveNoAllCapsWords() {
+        Pattern allCaps = Pattern.compile("\\b[A-Z]{2,}\\b");
+        cluster.crash(3);
+        service(2).startRing();
+        within().until(() -> consensusOn(5) && !events("DEAD_NODE_SKIPPED").isEmpty());
+        service(1).startBully();
+        within().until(() -> events(ElectionNodeService.MESSAGE_RECEIVED).stream()
+                .anyMatch(e -> "COORDINATOR".equals(e.data().get("messageType"))));
+
+        List<ClusterEvent> all = bus.query(ElectionNodeService.MODULE, null, 5000);
+        assertThat(all).extracting(ClusterEvent::type).contains("ELECTION_START", "ELECTED", "COORDINATOR_ACCEPTED",
+                "TOKEN_FORWARDED", "DEAD_NODE_SKIPPED", "OK_RECEIVED", "CRASH", ElectionNodeService.MESSAGE_SENT);
+        assertThat(all).extracting(ClusterEvent::message)
+                .allSatisfy(message -> assertThat(allCaps.matcher(message).find()).as(message).isFalse());
+        assertThat(events("ELECTED")).filteredOn(e -> "RING".equals(e.data().get("algorithm")))
+                .extracting(ClusterEvent::message).contains("The ring token came back: node 5 has the highest id and wins");
+
+        for (ElectionMessageType type : ElectionMessageType.values()) {
+            assertThat(allCaps.matcher(ElectionNodeService.messageName(type)).find()).as(type.name()).isFalse();
+        }
+        for (String algorithm : List.of(ElectionNodeService.BULLY, ElectionNodeService.RING)) {
+            for (ElectionEventType type : ElectionEventType.values()) {
+                String text = ElectionNodeService.eventText(algorithm, type, 4, 5);
+                assertThat(allCaps.matcher(text).find()).as(algorithm + " " + type + ": " + text).isFalse();
+            }
+        }
     }
 
     @Test

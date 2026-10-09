@@ -1,11 +1,14 @@
 package com.udcf.modules.election;
 
 import com.udcf.core.metrics.MetricNames;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Experiment 4 meters, each tagged with {@code node_id} (R5), {@code algorithm} and
@@ -50,5 +53,48 @@ public class ElectionMetrics {
                 .tag(TRIGGER, trigger)
                 .register(registry)
                 .record(Duration.ofNanos(Math.round(round.durationMillis() * 1_000_000d)));
+    }
+
+    // ------------------------------------------------------------------ read-back (never creates a meter)
+
+    /**
+     * Rounds {@code nodeId} won since the backend started: the sum of
+     * {@value MetricNames#LEADER_ELECTIONS_TOTAL}{node_id = nodeId} over every algorithm and
+     * trigger. 0 when no such meter exists: no win was recorded, a real count.
+     */
+    public long electionsWon(int nodeId) {
+        return Math.round(registry.find(MetricNames.LEADER_ELECTIONS_TOTAL)
+                .tag(MetricNames.NODE_ID, String.valueOf(nodeId))
+                .counters().stream().mapToDouble(Counter::count).sum());
+    }
+
+    /**
+     * Measured rounds started from {@code nodeId} since the backend started: the count of
+     * {@value MetricNames#ELECTION_DURATION}{node_id = nodeId}, which records only rounds that
+     * ended ELECTED (timed-out rounds are not recorded). 0 when no such meter exists.
+     */
+    public long roundsTimed(int nodeId) {
+        return durationTimers(nodeId).stream().mapToLong(Timer::count).sum();
+    }
+
+    /**
+     * Mean duration of those rounds in milliseconds, or {@code null} when there are none
+     * (unmeasured, never 0). No maximum: a Micrometer timer's max decays to 0 after a while,
+     * which would show a figure that is not true.
+     */
+    public Double meanDurationMillis(int nodeId) {
+        List<Timer> timers = durationTimers(nodeId);
+        long count = timers.stream().mapToLong(Timer::count).sum();
+        if (count == 0) {
+            return null;
+        }
+        double totalMillis = timers.stream().mapToDouble(t -> t.totalTime(TimeUnit.MILLISECONDS)).sum();
+        return totalMillis / count;
+    }
+
+    private List<Timer> durationTimers(int nodeId) {
+        return List.copyOf(registry.find(MetricNames.ELECTION_DURATION)
+                .tag(MetricNames.NODE_ID, String.valueOf(nodeId))
+                .timers());
     }
 }

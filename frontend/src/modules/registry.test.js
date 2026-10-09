@@ -10,6 +10,6 @@ describe('module registry', () => {
   })
 
   it('has no page for a module that has not been built', () => {
-    expect(modulePages.election).toBeUndefined()
+    expect(modulePages.matrix).toBeUndefined()
   })
 })

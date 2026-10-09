@@ -40,6 +40,7 @@ import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
 import static com.udcf.core.cluster.NodeCapacity.SLOW;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.data.Offset.offset;
 import static org.awaitility.Awaitility.await;
 
 /**
@@ -333,6 +334,26 @@ class ElectionModuleTest {
 
         start(ElectionAlgorithm.BULLY, 1);   // a fresh election starts node 5's service too, so node 5 wins
         within().until(() -> electedRoundWith(5));
+    }
+
+    @Test
+    @DisplayName("the overview reports per node the wins, the timed rounds started there and their mean, from the meters")
+    void overviewReportsPerNodeWinsAndMeanDuration() {
+        assertThat(module.overview().nodes()).allSatisfy(n -> {
+            assertThat(n.electionsWon()).isZero();
+            assertThat(n.roundsTimed()).isZero();
+            assertThat(n.meanDurationMillis()).isNull();
+        });
+        electFiveFromNodeOne();
+        ElectionOverviewDto overview = module.overview();
+        ElectionNodeDto one = overview.nodes().get(0);
+        ElectionNodeDto five = overview.nodes().get(4);
+        assertThat(five.electionsWon()).isEqualTo(1);
+        assertThat(five.roundsTimed()).isZero();
+        assertThat(five.meanDurationMillis()).isNull();
+        assertThat(one.electionsWon()).isZero();
+        assertThat(one.roundsTimed()).isEqualTo(1);
+        assertThat(one.meanDurationMillis()).isCloseTo(overview.lastRound().durationMillis(), offset(0.001));
     }
 
     @Test

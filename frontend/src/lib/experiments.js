@@ -22,7 +22,13 @@ export const EXPERIMENTS = [
     arrivesIn: 4,
     concept: 'Independent hardware clocks drift: how logical clocks order events and a time daemon pulls physical clocks together.',
   },
-  { lab: 4, id: 'election', title: 'Bully and Ring Election', arrivesIn: 5 },
+  {
+    lab: 4,
+    id: 'election',
+    title: 'Bully and Ring Election',
+    arrivesIn: 5,
+    concept: 'No referee, one leader: how the nodes agree on who leads, and notice by themselves when that leader dies.',
+  },
   {
     lab: 5,
     id: 'replication',

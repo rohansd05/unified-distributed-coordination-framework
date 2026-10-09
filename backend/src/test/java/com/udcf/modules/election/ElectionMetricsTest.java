@@ -56,6 +56,34 @@ class ElectionMetricsTest {
     }
 
     @Test
+    @DisplayName("reads back per node: wins from the leader-tagged counter, timed rounds and mean from the initiator-tagged timer")
+    void readsPerNodeWinsAndMeanDuration() {
+        metrics.record(round(RoundOutcome.ELECTED, 4, 300.0));   // initiator 2, winner 4, LEADER_FAILURE
+        metrics.record(new ElectionRound(8, ElectionAlgorithm.RING, RoundTrigger.MANUAL, 2, AT,
+                RoundOutcome.ELECTED, 4, 100.0));
+        metrics.record(new ElectionRound(9, ElectionAlgorithm.BULLY, RoundTrigger.MANUAL, 4, AT,
+                RoundOutcome.ELECTED, 5, 50.0));
+        metrics.record(round(RoundOutcome.TIMED_OUT, null, null));
+
+        assertThat(metrics.electionsWon(4)).isEqualTo(2);   // summed over algorithm and trigger
+        assertThat(metrics.electionsWon(5)).isEqualTo(1);
+        assertThat(metrics.electionsWon(2)).isZero();
+        assertThat(metrics.roundsTimed(2)).isEqualTo(2);    // the timed-out round is not recorded
+        assertThat(metrics.meanDurationMillis(2)).isEqualTo(200.0);
+        assertThat(metrics.roundsTimed(4)).isEqualTo(1);
+        assertThat(metrics.meanDurationMillis(4)).isEqualTo(50.0);
+    }
+
+    @Test
+    @DisplayName("a node with no rounds has 0 wins, 0 timed rounds and a null mean, and reading creates no meter")
+    void nodeWithoutRoundsHasZeroWinsAndNullMean() {
+        assertThat(metrics.electionsWon(3)).isZero();
+        assertThat(metrics.roundsTimed(3)).isZero();
+        assertThat(metrics.meanDurationMillis(3)).isNull();
+        assertThat(registry.getMeters()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a TIMED_OUT or unfinished round records no meter at all")
     void timedOutRoundRecordsNothing() {
         metrics.record(round(RoundOutcome.TIMED_OUT, null, null));

@@ -1,8 +1,11 @@
-# Election contract fixtures (E4c)
+# Election contract fixtures (E4c, recaptured in E4d)
 
 Real response bodies from the running backend (`cd backend; .\mvnw.cmd spring-boot:run`,
-local profile, five nodes, election ports 7001 to 7005, Appendix B timings), captured on
-2026-10-09 with `curl.exe -s -o <file>`, one script run against a freshly started backend. Each
+local profile, five nodes, election ports 7001 to 7005, Appendix B timings), captured with
+`curl.exe -s -o <file>`, one script run against a freshly started backend. First captured in E4c;
+recaptured in E4d (2026-10-09) with the same script, after the backend gained sentence-case event
+messages and the per-node `electionsWon`, `roundsTimed` and `meanDurationMillis` fields. Then one
+extra file was captured from the same backend, `overview-ring-timed-out.json` (see the end of the table). Each
 request body was written to a file and sent with `-H "Content-Type: application/json" -d "@<body>.json"`.
 Waits (for an election to finish) were polling loops on `GET /api/modules/election` with a
 deadline, never fixed waits. Nothing here was edited by hand. Steps marked "not kept" were run
@@ -39,6 +42,13 @@ but their responses were not saved.
 | (not kept) | `POST /api/cluster/reset` | 204 |
 | `overview-after-reset.json` | `GET /api/modules/election`: services still running, no leader, no coordinators, no rounds | 200 |
 | `cluster-after-reset.json` | `GET /api/cluster`: no roles | 200 |
+| (not kept) | E4d extra script: `POST /api/cluster/nodes/{2,3,4,5}/crash` | 200 |
+| (not kept) | `POST .../elections` `{"algorithm":"RING","nodeId":1}` (only node 1 up) | 202 |
+| `overview-ring-timed-out.json` | `GET /api/modules/election`, polled until the round was closed `TIMED_OUT` (the backend closes an overdue round when it is read, after `roundTimeoutMillis`) | 200 |
+| (not kept) | `POST /api/cluster/nodes/{2,3,4,5}/recover`, a wait for leader 5, then `POST /api/cluster/reset` | 200, 204 |
+
+`events-cluster.json` is the source for the page's "Leader changes (cluster log)" list: the page reads
+the cluster log and keeps its `LEADER_CHANGED` events; they are never copied into the election log.
 
 Afterwards the backend was stopped and ports 8080 and 7001 to 7005 checked free.
 

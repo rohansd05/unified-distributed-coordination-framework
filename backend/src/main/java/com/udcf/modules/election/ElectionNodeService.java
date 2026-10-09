@@ -334,15 +334,14 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
     // ------------------------------------------------------------------ algorithm callbacks
 
     private void onAlgorithmEvent(String algorithm, ElectionEvent event) {
-        if (event.type() == ElectionEventType.ELECTED || event.type() == ElectionEventType.COORDINATOR_ACCEPTED) {
-            Integer learned = (BULLY.equals(algorithm) ? bully : ring).getCoordinatorId();
-            if (learned != null) {
-                coordinatorId = learned;
-            }
+        Integer learned = (BULLY.equals(algorithm) ? bully : ring).getCoordinatorId();
+        if ((event.type() == ElectionEventType.ELECTED || event.type() == ElectionEventType.COORDINATOR_ACCEPTED)
+                && learned != null) {
+            coordinatorId = learned;
         }
         bus.publish(EventDraft.of(MODULE, node.id(), event.type().name(), node.clock().tick())
                 .withPeer(event.peerId() > 0 ? event.peerId() : null)
-                .withMessage(event.description())
+                .withMessage(eventText(algorithm, event.type(), event.peerId(), learned))
                 .withData(Map.of("algorithm", algorithm)));
         for (ElectionEventListener listener : electionListeners) {
             try {
@@ -351,6 +350,55 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
                 log.warn("Node {}: election listener threw on {}; continuing", node.id(), event.type(), e);
             }
         }
+    }
+
+    /**
+     * Sentence-case name of a wire message type for event messages: the page shows them as
+     * written, and protocol names in capitals would read as shouting. Types and data keep the
+     * protocol names.
+     */
+    static String messageName(ElectionMessageType type) {
+        return switch (type) {
+            case ELECTION -> "Election message";
+            case OK -> "Answer";
+            case COORDINATOR -> "Coordinator announcement";
+            case RING_ELECTION -> "Ring token";
+            case RING_COORDINATOR -> "Ring result";
+            case PROBE -> "Liveness probe";
+            case PROBE_ACK -> "Probe answer";
+            case HEARTBEAT -> "Heartbeat";
+        };
+    }
+
+    /**
+     * Sentence-case text for an algorithm event, written here from its type, peer and the
+     * coordinator the algorithm now knows, instead of the E4a description (which names
+     * protocol messages in capitals). E4a is unchanged.
+     *
+     * @param peerId      the event's peer, or -1 for none
+     * @param coordinator the algorithm's coordinator after the event, or null
+     */
+    static String eventText(String algorithm, ElectionEventType type, int peerId, Integer coordinator) {
+        String name = BULLY.equals(algorithm) ? "Bully" : "Ring";
+        return switch (type) {
+            case ELECTION_START -> "Started a " + name + " election";
+            case ELECTION_RESTART -> "Started its own Bully election after an election message from node " + peerId;
+            case OK_RECEIVED -> "Node " + peerId + " answered, so this node waits for the coordinator announcement";
+            case WAITING_FOR_COORDINATOR -> "Waiting for the coordinator announcement";
+            case ELECTED -> BULLY.equals(algorithm)
+                    ? "Elected itself coordinator: no higher node answered"
+                    : "The ring token came back: node " + coordinator + " has the highest id and wins";
+            case COORDINATOR_ACCEPTED -> "Accepted node " + (coordinator != null ? coordinator : peerId) + " as coordinator";
+            case TOKEN_FORWARDED -> "Forwarded the ring token to node " + peerId;
+            case DEAD_NODE_SKIPPED -> "Skipped dead node " + peerId;
+            case ELECTION_TIMEOUT -> BULLY.equals(algorithm)
+                    ? "No coordinator announcement arrived in time; starting again"
+                    : "The ring token did not come back in time";
+            case CRASH -> "Node crashed";
+            case RECOVER -> "Node recovered";
+            case UNKNOWN_SENDER -> "Ignored a message of an unknown type from node " + peerId;
+            case LATE_MESSAGE -> "Ignored a late answer from node " + peerId;
+        };
     }
 
     /** {@link ElectionMessenger}: stamps with the node clock (L4 Rule 2) and sends. */
@@ -363,7 +411,7 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
         if (transmit(targetNodeId, out) && PUBLISHED_TYPES.contains(out.type())) {
             bus.publish(EventDraft.of(MODULE, node.id(), MESSAGE_SENT, stamped)
                     .withPeer(targetNodeId)
-                    .withMessage(out.type() + " to node " + targetNodeId)
+                    .withMessage(messageName(out.type()) + " to node " + targetNodeId)
                     .withData(Map.of("messageType", out.type().name())));
         }
     }
@@ -444,7 +492,7 @@ public class ElectionNodeService implements NodeService, ElectionParticipant {
         if (PUBLISHED_TYPES.contains(message.type())) {
             bus.publish(EventDraft.of(MODULE, node.id(), MESSAGE_RECEIVED, received)
                     .withPeer(message.senderId())
-                    .withMessage(message.type() + " from node " + message.senderId())
+                    .withMessage(messageName(message.type()) + " from node " + message.senderId())
                     .withData(Map.of("messageType", message.type().name(), "causedByTime", message.lamportTime())));
         }
         switch (message.type()) {
