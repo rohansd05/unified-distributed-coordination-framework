@@ -27,7 +27,7 @@
 
 ### Steps
 - [x] E7a — the jobs and the split, map, combine, shuffle, partition and reduce pipeline as pure classes. Needs: E3d.
-- [ ] E7b — MapReduce workers on `ports().mapreduce()` (730k) with task retry. Needs: E7a.
+- [x] E7b — MapReduce workers on `ports().mapreduce()` (730k) with task retry. Needs: E7a.
 - [ ] E7c — `MapReduceModule` (lab 7) and its API; inputs: bundled sample, uploaded .txt (size-capped), live event log; build `EventLogExporter` and `GET /api/events/export` (link L5). Needs: E7b.
 - [ ] E7d — the pipeline page and end-to-end check. Needs: E7c, E2d.
 
@@ -64,7 +64,7 @@
   - `distributed_clock_value`: gauge per node tagged with `node_id`, reading current Lamport clock value
 - **Frontend Fixtures:**
   - Real contract JSON fixtures exported to `frontend/src/test/fixtures/clocksync/` (14 JSON files + `README.md`)
-- **MapReduce Pipeline & Transport API (E7a -> E7b for Jai):**
+- **MapReduce Pipeline & Transport API (E7a -> E7b):**
   - **TaskTransport Interface:** `@FunctionalInterface public interface TaskTransport` with `String executeTask(int targetNodeId, TaskType taskType, String jobName, String payload) throws IOException`, using enum `TaskType { MAP, REDUCE }`. E7a provides `TaskTransport.inMemory(JobRegistry)`. Step E7b implements `TaskTransport` over TCP on `ports().mapreduce()` (730k).
   - **Wire Payloads & Encoding:** Fields Base64-encoded to round-trip tabs, newlines, carriage returns, `\u0001`, `=`, `#`, empty strings, and non-ASCII text without delimiter collision:
     - MAP task payload: raw split lines joined with `\n`.
@@ -76,6 +76,29 @@
   - **Task Timeout and Retry:** Default task timeout is 15 seconds (Appendix B, configurable via constructor). If a worker task times out or throws `IOException`, the coordinator cancels/interrupts and retries on `(preferredIndex + attempt) % workerIds.size()`. If all workers fail, throws `IOException`.
   - **Lamport Stamping Seam:** The pure pipeline does not instantiate or stamp a Lamport clock. Per Condition 7 and Rule L4, Lamport logical clock stamping (tick on send, update on receive via `ClusterNode.clock()`) belongs strictly to the **E7b** network transport layer when messages cross TCP sockets.
   - **Default Reducers R:** The default reducer count R equals the number of worker IDs passed to the pipeline ($R = \text{workerIds.size()}$, matching HANDOFF Appendix B: `floorMod(key.hashCode(), R)`). The pipeline does not decide which cluster nodes act as workers; E7b/E7c pass the worker list based on cluster configuration (HANDOFF Section 6.2: "Cluster holds ClusterNodes. Size comes from configuration: default 5 locally, 3 in the public profile to save memory").
+- **MapReduce TCP Workers & Transport (E7b):**
+  - **Reserved Test Port Range:** Service tests `24301–24305`, pipeline over TCP tests `24351–24355`, squatter test `24851` (Track D reserved block `24100–24899`, Linux-safe below 32768).
+  - **Service Factory API:** `MapReduceNodeService.on(ClusterNode node, Cluster cluster, JobRegistry jobRegistry, EventBus bus, MapReduceProperties properties)` creates and attaches/retrieves the `mapreduce` `NodeService` bound to `127.0.0.1:ports().mapreduce()`.
+  - **Lazy Workers Warning (for E7c):** `TcpTaskTransport` never starts services on other nodes. E7c must call `MapReduceNodeService.on(...)` (or ensureService) for every live worker before a run, otherwise a not-yet-started worker looks like a crashed one.
+  - **Transport Constructor:** `public TcpTaskTransport(Cluster cluster, ClusterNode coordinatorNode, EventBus bus, MapReduceProperties properties)` implements `TaskTransport` over TCP.
+  - **Wire Protocol:** Line-based TCP request/reply framed by `\n`, bounded by `maxRequestBytes` (default 4MB, 1MB in public profile; usable payload ~0.75 x maxRequestBytes):
+    - Request: `<TASK_TYPE>|<senderId>|<lamportTime>|<taskId>|<jobName>|<base64Payload>\n` (where `taskId` is integer or `-` if unknown per R7).
+    - Success Reply: `OK|<nodeId>|<lamportTime>|<taskId>|<base64Result>\n`
+    - Error Reply: `ERROR|<nodeId>|<lamportTime>|<taskId or ->|<base64Error>\n` (error text Base64-encoded to protect against delimiter collision or newlines).
+  - **Bounded Concurrency:** Worker thread pool is fixed (`workerThreads: 4`) with bounded task queue (`queueCapacity: 32`). Full queue immediately returns `ERROR` with "Worker is busy" (Base64-encoded) and closes connection.
+  - **Interruptible Transport:** The coordinator reads through the `SocketChannel`'s socket adaptor stream, so `socketReadTimeoutMillis` is honoured (`SocketTimeoutException`) and cancelling the attempt still closes the channel (`ClosedByInterruptException`); the server side uses a classic `Socket` whose `SO_TIMEOUT` frees a worker thread held by an idle client. The request write and the connect call have no timeout of their own and rely on the pipeline's task cancel (harmless on loopback).
+  - **One Tick per Message:** Lamport logical clock tick is shared between wire message and corresponding cluster event (`TASK_SENT` on coordinator; `TASK_COMPLETED`/`TASK_FAILED`/`REQUEST_REFUSED` on worker).
+  - **Cluster Event Shapes (`module = "mapreduce"`):**
+    - `TASK_SENT`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "targetNodeId": ...}`
+    - `TASK_RECEIVED`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "senderId": ...}`
+    - `TASK_COMPLETED`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "executionMillis": ..., "resultBytes": ...}`
+    - `TASK_FAILED`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "reason": ...}` (execution failures of valid tasks)
+    - `REQUEST_REFUSED`: data `{"reason": ..., "workerId": ..., "taskId": ..., "taskType": ...}` (protocol rejections: bad sender, out-of-range clock, unknown task type, oversize, busy queue)
+    - `TASK_ATTEMPT_FAILED`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "workerId": ..., "reason": ...}` (coordinator-side failed attempts before pipeline retry)
+    - `SERVICE_START_FAILED`: published on socket bind failure
+  - **Role Selector:** `MapReduceRoleSelector.selectCoordinator(cluster)` returns lowest live node ID; `MapReduceRoleSelector.selectWorkers(cluster)` returns all live nodes (`// TODO(L1)`).
+
+  Linux (Docker, 2 CPUs): the five new test classes (40 tests) passed 5 runs in a row; full backend suite <total> tests, 0 failures, 1 skipped.
 
 ---
 
@@ -98,8 +121,9 @@
 - 2026-10-08 E3b done: clock UDP service on ports().clock() (600k) with Lamport and Berkeley sync; backend 482 tests, frontend 232 tests; deviations: none
 - 2026-10-08 E3c done: ClockSyncModule, REST API, metrics (distributed_clock_value), and contract fixtures; backend 509 tests (3 consecutive runs: 509/509/509), frontend 232 tests; deviations: none
 - 2026-10-09 E3d done: Clock Synchronization page at /experiments/3-clocksync on the E2d kit: space-time diagram (horizontal lanes per node, events as circles, UDP message arrows, causal violations marked by triangle shape and text, bounded 40 events with honest retention notice), keyboard-accessible table equivalent in (lamportTime, nodeId) order, Berkeley diverging offset visual centred on 0 ms with honest Not reached reporting for crashed nodes and SimulatedBadge, causal verification panel, local event / UDP message / traffic session / Berkeley round / drift controls with focus management and polite announcements, contract test on the 14 E3c fixtures; unit and contract tests only; live check against the real backend done by hand by Rohan (the agent's browser was unavailable); backend 763 tests, frontend 453 tests (3 runs, baseline 388); deviations: none; approved shared edits: routes.test.jsx (add-only) and the lab 3 concept line in experiments.js.
-- 2026-10-09 E7a done: jobs, log parser, registry, report, and the pure MapReduce pipeline (split, map, combine, shuffle, partition, reduce, retry, timeout) implemented as pure classes; backend 912 tests (3 consecutive runs: 912/912/912), frontend 453 tests; deviations: none
+- 2026-10-09 E7a done: jobs, log parser, registry, report, and the pure MapReduce pipeline (split, map, combine, shuffle, partition, reduce, retry, timeout) implemented as pure classes; backend 915 tests (3 consecutive runs: 915/915/915), frontend 453 tests; deviations: none
   Linux (Docker, 2 CPUs): 915 tests, 0 failures, 1 skipped.
   Test resource framework-events.log was excluded by .gitignore; fixed with a narrow exception.
+- 2026-10-09 E7b done: MapReduce workers on ports().mapreduce() (730k) with task retry over TCP; backend 1000 tests (3 consecutive runs: 1000/1000/1000, baseline 960); new test classes: 40 tests (5 consecutive runs: 40/40/40/40/40); deviations: two package-private test accessors (workerPool(), inboundConnections()) in MapReduceNodeService so tests wait without sleeping
 
 
