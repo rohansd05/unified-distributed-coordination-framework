@@ -76,6 +76,8 @@ udcf:
     ring-completion-timeout-millis: 5000
     heartbeat-interval-millis: 700
     heartbeat-timeout-millis: 2500
+    # ElectionModule: a round not agreed within this is closed as TIMED_OUT and not measured.
+    round-timeout-millis: 10000
   # Experiment 5 (lab 5). Replication over TCP 710k; the primary is the lowest live node until Phase 9A (L1).
   replication:
     # SIMULATED (R7): stands in for wide-area latency on asynchronous pushes only (Appendix B: 450 ms).

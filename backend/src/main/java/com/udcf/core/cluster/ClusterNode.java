@@ -7,11 +7,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
@@ -36,6 +39,13 @@ import java.util.function.Function;
  * <p><b>Thread safety.</b> {@code crash}, {@code recover}, {@code ensureService} and
  * {@code stop} are mutually exclusive on one node. {@link #status()} and {@link #isUp()}
  * read a volatile field and never wait.</p>
+ *
+ * <p><b>Roles</b> ({@link NodeRole}) are guarded by their own small lock, never by the
+ * lifecycle lock, and nothing waits while holding it. {@link #crash()} holds the lifecycle
+ * lock while services join their threads; an election thread can therefore still grant or
+ * revoke a role meanwhile without deadlocking. A crashed node holds no role: {@code crash()}
+ * clears them after setting CRASHED, and a role is never granted to a crashed node. Recovery
+ * does not restore roles.</p>
  */
 public class ClusterNode {
 
@@ -52,6 +62,8 @@ public class ClusterNode {
 
     private volatile NodeStatus status = NodeStatus.UP;
     private List<String> runningAtCrash = List.of();                           // guarded by lock
+    private final Object rolesLock = new Object();
+    private final EnumSet<NodeRole> roles = EnumSet.noneOf(NodeRole.class);    // guarded by rolesLock
 
     public ClusterNode(int id, NodeCapacity capacity, NodePorts ports, ClusterEventBus bus) {
         if (id < 1) {
@@ -86,6 +98,42 @@ public class ClusterNode {
 
     public boolean isUp() {
         return status == NodeStatus.UP;
+    }
+
+    /** This node's roles, a snapshot in {@link NodeRole} order. */
+    public Set<NodeRole> roles() {
+        synchronized (rolesLock) {
+            return roles.isEmpty() ? Set.of() : Collections.unmodifiableSet(EnumSet.copyOf(roles));
+        }
+    }
+
+    public boolean hasRole(NodeRole role) {
+        synchronized (rolesLock) {
+            return roles.contains(role);
+        }
+    }
+
+    /**
+     * Grants {@code role} unless the node is crashed. Only {@link Cluster#assignLeader} calls it.
+     *
+     * @return whether the node holds the role afterwards
+     */
+    boolean grantRole(NodeRole role) {
+        Objects.requireNonNull(role, "role must not be null");
+        synchronized (rolesLock) {
+            if (status != NodeStatus.UP) {
+                return false;
+            }
+            roles.add(role);
+            return true;
+        }
+    }
+
+    /** Removes {@code role}; returns whether the node held it. */
+    boolean revokeRole(NodeRole role) {
+        synchronized (rolesLock) {
+            return roles.remove(role);
+        }
     }
 
     /**
@@ -213,6 +261,9 @@ public class ClusterNode {
                 }
             }
             status = NodeStatus.CRASHED;
+            synchronized (rolesLock) {
+                roles.clear();   // after CRASHED, so a concurrent grant either sees CRASHED or is cleared here
+            }
             runningAtCrash = List.copyOf(running);
             publish("NODE_CRASHED", "Node " + id + " crashed",
                     Map.of("services", runningAtCrash, "failures", List.copyOf(failures)));

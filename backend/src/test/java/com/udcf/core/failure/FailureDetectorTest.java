@@ -245,6 +245,27 @@ class FailureDetectorTest {
     }
 
     @Test
+    @DisplayName("reset gives a fresh view (no suspicion, nothing heard, grace from now) and keeps active as it was")
+    void resetGivesFreshViewWithoutChangingActive() {
+        detector.start();
+        detector.onHeartbeat(3);
+        advance(3000);
+        detector.tick();
+        assertThat(detector.suspectedPeers()).containsExactlyInAnyOrder(2, 3);
+        detector.reset();
+        assertThat(detector.isActive()).isTrue();
+        assertThat(detector.peers()).containsExactly(new PeerHealth(2, false, null), new PeerHealth(3, false, null));
+        advance(2500);
+        detector.tick();
+        assertThat(detector.suspectedPeers()).isEmpty();
+        assertThat(events()).hasSize(2);   // the reset itself published nothing
+
+        detector.stop();
+        detector.reset();
+        assertThat(detector.isActive()).isFalse();
+    }
+
+    @Test
     @DisplayName("the config needs a positive interval and a timeout above it")
     void configRejectsNonPositiveOrTimeoutNotAboveInterval() {
         assertThatIllegalArgumentException().isThrownBy(() -> new FailureDetectorConfig(0, 2500));

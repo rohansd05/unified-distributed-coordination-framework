@@ -36,7 +36,7 @@ class ElectionOverUdpTest {
     private static final ClusterProperties CLUSTER = new ClusterProperties(5,
             List.of(FAST, MEDIUM, SLOW, MEDIUM, FAST),
             new ClusterProperties.Ports(26200, 26210, 26220, 26230, 26240, 26250));
-    private static final ElectionProperties PROPERTIES = new ElectionProperties(400, 1500, 150, 3000, 100, 1500);
+    private static final ElectionProperties PROPERTIES = new ElectionProperties(400, 1500, 150, 3000, 100, 1500, 10000);
     private static final Set<String> ELECTION_TYPES =
             Set.of("ELECTION", "OK", "COORDINATOR", "RING_ELECTION", "RING_COORDINATOR");
 

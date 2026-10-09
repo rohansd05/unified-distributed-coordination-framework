@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useCluster } from '@/hooks/useCluster'
-import { isNodeCrashed } from '@/lib/clusterStatus'
+import { isLeader, isNodeCrashed } from '@/lib/clusterStatus'
 
 /** Sizing configuration per capacity profile (scaled up for projector legibility) */
 const CAPACITY_CONFIG = {
@@ -80,7 +80,6 @@ export function ClusterGraph({
     const y = cy + ringRadius * Math.sin(angle)
     const cap = CAPACITY_CONFIG[node.capacity?.name] || CAPACITY_CONFIG.MEDIUM
     const crashed = isNodeCrashed(node)
-    const isLeader = Array.isArray(node.roles) && node.roles.includes('leader')
     const isSelected = selectedNodeId === node.id
 
     return {
@@ -92,7 +91,7 @@ export function ClusterGraph({
       threads: node.capacity?.threads ?? cap.threads,
       capacityName: node.capacity?.name ?? 'MEDIUM',
       isCrashed: crashed,
-      isLeader,
+      isLeader: isLeader(node),
       isSelected,
     }
   })

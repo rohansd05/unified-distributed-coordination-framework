@@ -22,6 +22,9 @@ import org.springframework.validation.annotation.Validated;
  * @param heartbeatIntervalMillis     failure detector: heartbeat to every peer this often (700 ms)
  * @param heartbeatTimeoutMillis      failure detector: suspect a peer silent for longer (2500 ms);
  *                                    must exceed the interval
+ * @param roundTimeoutMillis          ElectionModule: an election round not agreed within this is
+ *                                    closed as TIMED_OUT and not measured (10000 ms); must exceed
+ *                                    the ring completion timeout and OK + coordinator timeouts
  */
 @Validated
 @ConfigurationProperties("udcf.election")
@@ -31,13 +34,21 @@ public record ElectionProperties(
         @Min(1) long probeTimeoutMillis,
         @Min(1) long ringCompletionTimeoutMillis,
         @Min(1) long heartbeatIntervalMillis,
-        @Min(1) long heartbeatTimeoutMillis
+        @Min(1) long heartbeatTimeoutMillis,
+        @Min(1) long roundTimeoutMillis
 ) {
 
     public ElectionProperties {
         // Both conversions validate (positive values, probe < OK, heartbeat timeout > interval).
         toElectionConfig(okTimeoutMillis, coordinatorTimeoutMillis, probeTimeoutMillis, ringCompletionTimeoutMillis);
         new FailureDetectorConfig(heartbeatIntervalMillis, heartbeatTimeoutMillis);
+        if (roundTimeoutMillis <= ringCompletionTimeoutMillis
+                || roundTimeoutMillis <= okTimeoutMillis + coordinatorTimeoutMillis) {
+            throw new IllegalArgumentException("roundTimeoutMillis (" + roundTimeoutMillis
+                    + ") must exceed ringCompletionTimeoutMillis (" + ringCompletionTimeoutMillis
+                    + ") and okTimeoutMillis + coordinatorTimeoutMillis ("
+                    + (okTimeoutMillis + coordinatorTimeoutMillis) + ")");
+        }
     }
 
     public ElectionConfig toElectionConfig() {

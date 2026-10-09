@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isLeader,
   isNodeCrashed,
   isNodeUp,
   nodeActionLabel,
@@ -38,5 +39,16 @@ describe('clusterStatus helper', () => {
     expect(nodeActionLabel({ id: 2, status: 'DOWN' })).toBe('Recover node 2')
     expect(nodeActionLabel({ id: 1, status: 'UP' })).toBe('Crash node 1')
     expect(nodeActionLabel(null)).toBe('')
+  })
+
+  it('identifies the leader by role, ignoring case', () => {
+    expect(isLeader({ roles: ['LEADER'] })).toBe(true)
+    expect(isLeader({ roles: ['leader'] })).toBe(true)
+    expect(isLeader({ roles: ['PRIMARY', 'LEADER'] })).toBe(true)
+    expect(isLeader({ roles: [] })).toBe(false)
+    expect(isLeader({ roles: ['PRIMARY'] })).toBe(false)
+    expect(isLeader({})).toBe(false)
+    expect(isLeader(null)).toBe(false)
+    expect(isLeader(undefined)).toBe(false)
   })
 })

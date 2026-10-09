@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useStomp } from '@/hooks/useStomp'
 import { useCluster } from '@/hooks/useCluster'
 import { cn } from '@/lib/utils'
+import { isLeader } from '@/lib/clusterStatus'
 
 /**
  * Status bar above every page.
@@ -41,9 +42,7 @@ export function TopBar({ menuOpen, onToggleMenu, menuButtonRef }) {
 
   let leaderDisplay = '—'
   if (!loading) {
-    const leaderNode = cluster?.nodes?.find((n) =>
-      Array.isArray(n.roles) && n.roles.some((r) => r.toUpperCase() === 'LEADER'),
-    )
+    const leaderNode = cluster?.nodes?.find(isLeader)
     leaderDisplay = leaderNode ? String(leaderNode.id) : 'None elected'
   }
 

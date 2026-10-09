@@ -66,6 +66,23 @@ describe('ClusterGraph', () => {
     expect(crashedText).toBeTruthy()
   })
 
+  it('marks the node whose roles include LEADER, in the backend\'s upper case or in lower case', () => {
+    const withLeader = MOCK_NODES.map((node) => (node.id === 3 ? { ...node, roles: ['LEADER'] } : node))
+    render(<ClusterGraph nodes={withLeader} />)
+    expect(screen.getAllByLabelText('Elected cluster leader')).toHaveLength(1)
+
+    cleanup()
+
+    const lowerCase = MOCK_NODES.map((node) => (node.id === 1 ? { ...node, roles: ['leader'] } : node))
+    render(<ClusterGraph nodes={lowerCase} />)
+    expect(screen.getAllByLabelText('Elected cluster leader')).toHaveLength(1)
+
+    cleanup()
+
+    render(<ClusterGraph nodes={MOCK_NODES} />)
+    expect(screen.queryByLabelText('Elected cluster leader')).toBeNull()
+  })
+
   it('displays explicit SVG focus ring on keyboard focus; selection remains unchanged until Enter (D2)', () => {
     const handleSelect = vi.fn()
     render(<ClusterGraph nodes={MOCK_NODES} selectedNodeId={1} onSelectNode={handleSelect} />)

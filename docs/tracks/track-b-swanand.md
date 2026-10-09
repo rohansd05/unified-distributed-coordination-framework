@@ -15,7 +15,7 @@
 ### Steps
 - [x] E4a — Bully and Ring as pure classes, plus the consensus check. Needs: none.
 - [x] E4b — election UDP service on `ports().election()` (700k), and the SHARED `core/failure/FailureDetector` (heartbeats on the election channel, 700 ms interval, 2500 ms timeout; publishes suspect and alive events; link L2). Document its API under "Interfaces for other tracks". Needs: E4a.
-- [ ] E4c — `ElectionModule` (lab 4): start Bully or Ring from node X, the current leader, the consensus check, automatic re-election when the leader crashes; add the cluster roles API (roles on `ClusterNode`, `NodeDto.roles`, "LEADER" shown in the top bar); metrics `distributed_leader_elections_total` and `distributed_election_duration`; fixtures. Needs: E4b.
+- [x] E4c — `ElectionModule` (lab 4): start Bully or Ring from node X, the current leader, the consensus check, automatic re-election when the leader crashes; add the cluster roles API (roles on `ClusterNode`, `NodeDto.roles`, "LEADER" shown in the top bar); metrics `distributed_leader_elections_total` and `distributed_election_duration`; fixtures. Needs: E4b.
 - [ ] E4d — page and end-to-end check. Needs: E4c, E2d.
 
 ---
@@ -61,6 +61,34 @@
 - Each node has its own view. Only changes are published: `PEER_SUSPECTED` and `PEER_ALIVE` (module `election`, peer, data `{silentMillis, timeoutMillis}`).
 - A node's detector stops on crash and restarts with a fresh view (no suspicions) on recover.
 - It has no threads of its own: the owner drives `tick()` and `onHeartbeat(peerId)`. A new owner would build it with `new FailureDetector(node, peerIds, config, module, heartbeatSender, bus, nanoClock)`.
+
+### E4c APIs: ElectionModule, the cluster roles API, and the REST endpoints
+
+**Cluster roles (core; only the election module assigns them)**
+- `NodeRole` enum: `LEADER` (PRIMARY/BACKUP join in Phase 9A, L1).
+- `ClusterNode.roles()` (snapshot), `hasRole(NodeRole)`. Grant and revoke are package-private: only `Cluster.assignLeader` changes roles. A crashed node holds no role: `crash()` clears them, a crashed node is never granted one, and recovery does not restore them.
+- `Cluster.leaderId()` returns `Optional<Integer>`; `Cluster.assignLeader(Integer nodeId)` makes that node the only `LEADER`, or removes the leader when `null` or crashed.
+- `LEADER_CHANGED` (module `cluster`, node 0, cluster clock, peer = new leader, data `{leaderId, previousLeaderId}`) is published on every change, including when `Cluster.crash(id)` takes the leader down. It goes to `/topic/cluster`, so the frontend's `ClusterProvider` refetches `GET /api/cluster` and the top bar updates.
+- `NodeDto.roles`: role names, `["LEADER"]` on the leader, `[]` elsewhere and on every node before the first election. Frontend helper: `isLeader(node)` in `frontend/src/lib/clusterStatus.js` (case-insensitive).
+- Locks: roles use their own lock per node, never the node's lifecycle lock; `assignLeader` takes `leaderLock`, then roles locks, then the bus publish lock, and none of them is ever held while a thread is joined. An election worker may therefore assign the leader while `Cluster.crash` is joining it.
+
+**`ElectionModule`** (id `election`, lab 4, "Bully and Ring Election")
+- **Lazy start.** Nothing starts the election services at boot, so the FailureDetector does not run until the first election request. E8b, and any module that needs the detector, must start the services itself with `ElectionNodeService.on(node, cluster, properties, bus)` on every node, then use `failureDetector().addListener(...)`.
+- Leader rule: when every live node agrees on one live coordinator (after an ELECTED or COORDINATOR_ACCEPTED event), that node becomes the cluster leader. Otherwise the leader stays as it is (sticky); only a crash of the leader or a reset removes it.
+- Automatic re-election (L2): a node whose detector suspects the leader it knows starts Bully; exactly one `LEADER_FAILURE` round opens however many nodes detect it. A recovered node runs Bully (E4a), a `RECOVERY` round. A node that was down when the services first started gets its service when it recovers (bus `NODE_RECOVERED` handler on the event dispatcher thread, which delivers asynchronously).
+- Rounds: one open at a time. They end `ELECTED` (measured) or `TIMED_OUT` after `udcf.election.round-timeout-millis` (10000 ms; unmeasured, no metric). Events `ELECTION_ROUND_STARTED` and `ELECTION_ROUND_FINISHED` (module `election`, data `{roundId, algorithm, trigger, initiatorNodeId, outcome, leaderId, durationMillis}`).
+- Status: BUSY while a round is open or an action runs; RUNNING once election services run; IDLE before the first election.
+- `reset()`: halts every election service (joins all threads, drops pending timers), clears the rounds and the leader, then gives every service fresh algorithms and a fresh detector view and reopens those that were running. Starts no election; ignores `NODE_RECOVERED` events published before it.
+- `ElectionNodeService.halt()` returns whether the service was running; `resetState(boolean reopen)` rebuilds it (both E4c additions).
+
+**REST** (`/api/modules/election`; errors are the shared ProblemDetail)
+- `GET` returns `{status, leaderId, servicesStarted, nodes[{nodeId, status, serviceRunning, coordinatorId, suspectedPeers, port}], consensus, currentRound, lastRound, settings}`. It never starts a service.
+- `POST /elections` with `{"algorithm":"BULLY"|"RING","nodeId":k}` answers **202** with the round `{roundId, algorithm, trigger, initiatorNodeId, startedAt, outcome, leaderId, durationMillis}`. 400 for invalid input, 404 for an unknown node, 409 for a node that is down or a module that is busy (`moduleId`, `actionInProgress`).
+- `GET /consensus` returns `{reached, coordinatorId, coordinatorAlive, passed, disagreeingNodes}`. `passed = reached && coordinatorAlive`; a live node without a running election service counts as disagreeing.
+- Crash and recover use the cluster API (`POST /api/cluster/nodes/{id}/crash|recover`).
+- Contract fixtures: `frontend/src/test/fixtures/election/` (see its README).
+
+**Metrics** (R5): `distributed_leader_elections_total{node_id = elected leader, algorithm, trigger}` and `distributed_election_duration{node_id = initiating node, algorithm, trigger}` (Timer). Timed-out rounds record nothing.
 
 ### E4a: Election Events
 The `ElectionEventType` enum exposes these algorithm-level statuses:
@@ -150,9 +178,31 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 
 ---
 
+## Requirements Coverage (E4c)
+
+| Requirement | Implementation / Rule | Test |
+|---|---|---|
+| Start Bully or Ring from node X (202), lazy start of every service | `ElectionModule.startElection`, `ElectionController` | `ElectionModuleTest.manualBullyElectsHighestAssignsLeaderAndRecordsMetrics`, `idleBeforeFirstElectionAndOverviewStartsNothing`, `ElectionControllerTest.postStartsBullyReturns202ThenLeaderAppearsInClusterApi` |
+| Current leader as the cluster role LEADER; one leader; none on a crashed node | `Cluster.assignLeader`, `ClusterNode` roles, `NodeDto.roles` | `ClusterRolesTest` (8 tests) |
+| LEADER_CHANGED on every change, including a leader crash | `Cluster.assignLeader`, `Cluster.crash` | `ClusterRolesTest.assignLeaderGrantsOnlyOneLeaderAndPublishesChange`, `crashClearsRolesAndPublishesLeaderLost` |
+| No deadlock between leader assignment and a crash joining election threads | Roles lock separate from the lifecycle lock | `ClusterRolesTest.crashRacingWithLeaderAssignmentDoesNotDeadlock` |
+| Consensus check: live nodes agree on one live leader | `ElectionModule.consensus` (E4a checker + liveness) | `ElectionModuleTest.consensusPassesThenFailsWhenLeaderCrashes`, `ElectionControllerTest.consensusEndpointShape` |
+| Automatic re-election when the leader crashes (L2) | Detector listener starts Bully; LEADER_FAILURE round | `ElectionModuleTest.crashingLeaderTriggersAutomaticReElection` |
+| Exactly one round for simultaneous detections | `ElectionRoundTracker.open` (atomic) | `ElectionRoundTrackerTest.concurrentOpenersOpenExactlyOneRound`, `ElectionModuleTest.concurrentLeaderSuspicionsOpenExactlyOneRound` |
+| Ring skips a dead node | E4a Ring over E4b transport | `ElectionModuleTest.ringSkipsDeadNodeAndElectsHighest` |
+| Recovered highest node reclaims leadership | E4a Bully on recovery; NODE_RECOVERED handler | `ElectionModuleTest.recoveredHighestNodeReclaimsLeadership`, `nodeCrashedBeforeFirstElectionJoinsWhenRecovered` |
+| 409 busy, 409 node down, 404 unknown node, 400 invalid | Guard + open round; shared handler | `ElectionModuleTest.secondStartWhileRoundOpenIsBusy`, `startFromCrashedOrUnknownNodeFails`, `ElectionControllerTest` (4 tests) |
+| Metrics with node_id, algorithm, trigger; timed-out rounds record nothing (R5, R7) | `ElectionMetrics` | `ElectionMetricsTest` (3 tests), `ElectionModuleTest.overdueRoundTimesOutWithoutMetrics` |
+| Round timeout | `ElectionRoundTracker.expireIfOverdue`, `round-timeout-millis` | `ElectionRoundTrackerTest.expiresOverdueRoundAsTimedOutWithNullDuration`, `ElectionPropertiesTest.rejectsRoundTimeoutNotAboveElectionTimeouts` |
+| Clean-slate reset; earlier recoveries ignored | `ElectionModule.reset`, `ElectionNodeService.halt/resetState`, `FailureDetector.reset` | `ElectionModuleTest.resetClearsLeaderRoundAndCoordinatorsAndIgnoresEarlierRecoveries`, `ElectionNodeServiceTest.haltJoinsThreadsAndReportsWasRunning`, `resetStateClearsCoordinatorAndReopens`, `FailureDetectorTest.resetGivesFreshViewWithoutChangingActive` |
+| LEADER shown in the top bar and on the topology | `isLeader` in `clusterStatus.js`, `TopBar.jsx`, `ClusterGraph.jsx` | `clusterStatus.test.js`, `TopBar.test.jsx` (real fixtures), `ClusterGraph.test.jsx` |
+| Contract fixtures | Captured live with curl.exe | `frontend/src/test/fixtures/election/README.md` |
+
+---
+
 ## Deviations
 
-- L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: ~11 ticks per second per node at 5 nodes would inflate Experiment 3 values and break the fresh-backend all-zero state. Awaiting Rohan's sign-off at PR review.
+- L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: at about 11 ticks per second per node (5 nodes) the Lamport values shown by Experiment 3 would change without any user action. Awaiting Rohan's sign-off at PR review.
 
 ---
 
@@ -164,6 +214,11 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - E4b: E4a's `getCoordinatorId()` reads a non-volatile field. The transport only reads it on the worker thread and exposes its own volatile `coordinatorId()`; other code should use that (no E4a edit, by decision).
 - E4b: a Ring election started when every other node is dead never elects anyone (E4a ring-of-one behaviour): it ends in `ELECTION_TIMEOUT` after 5000 ms. E4c should use Bully for automatic re-election.
 - E4b: verified on Windows only (three full runs). The five Linux (Docker, 2 CPUs) runs of the new classes are still to be done by Swanand.
+- E4c: a Ring election with only one live node never elects anyone and its round ends TIMED_OUT after `round-timeout-millis` (10000 ms), unmeasured. Automatic re-election therefore always uses Bully.
+- E4c: the duration of a LEADER_FAILURE round is measured from the detection (the first node's failure detector suspecting the leader, about 2500 ms after the crash), not from the crash itself.
+- E4c: nothing starts the election services at boot, so the FailureDetector is idle until the first election request. E8b and any other module that needs the detector must start the services itself with `ElectionNodeService.on(...)`.
+- E4c: between a leader crash and the agreement on a new leader (about 2.5 to 3 s with the default timings) the cluster has no LEADER; the top bar shows "None elected" during that gap.
+- E4c: verified on Windows only (three backend and three frontend runs). The Linux (Docker) runs of the new classes are still to be done by Swanand.
 
 ---
 
@@ -172,3 +227,4 @@ The `ElectionEventType` enum exposes these algorithm-level statuses:
 - 2026-10-07 track file created.
 - 2026-10-08 E4a completed (baseline 525, total 579; 54 election tests covering all scenarios including stale timers, crash safety, 1024-char limit, probe event absence, and action loop crash guards).
 - 2026-10-09 E4b done: election UDP transport (`ElectionNodeService`, worker-only algorithm work, joined lifecycle) and the shared `core/failure/FailureDetector` (700/2500 ms heartbeats, PEER_SUSPECTED/PEER_ALIVE); backend 852 tests (baseline 817 + 35), frontend not run (no frontend change); deviations: heartbeats exempt from L4 (awaiting Rohan's sign-off), `HEARTBEAT` added to E4a's `ElectionMessageType` (approved).
+- 2026-10-09 E4c done: `ElectionModule` (lab 4: Bully/Ring from any node, sticky LEADER role, consensus check, automatic Bully re-election on leader failure, rounds with timeout, clean-slate reset), cluster roles API (`NodeRole`, `ClusterNode.roles`, `Cluster.assignLeader`, `LEADER_CHANGED`, `NodeDto.roles`), REST, metrics, 22 live contract fixtures, `isLeader` in top bar and topology; backend 893 tests (baseline 852 + 41), frontend 391 tests (baseline 388 + 3); deviations: none beyond the approved plan (added `ElectionRound` record; `ElectionNodeService.halt/resetState` and `FailureDetector.reset` as approved in Q7).

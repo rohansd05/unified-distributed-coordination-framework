@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Module busy","status":409,"detail":"Module 'election' is busy: 'Ring election round 3 from node 2 (started by hand)' is in progress","instance":"/api/modules/election/elections","moduleId":"election","actionInProgress":"Ring election round 3 from node 2 (started by hand)"}

@@ -120,6 +120,16 @@ public class FailureDetector {
     public void start() {
         synchronized (lock) {
             active = true;
+            reset();
+        }
+    }
+
+    /**
+     * A fresh view without changing whether the detector is active: no peer suspected, none
+     * heard, every peer's silence counted from now. Publishes nothing (a clean-slate reset).
+     */
+    public void reset() {
+        synchronized (lock) {
             startedAtNanos = nanoClock.getAsLong();
             records.values().forEach(record -> {
                 record.lastHeardNanos = null;

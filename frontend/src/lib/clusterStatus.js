@@ -41,6 +41,18 @@ export function nodeStatusLabel(node) {
 }
 
 /**
+ * Returns true if the node holds the cluster leader role. The backend sends "LEADER"
+ * (NodeDto.roles); the check ignores case, so "leader" also counts.
+ *
+ * @param {{ roles?: string[] } | null | undefined} node
+ * @returns {boolean}
+ */
+export function isLeader(node) {
+  if (!node || !Array.isArray(node.roles)) return false
+  return node.roles.some((role) => String(role).toUpperCase() === 'LEADER')
+}
+
+/**
  * Returns the action button label for a node ("Recover node <id>" or "Crash node <id>").
  *
  * @param {{ id: number|string, status?: string } | null | undefined} node
