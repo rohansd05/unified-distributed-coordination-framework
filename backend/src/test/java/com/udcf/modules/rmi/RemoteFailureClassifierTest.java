@@ -8,7 +8,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InvalidClassException;
 import java.io.NotSerializableException;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.rmi.ConnectException;
 import java.rmi.ConnectIOException;
@@ -22,7 +24,9 @@ import java.rmi.UnknownHostException;
 import java.rmi.UnmarshalException;
 import java.util.stream.Stream;
 
+import static com.udcf.modules.rmi.RemoteFailureKind.ARGUMENTS_REJECTED;
 import static com.udcf.modules.rmi.RemoteFailureKind.CONNECTION_FAILED;
+import static com.udcf.modules.rmi.RemoteFailureKind.CONNECTION_LOST;
 import static com.udcf.modules.rmi.RemoteFailureKind.CONNECTION_REFUSED;
 import static com.udcf.modules.rmi.RemoteFailureKind.MARSHAL_FAILED;
 import static com.udcf.modules.rmi.RemoteFailureKind.METHOD_THREW;
@@ -58,8 +62,33 @@ class RemoteFailureClassifierTest {
                 Arguments.of("not bound", new NotBoundException("NodeEndpoint"), NOT_BOUND),
                 Arguments.of("marshal", new MarshalException("error marshalling arguments",
                         new NotSerializableException("x")), MARSHAL_FAILED),
-                Arguments.of("unmarshal", new UnmarshalException("error unmarshalling return", new EOFException()),
-                        UNMARSHAL_FAILED),
+                Arguments.of("unmarshal: the reply's class is refused",
+                        new UnmarshalException("error unmarshalling return",
+                                new InvalidClassException("filter status: REJECTED")), UNMARSHAL_FAILED),
+                Arguments.of("unmarshal: the reply's class is missing",
+                        new UnmarshalException("error unmarshalling return",
+                                new ClassNotFoundException("com.example.Missing")), UNMARSHAL_FAILED),
+                Arguments.of("unmarshal with a refused connection inside is not a lost connection",
+                        new UnmarshalException("error unmarshalling return",
+                                new java.net.ConnectException("Connection refused")), UNMARSHAL_FAILED),
+                // Chains observed in E1b (RmiFailureCharacterisationTest, RmiCrashCycleTest): a pooled
+                // connection to a crashed node reused inside RMI's ~5 ms reuse window.
+                Arguments.of("pooled connection closed by the node (Linux)",
+                        new UnmarshalException("Error unmarshaling return header", new EOFException()),
+                        CONNECTION_LOST),
+                Arguments.of("pooled connection aborted by the node (Windows)",
+                        new UnmarshalException("Error unmarshaling return header", new SocketException(
+                                "An established connection was aborted by the software in your host machine")),
+                        CONNECTION_LOST),
+                Arguments.of("pooled connection reset while sending the arguments",
+                        new MarshalException("error marshalling arguments",
+                                new SocketException("Connection reset by peer")), CONNECTION_LOST),
+                // Observed in E1b (RmiNodeServiceTest): the node's serial filter refused an argument.
+                Arguments.of("arguments refused by the node's serial filter",
+                        new ServerException("RemoteException occurred in server thread",
+                                new UnmarshalException("error unmarshalling arguments",
+                                        new InvalidClassException("filter status: REJECTED"))),
+                        ARGUMENTS_REJECTED),
                 Arguments.of("server exception, even with a timeout inside",
                         new ServerException("RemoteException occurred in server thread",
                                 new RemoteException("inner", new SocketTimeoutException("Read timed out"))),
@@ -102,6 +131,25 @@ class RemoteFailureClassifierTest {
         assertThat(RemoteFailureClassifier.innermostCause(
                 new ConnectException("refused", new java.net.ConnectException("refused"))))
                 .isInstanceOf(java.net.ConnectException.class);
+    }
+
+    @Test
+    @DisplayName("the timeout check still wins over a lost connection, and a server-side timeout stays METHOD_THREW")
+    void orderOfTheConnectionChecks() {
+        assertThat(RemoteFailureClassifier.classify(new UnmarshalException("Error unmarshaling return header",
+                new SocketTimeoutException("Read timed out")), CallStage.CALL)).isEqualTo(TIMED_OUT);
+        assertThat(RemoteFailureClassifier.classify(new ServerException("RemoteException occurred in server thread",
+                new MarshalException("error marshalling return", new EOFException())), CallStage.CALL))
+                .isEqualTo(METHOD_THREW);
+    }
+
+    @Test
+    @DisplayName("the two kinds added in E1b say what happened")
+    void newKindDescriptions() {
+        assertThat(ARGUMENTS_REJECTED.description()).isEqualTo("The node could not read the call's arguments, "
+                + "for example because its serial filter refused them; the method never ran.");
+        assertThat(CONNECTION_LOST.description()).startsWith("The connection to the node broke during the call");
+        assertThat(RemoteFailureKind.UNMARSHAL_FAILED.description()).doesNotContain("connection");
     }
 
     @Test

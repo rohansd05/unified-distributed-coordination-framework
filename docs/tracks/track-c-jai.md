@@ -27,7 +27,7 @@
 
 ### Steps
 - [x] E1a — the `NodeEndpoint` remote interface (ping, nodeInfo, echo, computeHash(rounds)), its implementation, and a local-versus-remote timing helper. Needs: E5d.
-- [ ] E1b — an RMI registry per node on `ports().rmi()` (110k); export on start and recover, unexport on crash. Needs: E1a.
+- [x] E1b — an RMI registry per node on `ports().rmi()` (110k); export on start and recover, unexport on crash. Needs: E1a.
 - [ ] E1c — `RmiModule` (lab 1): invoke a method on a node (result, round-trip time, payload size, stub class), the local-versus-remote comparison, registry listing. Needs: E1b.
 - [ ] E1d — page and end-to-end check. Needs: E1c, E2d.
 
@@ -631,6 +631,187 @@ host name.
    restored as escapes, and since the follow-up (F2) the rmi main and test sources contain no
    non-ASCII character at all (literals use escapes such as `\u2026`; comments are ASCII).
 
+
+### E1b interfaces for E1c — per-node RMI transport (`com.udcf.modules.rmi`)
+
+**`RmiNodeService implements NodeService`** (`NAME = "rmi"`), one per node.
+- `static RmiNodeService on(ClusterNode, RmiProperties, RmiTransportProperties)`: through `ensureService`
+  (a crashed node throws `NodeDownException`); every start and recovery exports a new
+  `NodeEndpointLogic.forNode(node, properties, System::nanoTime)` on the node's shared clock.
+  `static Optional<RmiNodeService> find(ClusterNode)` never starts one. Public constructor
+  `(ClusterNode, RmiProperties, RmiTransportProperties, Supplier<? extends NodeEndpoint>)` (tests inject
+  a blocking endpoint through the supplier).
+- `start()`, `crash()`, `recover()`, `stop()`, `isRunning()`, `nodeId()`, `port()` (= `ports().rmi()`),
+  `NodeEndpoint localEndpoint()` (the exported object; `IllegalStateException("node N is not running")`
+  while not running). Lifecycle methods are synchronized; the class creates no thread.
+- start/recover: hostname helper, new endpoint from the supplier, `LocateRegistry.createRegistry(port, f, f)`,
+  five-argument `exportObject(endpoint, port, f, f, RmiSerialFilter)` on the SAME port with the SAME
+  factory instance, `bind(BOUND_NAME, stub)`; `running` only after all succeeded. A failure unexports
+  what was exported, waits for the listener, closes accepted connections and throws
+  `IllegalStateException("Node N cannot start RMI on port P: ...")`. Starting a running service does
+  nothing (the Experiment 5 pattern).
+- crash/stop: `running = false`; unexport the endpoint, then the registry (`force=true`; RMI then closes
+  the listener); wait up to 5 s until no thread is inside the closed listener's `accept()`; then, in
+  `finally`, close every accepted connection and drop the references. If the wait expires, an
+  `IllegalStateException` naming node and port is thrown AFTER the cleanup. Never touches the
+  `LamportClock`. The service publishes nothing (`ClusterNode` publishes `NODE_CRASHED`).
+- One `LoopbackSocketFactory` per service, created in the constructor and used for every start and
+  recovery (see Known issues: RMI keeps the first equal factory per port).
+
+**`RemoteEndpointLookup implements EndpointLookup`** (`path()` REMOTE):
+`new RemoteEndpointLookup(IntUnaryOperator rmiPort, LoopbackSocketFactory clientFactory)`,
+`static of(Cluster, RmiProperties, RmiTransportProperties)`. `lookup(nodeId)` does a fresh
+`LocateRegistry.getRegistry("127.0.0.1", port, clientFactory).lookup("NodeEndpoint")` on every call
+(no caching, so `lookupNanos` is honest and a crash shows at the LOOKUP stage); the result is a
+`java.lang.reflect.Proxy` with a `RemoteObjectInvocationHandler`. `RegistrySnapshot snapshot(nodeId)
+throws RemoteException, NotBoundException`: `registry.list()`, then `lookup(name).getClass().getName()`
+per name; a node that is down throws the `RemoteException` (never an empty snapshot). Thread safe.
+E1c should keep ONE instance (one client channel per node) rather than one per request.
+
+**`LocalEndpointLookup implements EndpointLookup`** (`path()` LOCAL): `new LocalEndpointLookup(Cluster)`;
+returns the running service's exported object; a node whose service is not running (never started,
+stopped, crashed) gives `IllegalStateException("node N is not running")`, an unknown id
+`UnknownNodeException`. E1c checks the node's state first and answers 409.
+
+**`LoopbackSocketFactory`** (RMIServerSocketFactory + RMIClientSocketFactory, Serializable):
+`(connectTimeoutMillis, callTimeoutMillis, listenBacklog)`, `static from(RmiProperties,
+RmiTransportProperties)`, `LOOPBACK` (built like `ReplicationProtocol.LOOPBACK`). Server: unbound
+`ServerSocket` bound to 127.0.0.1 with the backlog, never `setReuseAddress`; remembers accepted
+sockets (transient) and counts threads inside `accept()`. Client: ignores the host, connects to
+127.0.0.1 with the connect timeout, `SO_TIMEOUT = call-timeout-millis`. `equals`/`hashCode` on
+`instanceId` (an AtomicLong counter) plus the three settings; `toString()` shows them (it appears in
+stub strings and in RMI thread names).
+
+**`RmiSerialFilter`** (`ObjectInputFilter`, per exported endpoint): pattern
+`maxdepth=5;maxrefs=20;maxbytes=16384;maxarray=16;com.udcf.modules.rmi.CallContext;!*`, plus: every
+array class is REJECTED (the JDK pattern matches an array by its element type, so it would allow
+`CallContext[]`), and a class left UNDECIDED (primitive arrays) is REJECTED. No process-wide filter,
+factory or `jdk.serialFilter`; the registry keeps the JDK's built-in registry filter. **The reply
+direction (a caller reading a result) is unfiltered**: acceptable because both ends are in this one
+JVM and every server is our own `NodeEndpointLogic` exported by `RmiNodeService`, whose replies are
+the four E1a records; nothing outside the process can answer a call (loopback only).
+
+**`RmiHostName`** (package-private): `ensureLoopback()` sets `java.rmi.server.hostname=127.0.0.1` if
+unset, does nothing if already `127.0.0.1`, else `IllegalStateException` naming both values;
+synchronized, called by every start and recovery, so no test depends on order.
+
+**Properties** (`RmiTransportProperties`, `@ConfigurationProperties("udcf.rmi")`, separate from the E1a
+`RmiProperties` on the same block; no code defaults; `@Min(1)`; `@Valid` nested record):
+
+| Key | application.yml | public | Meaning |
+|---|---|---|---|
+| `connect-timeout-millis` | 1000 | same | connect timeout of every RMI client socket |
+| `listen-backlog` | 50 | same | backlog of each node's listener |
+| `serial-filter.max-depth` | 5 | same | filter limit (a real call: depth 1) |
+| `serial-filter.max-refs` | 20 | same | filter limit (a real call: 2 references) |
+| `serial-filter.max-bytes` | 16384 | same | filter limit (a real call: 74 bytes at its last checkpoint) |
+| `serial-filter.max-array` | 16 | same | defence in depth (every array is rejected anyway) |
+
+`call-timeout-millis` (E1a, 3000) is the client sockets' `SO_TIMEOUT`.
+
+**Test ports (E1b):** sub-range 28800-28899 of Jai's block. RMI bases: 28800 (RmiNodeServiceTest,
+28801-28803), 28810 (RmiCrashCycleTest, 28811-28813), 28820 (RmiFailureCharacterisationTest,
+28821-28826), 28830 (RmiConcurrencyTest, 28831-28833), 28840 (RmiLookupsTest, 28841-28843); the
+other five bases 28850-28890 are never bound (only the rmi service starts). LoopbackSocketFactoryTest
+binds port 0 only.
+
+**New failure kinds (E1a classifier change, for E1c's DTO and E1d's UI):** `CONNECTION_LOST` and
+`ARGUMENTS_REJECTED` (the DTO carries `failureKind` and its `description()`; the page needs a word and
+a sign for both). Full order in `RemoteFailureClassifier`'s Javadoc:
+1. `ServerException` whose cause is an `UnmarshalException` -> ARGUMENTS_REJECTED ("The node could not
+   read the call's arguments, for example because its serial filter refused them; the method never
+   ran.");
+2. other `ServerException` / `ServerError` -> METHOD_THREW;
+3. `SocketTimeoutException` anywhere in the chain -> TIMED_OUT;
+4. `java.rmi.ConnectException` / `java.net.ConnectException` -> CONNECTION_REFUSED;
+5. `ConnectIOException` -> CONNECTION_FAILED; 6. `NoSuchObjectException` -> NO_SUCH_OBJECT;
+7. `NotBoundException` -> NOT_BOUND;
+8. `UnmarshalException` or `MarshalException` whose cause is an `EOFException` or a `SocketException`
+   that is not a `ConnectException` -> CONNECTION_LOST;
+9. `MarshalException` -> MARSHAL_FAILED; 10. `UnmarshalException` -> UNMARSHAL_FAILED (description now
+   "The reply could not be read: its data could not be deserialized.");
+11. other `RemoteException` -> OTHER; 12. anything else: METHOD_THREW at CALL, OTHER at LOOKUP.
+
+**Observed failure matrix** (`RmiFailureCharacterisationTest`, logged as `E1b failure matrix | ...`;
+class <- innermost cause | message | verdict):
+
+| Scenario | Stage | Windows (JDK 21.0.12.1) | Linux (Docker, same JDK) | Verdict asserted |
+|---|---|---|---|---|
+| (a) node never started | LOOKUP | `java.rmi.ConnectException <- java.net.ConnectException` "Connection refused to host: 127.0.0.1; ... Connection refused: getsockopt" | same classes, "... Connection refused" | CONNECTION_REFUSED |
+| (b) crashed, no earlier connection | LOOKUP | as (a) | as (a) | CONNECTION_REFUSED |
+| (c) crashed after a successful call (pooled connection) | LOOKUP | `java.rmi.UnmarshalException <- java.net.SocketException` "Error unmarshaling return header; ... An established connection was aborted by the software in your host machine" | `java.rmi.UnmarshalException <- java.io.EOFException` "Error unmarshaling return header; ... java.io.EOFException" | CONNECTION_REFUSED or CONNECTION_LOST (observed: LOST in all 10 runs) |
+| (d) stale stub after crash | CALL | as (c) | as (c) | CONNECTION_REFUSED or CONNECTION_LOST (observed: LOST in all 10 runs) |
+| (e) stale stub after recover (pools drained while down) | CALL | `java.rmi.NoSuchObjectException` "no such object in table" | same | NO_SUCH_OBJECT; a fresh lookup then succeeds |
+| (f) latch-blocked endpoint, call timeout 500 ms | CALL | `java.rmi.UnmarshalException <- java.net.SocketTimeoutException` "Error unmarshaling return header; ... Read timed out" | same | TIMED_OUT |
+| filter refusal (RmiNodeServiceTest) | CALL | `ServerException <- UnmarshalException("error unmarshalling arguments") <- InvalidClassException("filter status: REJECTED")` | same (Stage A probe) | ARGUMENTS_REJECTED |
+
+**Facts proved on this JDK** (item 6 of the step):
+
+| Fact | Result | Proved by |
+|---|---|---|
+| (i) unexporting the last object frees the port synchronously | **False on Linux** (Stage A Docker probe: `crash: port bindable right after unexport=false, accept thread alive then=false`); true in every Windows probe run. The service therefore waits for the accept thread. | The service guarantee: `RmiNodeServiceTest.stopLeavesNothing`, `crashFreesThePort`, `exportFailureRollsBack`; `RmiCrashCycleTest.crashRecoverCycles` (bind on return, 60 times a run) and `stopStartCycles` (20 times) |
+| (ii) the factory's SO_TIMEOUT survives the handshake and bounds the reply wait | True (`TCPChannel` restores a non-zero factory timeout) | `RmiFailureCharacterisationTest.timeoutAgainstABlockedEndpoint` |
+| (iii) a crashed node with a pooled connection fails visibly | True: CONNECTION_REFUSED or CONNECTION_LOST, never an answer or a hang. Without closing accepted connections the "dead" node answered `NoSuchObjectException` over the pooled connection (Stage A probe (c')), so the crash closes them. | `RmiFailureCharacterisationTest.crashedAfterASuccessfulCall`, `staleStubAfterCrash`; `RmiCrashCycleTest.crashRecoverCycles`; `RmiNodeServiceTest.crashClosesAcceptedConnections` |
+| (iv) a re-exported object has a new ObjID | True | `RmiFailureCharacterisationTest.staleStubAfterRecover` |
+
+**Stage A probe evidence** (throwaway `Probe.java`/`FilterProbe.java`, run outside the repository;
+quoted verbatim):
+```
+(e) recover with a NEW equal factory instance; stale stub then fresh lookup
+    [factory n1-a] createServerSocket(28891) reuseAddress=false
+    accepted tracked by OLD instance=2, by NEW instance=0
+    after crash: old open=1
+```
+```
+(f) timeout: blocked method, SO_TIMEOUT 500 ms, port 28894        (Linux, Docker)
+    crash: port bindable right after unexport=false, accept thread alive then=false, accepted closed=1
+```
+```
+Windows: java.rmi.UnmarshalException: Error unmarshaling return header; nested exception is:
+         java.net.SocketException: An established connection was aborted by the software in your host machine
+Linux:   java.rmi.UnmarshalException: Error unmarshaling return header; nested exception is: java.io.EOFException
+```
+```
+byte[] len 4: UNDECIDED
+byte[] len 17: REJECTED
+```
+```
+    filter saw: maxDepth=1 maxRefs=2 maxBytes=74 classes=[Probe$Ctx]
+    raw invoke echo(HashMap,..) (8 ms): java.rmi.ServerException[RemoteException occurred in server thread; nested exception is:  	java.rmi.UnmarshalException: error unmarshalling arguments; nested exception is:  	java.io.InvalidClassException: filter status: REJECTED] <- java.rmi.UnmarshalException[error unmarshalling arguments; nested exception is:  	java.io.InvalidClassException: filter status: REJECTED] <- java.io.InvalidClassException[filter status: REJECTED]
+(c') crash after successful call WITHOUT closing accepted connections, port 28893
+    stale stub ping (1 ms): java.rmi.NoSuchObjectException[no such object in table]
+```
+JDK source (21.0.12.1 `src.zip`): `TCPConnection`: `private long roundtrip = 5; // round-trip time for ping`
+and `if ((roundtrip > 0) && (start < lastuse + roundtrip)) return (false);` (no ping inside the
+window); `TCPChannel`: `sock.setSoTimeout((originalSoTimeout != 0 ? originalSoTimeout : responseTimeout));`.
+
+#### E1b deviations from the approved plan
+
+1. Q1: one `LoopbackSocketFactory` per `RmiNodeService` (not per start), with `instanceId` in `equals`.
+2. Q2/A1: crash and stop wait (5 s) for the accept thread to leave `accept()`; cleanup in `finally`.
+3. Q3/A2: E1a classifier changes (CONNECTION_LOST, ARGUMENTS_REJECTED, new UNMARSHAL_FAILED text).
+   E1a files changed: `RemoteFailureKind.java`, `RemoteFailureClassifier.java`,
+   `RemoteFailureClassifierTest.java` (the old case `UnmarshalException <- EOFException` = UNMARSHAL_FAILED
+   now expects CONNECTION_LOST; UNMARSHAL_FAILED is tested with `InvalidClassException` and
+   `ClassNotFoundException` causes; new cases from real chains; two new tests),
+   `RmiInvokerTest.java` (`callFailures`: the EOF case now CONNECTION_LOST, plus an
+   `InvalidClassException` case for UNMARSHAL_FAILED). `everyKindIsDescribed` enumerates
+   `values()` and passes unchanged.
+4. Q5: transport settings in a new record `RmiTransportProperties` on `udcf.rmi` (nested
+   `serial-filter` block); `RmiProperties` untouched.
+5. Found by `RmiSerialFilterTest`: the JDK pattern allows `CallContext[]` (element-type match), so the
+   filter rejects every array class explicitly.
+6. Q6: `LoopbackSocketFactory.LOOPBACK`, built like `ReplicationProtocol.LOOPBACK`.
+7. `RmiNodeService` takes no `ClusterEventBus` (no events until E1c).
+8. `LocalEndpointLookup` throws `IllegalStateException` ("node N is not running", as the step asked),
+   not `NodeDownException` as the E1a Javadoc of `EndpointLookup` suggested.
+9. An extra test-only helper `RmiTestSupport` (settings, cluster, probes, RMI method hash, and
+   `drainUntilRefused`, which empties a channel's pooled connections while a node is down so a later
+   call is deterministic).
+10. Linux runs: the `maven:3.9-eclipse-temurin-21` image has no `unzip`, and the only-script `mvnw`
+    then downloads the `.tar.gz` and checks it against the `.zip` checksum (fails). `unzip` was
+    installed inside each container; no repository change.
+
 ---
 
 ## Known issues
@@ -717,6 +898,38 @@ host name.
 - E1a: the `forNode` tests use a Mockito mock of `ClusterNode`; a real one needs a `ClusterEventBus`,
   which starts a dispatcher thread, and E1a tests start none.
 
+- E1b: **RMI keeps the first equal socket factory per port for the life of the JVM**
+  (`TCPEndpoint.getLocalEndpoint` caches by `equals` and never removes an entry), and creates every
+  later listener on that port with that first instance. Hence one factory per `RmiNodeService` with a
+  unique `instanceId`. Each service instance adds one small cache entry per port (tests create many;
+  production one per node).
+- E1b: **fact (i) is false on Linux**: when the last object on a port is unexported, the port can
+  stay bound while RMI's accept thread is still inside `accept()`. `crash()`/`stop()` therefore wait
+  (bounded 5 s) for that thread; the wait has a code comment so it is not removed.
+- E1b: **the ~5 ms pooled-connection reuse window**: RMI reuses a pooled connection without a check if
+  it was used less than about 5 ms before (`TCPConnection.roundtrip = 5`), so a call right after a
+  crash (or a fast crash and recovery) fails as CONNECTION_LOST instead of CONNECTION_REFUSED, and a
+  call right after a recovery can fail once. RMI does not retry. Humans in the UI are far slower than
+  5 ms; tests drain the pools (`drainUntilRefused`) before asserting a success after a recovery.
+- E1b: the call timeout (`SO_TIMEOUT`) bounds each read, not a whole call; a peer trickling bytes
+  can hold a call longer. Loopback only, our own servers.
+- E1b: the reply direction (a caller reading a result) is not filtered; see "E1b interfaces for E1c"
+  for why that is acceptable.
+- E1b: a call already running on an RMI thread when its node crashes runs to its end (RMI threads
+  cannot be stopped from here) and ticks the node's clock; its reply cannot be delivered (connection
+  closed). At most about one `computeHash`.
+- E1b: the serial filter does not bound a String argument's size: the JDK reads a String without a
+  filter checkpoint (only later checkpoints count its bytes), so an oversized echo text is bounded
+  only by `max-echo-length` in `NodeEndpointLogic` after it was read. The longest allowed echo (1024
+  x U+20AC, 3 bytes each) passes end to end (`RmiNodeServiceTest.longestEchoPassesTheFilter`).
+- E1b: RMI's client-side DGC thread ("RMI RenewClean-[127.0.0.1:port,factory]") of a service from an
+  earlier test lingers until its stubs are garbage-collected; leak checks therefore match the thread
+  of the service under test by factory id.
+- E1b: the connect timeout is not exercised by a test (a loopback connect is accepted or refused at
+  once); only its value and the read timeout are. The factory's wait cannot be forced to time out in a
+  test (no way to keep a thread in `accept()` after its listener closed), so that branch is covered by
+  code review only.
+
 ---
 
 ## Progress log
@@ -785,3 +998,14 @@ host name.
   roundTripNanos for completed calls only); (F2) no non-ASCII character left in the rmi main or test
   sources; (F3) this file completed (caller identity, host name, deviations); rmi classes 86 tests
   (5 runs, all green), backend 1292 tests, 1 skipped (1 run); deviations: none.
+- 2026-10-11 E1b done: per-node RMI transport: RmiNodeService (registry and NodeEndpoint on one
+  listener on ports().rmi(), new endpoint per start/recover, crash/stop unexport with force, close
+  accepted connections and wait for the accept thread), LoopbackSocketFactory, RmiSerialFilter (per
+  export), RmiHostName, RemoteEndpointLookup (no caching, snapshot), LocalEndpointLookup,
+  RmiTransportProperties (udcf.rmi block, add-only); classifier gains CONNECTION_LOST and
+  ARGUMENTS_REJECTED; 9 new test classes (67 tests) plus 9 tests in 2 E1a test classes; rmi classes
+  162 tests, 5 Windows runs and 5 Linux Docker runs (run 5 of each in reverse alphabetical order),
+  all green; crash-cycle verdict tally per run {CONNECTION_LOST=60}, or 58-59 LOST with 1-2
+  CONNECTION_REFUSED; backend 1368 tests, 1 skipped (3 runs, identical; baseline 1292), frontend not
+  run (no frontend change); deviations: the ten listed under "E1b deviations from the approved plan".
+  Linux (Docker, --cpus=2), run by Jai: 162 rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1368 tests, 0 failures, 1 skipped; clean-clone full suite 1368 tests, 0 failures, 1 skipped.
