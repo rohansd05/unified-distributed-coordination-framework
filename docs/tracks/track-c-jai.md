@@ -26,7 +26,7 @@
 - **Special rules:** `java.rmi.server.hostname=127.0.0.1`; crash unexports the RMI objects.
 
 ### Steps
-- [ ] E1a — the `NodeEndpoint` remote interface (ping, nodeInfo, echo, computeHash(rounds)), its implementation, and a local-versus-remote timing helper. Needs: E5d.
+- [x] E1a — the `NodeEndpoint` remote interface (ping, nodeInfo, echo, computeHash(rounds)), its implementation, and a local-versus-remote timing helper. Needs: E5d.
 - [ ] E1b — an RMI registry per node on `ports().rmi()` (110k); export on start and recover, unexport on crash. Needs: E1a.
 - [ ] E1c — `RmiModule` (lab 1): invoke a method on a node (result, round-trip time, payload size, stub class), the local-versus-remote comparison, registry listing. Needs: E1b.
 - [ ] E1d — page and end-to-end check. Needs: E1c, E2d.
@@ -472,6 +472,165 @@ Nothing another track needs to call. Notes for other "d" steps and for Phase 9A:
 - **Shared files touched (approved):** `frontend/src/routes.test.jsx` (add-only: one import and two
   spies on `replicationApi`) and `frontend/src/lib/experiments.js` (a `concept` line for lab 5 only).
 
+### E1a interfaces for E1b/E1c — RMI contract and call model (`com.udcf.modules.rmi`)
+
+Pure classes: no registry, export, socket, thread or Spring (except `RmiProperties`). The only
+`java.rmi` types used are `Remote`, `RemoteException` and the exception classes the classifier
+recognises.
+
+**Contract.** `NodeEndpoint extends Remote`, `BOUND_NAME = "NodeEndpoint"`; every method `throws
+RemoteException`: `PingReply ping(CallContext)`, `NodeInfo nodeInfo(CallContext)`,
+`EchoReply echo(CallContext, String text)`, `HashResult computeHash(CallContext, int rounds)`.
+
+**Lamport (L4).** `CallContext(senderNodeId >= 1, senderLamport >= 0)` is the first argument of every
+call; every reply implements the sealed `EndpointReply` (`nodeId()`, `lamportTime()`). The node
+validates the arguments first (an invalid call changes nothing), then `clock.update(senderLamport)`,
+does the work, and stamps the reply with `clock.tick()`. The caller ticks before sending and calls
+`update(reply.lamportTime())` on a success; a failed call merges nothing.
+
+**Replies** (records, `Serializable`, `serialVersionUID = 1L`): `PingReply(nodeId, lamportTime)`;
+`NodeInfo(nodeId, lamportTime, registryPort, capacityProfile, uptimeMillis, javaVersion)` (exactly these
+six fields: no host, user or path; capacity is a `String`, so no enum crosses); `EchoReply(nodeId,
+lamportTime, text)`; `HashResult(nodeId, lamportTime, rounds, seed, digestHex, serverNanos)`.
+
+**`NodeEndpointLogic implements NodeEndpoint`** (the real work; its methods throw no
+`RemoteException`). `new NodeEndpointLogic(nodeId, registryPort, NodeCapacity, LamportClock,
+LongSupplier nanoClock, String javaVersion, RmiProperties)`; `static forNode(ClusterNode,
+RmiProperties, LongSupplier nanoClock)` uses `node.id()`, `node.ports().rmi()`, `node.capacity()`,
+`node.clock()` (the node's shared clock, never a second one) and `Runtime.version()`.
+- `computeHash`: `d0 = UTF-8(seedFor(nodeId))` with `seedFor(n) = "udcf-rmi-node-" + n`, then
+  `d(i+1) = SHA-256(d(i))` over the raw 32 bytes, `rounds` times; `digestHex` is the full digest;
+  `serverNanos` is measured around the loop only. Vectors computed outside Java (sha256sum + xxd,
+  openssl, Python agree) are in NodeEndpointLogicTest.
+- Limits (`IllegalArgumentException`): rounds 1 to `max-hash-rounds`; echo text not null and at most
+  `max-echo-length` UTF-16 characters (empty allowed); a null context.
+- Uptime counts from the constructor. **For E1b:** export THIS object (so a LOCAL call and a REMOTE
+  call run the same code); creating a new one on start and recover makes uptime restart with the
+  "process", which is the recommended choice.
+
+**Caller identity (for E1c).** The caller is always a real cluster node using its own shared clock
+(`cluster.node(id).clock()`). **Both `CallContext` and `RmiInvoker(int senderNodeId, LamportClock
+senderClock, RmiProperties, CallTimer)` require `senderNodeId >= 1`** (an `IllegalArgumentException`
+otherwise), so 0 is not legal anywhere. There is no cluster-level client in Experiment 1 and **no
+client clock**: E1a creates no clock. **E1c must offer a "from node" selector** and build the invoker
+for that node with that node's clock; calling a node from itself is allowed. A crashed caller should
+be refused by E1c before invoking.
+
+**`RmiInvoker`**: `RmiCallResult invoke(EndpointLookup, int targetNodeId, RmiCall)` and
+`LocalRemoteComparison compare(EndpointLookup local, EndpointLookup remote, int targetNodeId,
+RmiCall)`. Order: validate (`IllegalArgumentException` before any lookup) → time the lookup → tick →
+size the arguments (REMOTE only, untimed) → time the call → merge the reply and size it (REMOTE
+only, untimed) or classify the failure. On the LOCAL path nothing is classified: an exception is
+rethrown (a checked one wrapped in `IllegalStateException`). A null endpoint or a reply from another
+node is an `IllegalStateException`.
+
+**`EndpointLookup`** (E1b provides both): `NodeEndpoint lookup(int nodeId) throws RemoteException,
+NotBoundException` and `CallPath path()`. REMOTE: the registry on `ports().rmi()` of the target,
+`lookup(BOUND_NAME)`. LOCAL: the target's `NodeEndpointLogic` object itself; it must throw (for
+example `NodeDownException`) for a crashed node, because a dead process computes nothing.
+
+**`RmiCall(method, text, rounds)`**: `ping()`, `nodeInfo()`, `echo(text)`, `computeHash(rounds)`;
+`validate(RmiProperties)`, `arguments(CallContext)`, `argumentSummary()`, `invokeOn(endpoint,
+context)`, `static resultSummary(reply)`.
+
+**`RmiCallResult`** (22 fields; factories `success`, `lookupFailure`, `callFailure`; the constructor
+enforces the rules): method, targetNodeId, senderNodeId, path (LOCAL/REMOTE), argumentSummary,
+resultSummary, reply, lookupNanos, roundTripNanos, timeToFailureNanos, argumentBytes, resultBytes,
+stubClassName, outcome (SUCCESS/REMOTE_FAILURE), failureStage (LOOKUP/CALL), failureKind,
+failureClass, failureMessage, failureCauseClass, senderLamportAtSend, replyLamport,
+senderLamportAfterReply. **Null, never 0:**
+
+| Outcome | Numbers set (all others null) |
+|---|---|
+| REMOTE success | lookupNanos, roundTripNanos, argumentBytes, resultBytes, the three Lamport values |
+| LOCAL success | lookupNanos, roundTripNanos, the three Lamport values (nothing is marshalled) |
+| failure at LOOKUP | **timeToFailureNanos** (the failed lookup's elapsed time); lookupNanos is null |
+| failure at CALL | lookupNanos (the lookup completed), **timeToFailureNanos** (roundTripNanos is null: nothing came back), argumentBytes, senderLamportAtSend |
+
+Durations (final, after the E1a follow-up): `lookupNanos` = time of a **successful** lookup only, null
+if the lookup failed; `roundTripNanos` = **completed** calls only, null on any failure;
+`timeToFailureNanos` = elapsed time of the stage that failed (LOOKUP or CALL), null on success. Only a
+REMOTE call can fail; stubClassName is set exactly when a lookup succeeded.
+- **Sizes** are `PayloadSizer.LABEL`: "Java serialization size (java.io ObjectOutputStream, stream
+  header included); not the RMI wire bytes; primitive parameters are sized as primitives, as RMI
+  marshals them". `PayloadSizer.sizeOf(Object...)` writes `Integer`/`Long` with `writeInt`/`writeLong`
+  and everything else with `writeObject` into one stream (`rounds` costs 6 bytes, not a boxed
+  Integer's descriptors).
+- **Text.** argumentSummary, resultSummary and failureMessage are single-line: `\` → `\\`, newline
+  `\n`, CR `\r`, tab `\t`, any other control character and U+2028/U+2029 → `\uXXXX`; `|` is kept.
+  failureMessage is the exception's own `getMessage()` only (never a stack trace; the class is in
+  failureClass), cut to `max-failure-message-length` characters ending in "…" (a surrogate pair is
+  never split); null if the exception had no message. `EventLogExporter` already escapes `|`
+  (`\p`) and newlines in `msg=`, so E1c event messages built from these strings are safe there.
+
+**`LocalRemoteComparison(method, targetNodeId, localNanos, remoteNanos, overheadNanos, ratio,
+digestsMatch)`**, `of(local, remote)`. Each side is a **single measurement** (local first, then remote,
+no hidden warm-up call). The first call in a fresh JVM includes class loading and provider lookup, so
+the overhead **can be negative and the ratio below 1**; nothing is clamped. A side that failed is null,
+and so are overhead and ratio; ratio is also null when the local time is 0. digestsMatch is set for
+COMPUTE_HASH with both sides successful. E1c/E1d must show these as they are.
+
+**`RemoteFailureClassifier.classify(Throwable, CallStage)`**, first match wins: `ServerException` /
+`ServerError` → METHOD_THREW; a `SocketTimeoutException` anywhere in the cause chain → TIMED_OUT;
+`java.rmi.ConnectException` or `java.net.ConnectException` → CONNECTION_REFUSED; `ConnectIOException` →
+CONNECTION_FAILED; `NoSuchObjectException` → NO_SUCH_OBJECT; `NotBoundException` → NOT_BOUND;
+`MarshalException` → MARSHAL_FAILED; `UnmarshalException` → UNMARSHAL_FAILED; any other
+`RemoteException` → OTHER; any other exception → METHOD_THREW at CALL (RMI rethrows the method's own
+exception), OTHER at LOOKUP. `RemoteFailureKind.description()` is plain English for the page.
+
+**`CallTimer(LongSupplier nanoClock)`**: `Measurement<T> measure(TimedAction<T>)` → `(value, failure,
+elapsedNanos)`; a clock going backwards is an `IllegalStateException`, never clamped.
+
+**`RegistrySnapshot(nodeId, registryPort, List<BoundName> names)`**, `BoundName(name,
+stubClassName)`: names sorted, no duplicates, `find(name)`, `contains(name)`. E1b fills it from
+`Registry.list()` plus a lookup per name.
+
+**`RmiProperties`** (`udcf.rmi.*`, no code defaults, every value `@Min(1)`):
+
+| Key | application.yml | application-public.yml | Used by |
+|---|---|---|---|
+| `max-hash-rounds` | 1000000 | 100000 | E1a (logic and invoker) |
+| `max-echo-length` | 1024 | same | E1a |
+| `history-size` | 50 | same | E1c |
+| `call-timeout-millis` | 3000 | same | E1b (connect and response timeout) |
+| `max-failure-message-length` | 300 | 300 (stated explicitly) | E1a |
+
+**Classes that may cross RMI (for E1b's JEP 290 serial filter; no filter installed in E1a).**
+Application classes: `com.udcf.modules.rmi.CallContext`, `PingReply`, `NodeInfo`, `EchoReply`,
+`HashResult`. Built-in values: `java.lang.String` (written as a string, not as a class descriptor) and
+the primitive `int`. No enum and no collection crosses; `EndpointReply` is an interface and writes no
+descriptor. E1b must additionally allow, and prove by test, what RMI itself needs: the stub and DGC
+classes the registry and lookup return (proxy, `RemoteObjectInvocationHandler`, `UnicastRef`, `ObjID`,
+`Lease`, ...) and, on the client, the exception classes returned on the failure path (`Throwable`
+subclasses, `StackTraceElement`, and the lists `Throwable` serializes for suppressed exceptions).
+
+**Host name (for E1b).** E1b must set `java.rmi.server.hostname=127.0.0.1` (HANDOFF Section 7 and the
+special rules above) before any object is exported, so every stub, and therefore every RMI exception
+message that ends up in `failureMessage`, only ever carries the loopback address, never the machine's
+host name.
+
+#### E1a deviations from the approved plan
+
+1. An extra package-private class `DisplayText` (single-line escaping and the cut, needed for C3 and
+   C4), with `DisplayTextTest`.
+2. `CallContext` requires `senderNodeId >= 1` (the plan allowed 0 for a cluster-level client), so 0 is
+   not legal anywhere (C6).
+3. The classifier checks `ServerException` / `ServerError` before the timeout chain (the plan had the
+   timeout first), so a call that reached the node is METHOD_THREW even if the node's own nested call
+   timed out.
+4. A backslash is escaped as `\\` as well (beyond the C3 list), so the escapes read back unambiguously.
+5. `failureMessage` is the exception's `getMessage()` only (the class is in `failureClass`), and null
+   when the exception has no message.
+6. Durations: first delivered with `lookupNanos` holding the time of a failed lookup; changed in the
+   E1a follow-up (F1) to the final semantics above: `lookupNanos` only for a successful lookup,
+   `timeToFailureNanos` for the stage that failed (LOOKUP or CALL), `roundTripNanos` only for a
+   completed call.
+7. The `forNode` tests use a Mockito mock of `ClusterNode`, because a real one needs a
+   `ClusterEventBus`, which starts a dispatcher thread, and E1a tests start none.
+8. The editing tool turned printable unicode escapes into raw characters in two test files; they were
+   restored as escapes, and since the follow-up (F2) the rmi main and test sources contain no
+   non-ASCII character at all (literals use escapes such as `\u2026`; comments are ASCII).
+
 ---
 
 ## Known issues
@@ -543,6 +702,20 @@ Nothing another track needs to call. Notes for other "d" steps and for Phase 9A:
   and 1280×800 measurements were taken in a same-origin iframe of exactly that size.
 - E5d: `npm run build` warns that the main chunk is above 500 kB (530.29 kB). Code-splitting is a
   shared-build decision, not part of this step.
+- E1a: payload sizes are Java serialization sizes of the argument and reply values, measured by
+  serializing them again on the caller, outside the timed window. They are not the RMI wire bytes (the
+  call header, object identifier, method hash and class annotations are not counted). The page must
+  show `PayloadSizer.LABEL` next to them.
+- E1a: a failed stage's elapsed time is reported only as `timeToFailureNanos`; `lookupNanos` and
+  `roundTripNanos` are reported only for a lookup or a call that completed (follow-up F1).
+- E1a: the local-versus-remote comparison is one measurement per side, local first, with no warm-up.
+  The first comparison in a fresh JVM pays class loading and provider lookup, so the overhead can be
+  negative and the ratio below 1. This is shown as measured, never clamped.
+- E1a: `NodeInfo.javaVersion` is `Runtime.version()` (the JVM version number only). RMI exception
+  messages, and so `failureMessage`, name the host in the stub, which is 127.0.0.1 only once E1b sets
+  `java.rmi.server.hostname=127.0.0.1`.
+- E1a: the `forNode` tests use a Mockito mock of `ClusterNode`; a real one needs a `ClusterEventBus`,
+  which starts a dispatcher thread, and E1a tests start none.
 
 ---
 
@@ -596,3 +769,19 @@ Nothing another track needs to call. Notes for other "d" steps and for Phase 9A:
   when it comes back as the primary (found in the live check, test added); (2) the all-caps test
   excludes the kit's event log (backend message text); (3) approved shared edits:
   routes.test.jsx (add-only) and the lab 5 concept line in experiments.js.
+- 2026-10-11 E1a done: pure RMI contract (NodeEndpoint with a CallContext first argument for L4,
+  four Serializable reply records), NodeEndpointLogic (real chained SHA-256, checked against vectors
+  computed outside Java), RmiInvoker with EndpointLookup seam, RmiCallResult (null-never-0, separate
+  timeToFailureNanos), PayloadSizer (primitives sized as primitives), LocalRemoteComparison (single
+  measurements, unclamped), RemoteFailureClassifier, CallTimer, RegistrySnapshot, RmiProperties
+  (udcf.rmi block in application.yml and application-public.yml); 10 new test classes, 86 tests (5
+  runs of the rmi classes, all green); backend 1292 tests, 1 skipped (3 runs, identical; baseline
+  1206), frontend not run (no frontend change); deviations: the eight listed under "E1a deviations
+  from the approved plan" (Interfaces for other tracks), and 86 tests instead of about 68
+  (parameterised cases and DisplayTextTest).
+  Linux (Docker, --cpus=2): 86 rmi tests x 5 runs, 0 failures; full suite 1292 tests, 0 failures, 1 skipped; clean-clone full suite 1292 tests, 0 failures, 1 skipped.
+- 2026-10-11 E1a follow-up: (F1) final duration semantics in RmiCallResult and RmiInvoker
+  (lookupNanos for a successful lookup only, timeToFailureNanos for the failed stage, LOOKUP or CALL,
+  roundTripNanos for completed calls only); (F2) no non-ASCII character left in the rmi main or test
+  sources; (F3) this file completed (caller identity, host name, deviations); rmi classes 86 tests
+  (5 runs, all green), backend 1292 tests, 1 skipped (1 run); deviations: none.
