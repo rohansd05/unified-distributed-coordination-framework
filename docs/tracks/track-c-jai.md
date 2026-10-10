@@ -1008,3 +1008,4 @@ window); `TCPChannel`: `sock.setSoTimeout((originalSoTimeout != 0 ? originalSoTi
   all green; crash-cycle verdict tally per run {CONNECTION_LOST=60}, or 58-59 LOST with 1-2
   CONNECTION_REFUSED; backend 1368 tests, 1 skipped (3 runs, identical; baseline 1292), frontend not
   run (no frontend change); deviations: the ten listed under "E1b deviations from the approved plan".
+  Linux (Docker, --cpus=2), run by Jai: 162 rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1368 tests, 0 failures, 1 skipped; clean-clone full suite 1368 tests, 0 failures, 1 skipped.
