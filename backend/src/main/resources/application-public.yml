@@ -6,6 +6,10 @@ udcf:
     size: 3          # the capacity pattern is unchanged, so nodes are FAST, MEDIUM, SLOW
   events:
     buffer-size: 1500
+  # 0.1 CPU: the longest hash stays well inside call-timeout-millis. Other udcf.rmi values are unchanged.
+  rmi:
+    max-hash-rounds: 100000
+    max-failure-message-length: 300
   multithreading:
     queue-capacity: 100
   clocksync:

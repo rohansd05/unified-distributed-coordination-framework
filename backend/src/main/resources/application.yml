@@ -28,6 +28,18 @@ udcf:
   system:
     version: "@project.version@"
     mode: local
+  # Experiment 1 (lab 1). Java RMI: every node's registry on 110k exports a NodeEndpoint (from E1b).
+  rmi:
+    # Most SHA-256 rounds one computeHash call may ask for.
+    max-hash-rounds: 1000000
+    # Longest echo text, in UTF-16 characters.
+    max-echo-length: 1024
+    # Calls the module keeps for the page (E1c).
+    history-size: 50
+    # Connect and response timeout of one RMI call (E1b); above the longest computeHash.
+    call-timeout-millis: 3000
+    # Longest failure message kept in a call result; a longer one is cut and ends with an ellipsis.
+    max-failure-message-length: 300
   # Experiment 2 (lab 2). Thread counts come from each node's capacity (FAST 4, MEDIUM 2, SLOW 1).
   multithreading:
     queue-capacity: 200
