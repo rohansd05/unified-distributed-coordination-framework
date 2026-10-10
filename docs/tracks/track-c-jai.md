@@ -779,6 +779,7 @@ host name.
   1206), frontend not run (no frontend change); deviations: the eight listed under "E1a deviations
   from the approved plan" (Interfaces for other tracks), and 86 tests instead of about 68
   (parameterised cases and DisplayTextTest).
+  Linux (Docker, --cpus=2): 86 rmi tests x 5 runs, 0 failures; full suite 1292 tests, 0 failures, 1 skipped; clean-clone full suite 1292 tests, 0 failures, 1 skipped.
 - 2026-10-11 E1a follow-up: (F1) final duration semantics in RmiCallResult and RmiInvoker
   (lookupNanos for a successful lookup only, timeToFailureNanos for the failed stage, LOOKUP or CALL,
   roundTripNanos for completed calls only); (F2) no non-ASCII character left in the rmi main or test
