@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.EOFException;
+import java.io.InvalidClassException;
 import java.io.NotSerializableException;
 import java.lang.reflect.RecordComponent;
 import java.net.SocketTimeoutException;
@@ -128,8 +129,10 @@ class RmiInvokerTest {
                 Arguments.of(new NoSuchObjectException("no such object in table"), RemoteFailureKind.NO_SUCH_OBJECT),
                 Arguments.of(new MarshalException("error marshalling arguments", new NotSerializableException("x")),
                         RemoteFailureKind.MARSHAL_FAILED),
-                Arguments.of(new UnmarshalException("error unmarshalling return", new EOFException()),
-                        RemoteFailureKind.UNMARSHAL_FAILED),
+                Arguments.of(new UnmarshalException("error unmarshalling return",
+                        new InvalidClassException("filter status: REJECTED")), RemoteFailureKind.UNMARSHAL_FAILED),
+                Arguments.of(new UnmarshalException("Error unmarshaling return header", new EOFException()),
+                        RemoteFailureKind.CONNECTION_LOST),
                 Arguments.of(new ServerException("RemoteException occurred in server thread", new RemoteException("x")),
                         RemoteFailureKind.METHOD_THREW),
                 Arguments.of(new IllegalArgumentException("rejected by the node"), RemoteFailureKind.METHOD_THREW),

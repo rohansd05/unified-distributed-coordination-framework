@@ -12,13 +12,16 @@ public enum RemoteFailureKind {
             + "or its endpoint is not exported."),
     CONNECTION_FAILED("The connection to the node's RMI port could not be set up: an I/O error "
             + "happened while connecting."),
+    CONNECTION_LOST("The connection to the node broke during the call: the node closed it, for example "
+            + "because it crashed or restarted while RMI was reusing a pooled connection to it."),
     TIMED_OUT("The node did not answer within the call timeout."),
     NO_SUCH_OBJECT("The stub points at a remote object that is no longer exported, for example "
             + "after the node crashed and came back."),
     NOT_BOUND("The node's registry has no entry under that name."),
     MARSHAL_FAILED("The call's arguments could not be written to the connection."),
-    UNMARSHAL_FAILED("The reply could not be read: the connection broke during the call, or the "
-            + "data could not be deserialized."),
+    UNMARSHAL_FAILED("The reply could not be read: its data could not be deserialized."),
+    ARGUMENTS_REJECTED("The node could not read the call's arguments, for example because its serial "
+            + "filter refused them; the method never ran."),
     METHOD_THREW("The call reached the node, and the method itself threw an exception, which RMI "
             + "carried back to the caller."),
     OTHER("Another failure; see the exception class and message.");

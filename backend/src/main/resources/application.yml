@@ -40,6 +40,16 @@ udcf:
     call-timeout-millis: 3000
     # Longest failure message kept in a call result; a longer one is cut and ends with an ellipsis.
     max-failure-message-length: 300
+    # E1b transport: connect timeout of every RMI client socket (call-timeout-millis is its read timeout).
+    connect-timeout-millis: 1000
+    # Backlog of each node's RMI listener.
+    listen-backlog: 50
+    # JEP 290 limits for the arguments a node reads (a normal call: depth 1, 2 references, 74 bytes).
+    serial-filter:
+      max-depth: 5
+      max-refs: 20
+      max-bytes: 16384
+      max-array: 16
   # Experiment 2 (lab 2). Thread counts come from each node's capacity (FAST 4, MEDIUM 2, SLOW 1).
   multithreading:
     queue-capacity: 200
