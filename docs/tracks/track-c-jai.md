@@ -1266,3 +1266,4 @@ thread or RMI's reaper thread.
   1 reverse-alphabetical run, identical; baseline 1368), no listener left on 8080, 1101-1105 or
   28750-28799 after each run; frontend not run (no frontend code changed; the fixtures are data);
   deviations: the six listed under "E1c deviations from the approved plan".
+  Linux (Docker, --cpus=2), run by Jai: 78 new tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1446 tests, 0 failures, 1 skipped; clean-clone full suite 1446 tests, 0 failures, 1 skipped; clean-clone frontend lint, build and tests pass.
