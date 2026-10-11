@@ -31,6 +31,9 @@ class ModuleControllerTest {
     void listsModules() throws Exception {
         mockMvc.perform(get("/api/modules"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == 'rmi')].labNumber").value(1))
+                .andExpect(jsonPath("$[?(@.id == 'rmi')].title").value("Client-Server via Java RMI"))
+                .andExpect(jsonPath("$[?(@.id == 'rmi')].status").value("IDLE"))
                 .andExpect(jsonPath("$[?(@.id == 'multithreading')].labNumber").value(2))
                 .andExpect(jsonPath("$[?(@.id == 'multithreading')].title").value("Multithreading"))
                 .andExpect(jsonPath("$[?(@.id == 'multithreading')].status").value("IDLE"))

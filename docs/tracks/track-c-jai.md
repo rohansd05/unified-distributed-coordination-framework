@@ -28,7 +28,7 @@
 ### Steps
 - [x] E1a — the `NodeEndpoint` remote interface (ping, nodeInfo, echo, computeHash(rounds)), its implementation, and a local-versus-remote timing helper. Needs: E5d.
 - [x] E1b — an RMI registry per node on `ports().rmi()` (110k); export on start and recover, unexport on crash. Needs: E1a.
-- [ ] E1c — `RmiModule` (lab 1): invoke a method on a node (result, round-trip time, payload size, stub class), the local-versus-remote comparison, registry listing. Needs: E1b.
+- [x] E1c — `RmiModule` (lab 1): invoke a method on a node (result, round-trip time, payload size, stub class), the local-versus-remote comparison, registry listing. Needs: E1b.
 - [ ] E1d — page and end-to-end check. Needs: E1c, E2d.
 
 ---
@@ -812,6 +812,201 @@ window); `TCPChannel`: `sock.setSoTimeout((originalSoTimeout != 0 ? originalSoTi
     then downloads the `.tar.gz` and checks it against the `.zip` checksum (fails). `unzip` was
     installed inside each container; no repository change.
 
+### E1c interfaces for E1d — RMI module and API (`/api/modules/rmi`)
+
+**`RmiModule`** (`@Component`, id `rmi`, lab 1, title "Client-Server via Java RMI"). It owns the
+per-node `RmiNodeService`s:
+- **Lazy start.** Services start on `POST /start` or before the first call or comparison, on every
+  node that is up, never on a crashed node.
+- **Live reads.** Crash and recover reach the services through the core (`ClusterNode`), and the
+  module always reads live state from them (R10).
+- **Status.** BUSY while a start, call or comparison holds the guard; RUNNING while any endpoint is
+  exported; otherwise IDLE. ERROR is never used, because a remote failure is data.
+- **Reset** (called by the cluster reset): forgets the history (ids restart at 1) and every start
+  failure, then stops every RMI service. It never throws, never takes the guard and publishes
+  nothing.
+- **Shutdown.** `close()` (Spring, before `Cluster.close`) stops every service, so no exported
+  object, listener or accept thread survives.
+- **Concurrency.** Start, call and comparison each hold the guard for their whole duration and run
+  on the request thread. GET requests never take the guard and never start a service.
+
+**Endpoints.** Every error is a ProblemDetail. Examples are from `frontend/src/test/fixtures/rmi/`.
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /api/modules/rmi` | | 200 `RmiOverviewDto` (no remote call). `overview-before-start.json`, `overview-after-start.json`, `overview-node-crashed.json` |
+| `POST /start` | | 200 `RmiOverviewDto`; idempotent; 409 busy. `start.json` |
+| `GET /registries` | | 200 `RegistryDto[]`, one per node, read over the network. `registries-before-start.json`, `registries-all-up.json`, `registries-node-3-crashed.json` |
+| `GET /registries/{nodeId}` | | 200 `RegistryDto`; 404 unknown node. `registry-node-2.json` |
+| `POST /calls` | `{fromNode, targetNode, method, text?, rounds?}` | 200 `RmiCallDto` for SUCCESS **and** REMOTE_FAILURE. `call-ping.json`, `call-node-info.json`, `call-echo.json`, `call-compute-hash.json`, `call-self.json`, `call-crashed-target.json`, `call-timed-out.json` |
+| `POST /comparisons` | same body | 200 `ComparisonDto`. `comparison-compute-hash.json`, `comparison-ping.json` |
+| `GET /calls` | | 200 `HistoryEntryDto[]`, newest first, at most 50. `calls-history.json` |
+| `GET /calls/latest` | | 200 `HistoryEntryDto`; 404 when there are none. `call-latest.json`, `error-404-no-call-yet.json` |
+| `GET /calls/{id}` | | 200 `HistoryEntryDto`; 404 for an unknown id. `call-by-id.json`, `error-404-unknown-call.json` |
+
+Example call (`call-ping.json`, abridged):
+`{"id":1,"method":"PING","fromNode":1,"targetNode":2,"path":"REMOTE","outcome":"SUCCESS","failureKind":null,"lookupNanos":1734900,"roundTripNanos":7237200,"timeToFailureNanos":null,"argumentBytes":96,"resultBytes":86,"stubClassName":"jdk.proxy2.$Proxy111","senderLamportAtSend":3,"replyLamport":5,"senderLamportAfterReply":6,"reply":{"method":"PING","nodeId":2,"lamportTime":5,...}}`
+
+**Errors.**
+- **409 "Node down"** (`nodeId`): the caller is crashed (a dead node cannot call), or a comparison's
+  target is crashed (the local half cannot run). Fixtures: `error-409-caller-crashed.json`,
+  `error-409-compare-target-down.json`.
+- **409 "Node state conflict"**: a comparison's target is up, but RMI could not start on it.
+- **409 "Module busy"** (`moduleId`, `actionInProgress`), for example
+  `"actionInProgress":"COMPUTE_HASH from node 1 to node 2"`. Fixture: `error-409-busy.json`.
+- **404 "Unknown node"** (`nodeId`, `error-404-unknown-node.json`) and **404 "Unknown call"**
+  (`callId`, which is null when nothing has been called yet).
+- **400, two shapes. E1d must handle both.**
+  1. The module's own rules, `title` "Invalid request parameters", with every offending field under
+     `errors`:
+     `{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: text, rounds","instance":"/api/modules/rmi/calls","errors":{"text":"text must be left out for PING","rounds":"rounds must be left out for PING"}}`
+     (`error-400-field-not-taken.json`; also `error-400-missing-fields.json` and
+     `error-400-rounds.json`). Messages: "fromNode/targetNode/method is required";
+     "text is required for ECHO"; "text must be at most 1024 characters, was N";
+     "rounds is required for COMPUTE_HASH"; "rounds must be 1-1000000, was N";
+     "text/rounds must be left out for PING" (or whichever method was sent). A call from a node to itself is valid.
+  2. Spring's default, with **no `errors` map**, for an unreadable body (for example an unknown
+     `method`) or a non-numeric id. These exact bodies were captured:
+     - `error-400-unreadable.json`:
+       `{"type":"about:blank","title":"Bad Request","status":400,"detail":"Failed to read request","instance":"/api/modules/rmi/calls"}`
+     - `error-400-bad-id.json`:
+       `{"type":"about:blank","title":"Bad Request","status":400,"detail":"Failed to convert 'id' with value: 'abc'","instance":"/api/modules/rmi/calls/abc"}`
+
+**DTOs** (`dto/`). An unknown or inapplicable value is null, never 0 (a reflection test checks every
+numeric component):
+- `RmiOverviewDto`: status, actionInProgress, boundName, nodes, methods, limits, payloadSizeBasis,
+  lookupBasis, coHosting, comparisonNote, failureKinds, latest.
+- `RmiNodeDto`: nodeId, nodeStatus (UP/CRASHED), state (`RmiNodeState`), registryPort,
+  startFailure.
+- `MethodDto`: method, description, parameters.
+- `ParameterDto`: name, type (`string` or `int`), description, minimum, maximum. For `string` the
+  bounds are a length in UTF-16 characters.
+- `RmiLimitsDto`: maxHashRounds 1000000 (public 100000), maxEchoLength 1024, historySize 50,
+  callTimeoutMillis 3000, connectTimeoutMillis 1000, maxFailureMessageLength 300.
+- `CoHostingDto`: simulated (true), reason. **This is the Simulated badge for the node map. Every
+  measured figure is real and carries no badge.**
+- `FailureKindDto`: kind, description (all 11 kinds, in `RemoteFailureKind` order).
+- `RegistryDto`: nodeId, registryPort, state, reachable, names (null, never `[]`, when
+  unreachable), failureKind, failureDescription, failureClass, failureMessage, failureCauseClass.
+- `BoundNameDto`: name, stubClassName.
+- `RmiCallDto`:
+  - identity: id, calledAt (display only), method, fromNode, targetNode, path
+  - text and outcome: argumentSummary, resultSummary, outcome
+  - failure: failureStage, failureKind, failureDescription, failureClass, failureMessage,
+    failureCauseClass
+  - times: lookupNanos, roundTripNanos (completed calls only), timeToFailureNanos (failures only)
+  - sizes: argumentBytes, resultBytes, payloadSizeBasis (set exactly when a size is set; never on
+    the LOCAL path)
+  - the rest: stubClassName, senderLamportAtSend, replyLamport, senderLamportAfterReply, reply
+- `ReplyDto`: method, nodeId, lamportTime; NODE_INFO adds registryPort, capacityProfile,
+  uptimeMillis, javaVersion; ECHO adds text; COMPUTE_HASH adds rounds, seed, digestHex,
+  serverNanos. The other methods' fields are null.
+- `ComparisonDto`: id, calledAt, method, fromNode, targetNode, local, remote, localNanos,
+  remoteNanos, overheadNanos, ratio, digestsMatch, note. **The overhead can be negative and the
+  ratio below 1.** `comparison-compute-hash.json` captured exactly that: overhead -4563400 ns,
+  ratio 0.949. Show it as measured, together with `note`.
+- `HistoryEntryDto`: id, kind (CALL/COMPARISON), call, comparison (exactly one is set). Both halves
+  of a comparison carry the comparison's id.
+
+**Enumerations.**
+- `RmiNodeState`: NOT_STARTED, EXPORTED, CRASHED.
+- `HistoryKind`: CALL, COMPARISON.
+- `RmiMethod`: PING, NODE_INFO, ECHO, COMPUTE_HASH.
+- `CallPath`: LOCAL, REMOTE.
+- `CallOutcome`: SUCCESS, REMOTE_FAILURE.
+- `CallStage`: LOOKUP, CALL.
+- `RemoteFailureKind`: CONNECTION_REFUSED, CONNECTION_FAILED, CONNECTION_LOST, TIMED_OUT,
+  NO_SUCH_OBJECT, NOT_BOUND, MARSHAL_FAILED, UNMARSHAL_FAILED, ARGUMENTS_REJECTED, METHOD_THREW,
+  OTHER.
+
+**What `lookupNanos` contains (verified).** RMI's distributed-GC "dirty" call for the returned stub
+happens inside `registry.lookup()`, so it is part of `lookupNanos`, not `roundTripNanos`:
+- **JDK 21.0.12.1 source:** `RegistryImpl_Stub.lookup` ends with `ref.done(call)`, then
+  `StreamRemoteCall.releaseInputStream`, then `ConnectionInputStream.registerRefs`, then
+  `DGCClient.EndpointEntry.registerRefs`. That last step calls `makeDirtyCall` (`dgc.dirty`)
+  synchronously on the calling thread when the object is not yet referenced in this JVM.
+- **Test:** `RmiLookupBasisTest` shows that after a bare `lookup()`, before any method call, the
+  node has accepted 2 connections (the registry request, and the dirty call on the stub's own
+  channel), and RMI's client DGC thread for that endpoint exists. While an earlier stub is still
+  alive, a second lookup makes no new dirty call.
+- A failed dirty call does not fail the lookup.
+
+The overview serves this as `lookupBasis`, and the page must show it next to the lookup time (as it
+shows `payloadSizeBasis` next to the sizes).
+
+**Worst-case request duration (for E1d's HTTP timeout).** A remote call takes at most three
+exchanges: the registry lookup, the DGC dirty call inside it, and the method call. Each is bounded
+by the 1000 ms connect timeout plus the 3000 ms read timeout, so about **12 s** in theory. A
+comparison adds the local half, which has no timeout: up to 1,000,000 SHA-256 rounds, measured at
+about 90 ms for 100,000 rounds on this machine. A failed start can add up to 5 s per node (E1b's
+listener wait), and `SO_TIMEOUT` bounds each read, not a whole call. On loopback a dead node is
+refused at once (10.6 ms in `call-crashed-target.json`). **The shared axios client times out after
+10000 ms (`createApi`, default `timeout = 10000`), which is below 12 s. E1d must give these POSTs a
+longer timeout (recommended: at least 20000 ms for calls and 25000 ms for comparisons), or a slow
+real answer will show as a client timeout.**
+
+**Events** (module `rmi`). No event ever ticks a clock; each carries the Lamport time of the step it
+reports. Messages are single-line.
+
+| Type | Node, peer | Lamport time | Data |
+|---|---|---|---|
+| `ENDPOINT_EXPORTED` | the started node | its clock's current value (the core's SERVICE_STARTED/RECOVERED ticked it) | registryPort, boundName |
+| `CALL_SERVED` | target, peer = caller | the reply's Lamport time | callId, method, path, senderLamportAtSend |
+| `CALL_SUCCEEDED` | caller, peer = target | the caller's time after the receive rule | callId, method, path, lookupNanos, roundTripNanos, argumentBytes?, resultBytes?, senderLamportAtSend, replyLamport, latencyMillis (REMOTE only) |
+| `CALL_FAILED` | caller, peer = target | stage CALL: senderLamportAtSend; stage LOOKUP: the caller's current value | callId, method, path, stage, kind, failureClass, failureCauseClass?, timeToFailureNanos, senderLamportAtSend? |
+| `COMPARISON_FINISHED` | caller, peer = target | the caller's current value after both halves | callId, method, localNanos?, remoteNanos?, overheadNanos?, ratio?, digestsMatch? |
+
+A comparison publishes, in causal order: CALL_SERVED/LOCAL, CALL_SUCCEEDED/LOCAL,
+CALL_SERVED/REMOTE, CALL_SUCCEEDED/REMOTE (or CALL_FAILED), COMPARISON_FINISHED.
+
+**Link L5.** `latencyMillis` is the measured REMOTE round trip in **whole milliseconds, rounded half
+up, so 0 means under half a millisecond**; the exact value stays in `roundTripNanos`. The export
+writes it as `latency=7.0` (`events-export.txt`). It is set on REMOTE successes only: never on a
+LOCAL half, a failure or CALL_SERVED. Exp 7's average-latency job therefore includes real RMI round
+trips per calling node.
+
+**Metrics.** `node_id` is always the **calling node**, and the target is the `target_node` tag:
+
+| Meter | Tags |
+|---|---|
+| `distributed_rmi_calls_total` | node_id, target_node, method, path, outcome |
+| `distributed_rmi_failures_total` | node_id, target_node, method, stage, kind |
+| `distributed_rmi_round_trip` (timer) | node_id, target_node, method, path; completed calls only, never a time to failure |
+| `distributed_rmi_endpoint_exported` (gauge) | node_id = that node; 1 while exported, 0 otherwise; read live and never starts a service |
+
+**Link L6: how Experiment 9 gets the RMI layer.** Inject the `RmiModule` bean and use
+`remoteLookup()` (the module's single `RemoteEndpointLookup`: one client channel per node, as E1b
+recommends), `localLookup()`, and `ensureStarted()` (starts RMI on every live node; does not take
+the rmi guard). Use `RmiNodeService.on/find` and `new RmiInvoker(node.id(), node.clock(), …)` with
+the calling node's own clock. Nothing is copied into Exp 9.
+
+**Test ports (E1c):** sub-range 28750-28799 of Jai's block.
+
+| Port base | Class | Ports |
+|---|---|---|
+| 28750 | RmiControllerTest, `udcf.cluster.ports.rmi-base` | 28751-28755 |
+| 28760 | RmiEndToEndTest | 28761-28765 |
+| 28770 | RmiModuleTest | 28771-28773 |
+| 28780 | RmiMetricsTest | 28781-28783 |
+| 28790 | RmiLookupBasisTest | 28791-28792 |
+
+The two Spring classes stop the RMI services and check that the ports are free in `@AfterAll`, and
+close their context (`@DirtiesContext(AFTER_CLASS)`), so no cached context keeps a listener, accept
+thread or RMI's reaper thread.
+
+#### E1c deviations from the approved plan
+
+1. An extra exception, `InvalidCallException`, mapped in `RmiController` to the shared 400 shape,
+   so every offending field is reported at once.
+2. An extra test class, `RmiLookupBasisTest` (A4), and a test-only helper, `RmiResultFixtures`
+   (call results built through the E1a factories, without sockets).
+3. `lookupBasis` was added to the overview (A4).
+4. `RmiEndToEndTest` starts each test with `POST /api/cluster/reset` rather than a module reset,
+   because call ids restart at 1 while old events stay until a cluster reset (known issue below).
+5. 78 new tests rather than about 76.
+6. An extra fixture, `registries-before-start.json`, plus `call-self.json` (A2),
+   `error-400-unreadable.json` and `error-400-bad-id.json` (A1), and `events-export.txt`.
+
 ---
 
 ## Known issues
@@ -930,6 +1125,56 @@ window); `TCPChannel`: `sock.setSoTimeout((originalSoTimeout != 0 ? originalSoTi
   test (no way to keep a thread in `accept()` after its listener closed), so that branch is covered by
   code review only.
 
+- E1c (Q5): **after a reset, the next start is logged as `SERVICE_RECOVERED`, not `SERVICE_STARTED`.**
+  `RmiModule.reset()` stops each RMI service directly, but the core (`ClusterNode`) keeps a stopped
+  service registered. The next `ensureService` therefore recovers it, and publishes
+  `SERVICE_RECOVERED` (module `cluster`). The module's own `ENDPOINT_EXPORTED` is published either
+  way. No core change (accepted).
+- E1c (Q6): **call ids restart at 1 after a reset, so `callId` values repeat in older events.** A
+  module reset clears the history, but old `rmi` events with the same `callId` stay in the event
+  log until a cluster reset clears it (the cluster reset does both). E1d must refetch the history
+  after a reset (`CLUSTER_RESET`) and key rows by kind + id + `calledAt`, never by id alone; it must
+  not join events to history entries by `callId` across a reset.
+- E1c (A7 item 3, confirmed by Rohan): **`CALL_SERVED` is published only for successful calls.** A
+  call that reached the target and then failed or lost its reply leaves a clock tick on the target
+  node and no served event. Examples: `TIMED_OUT`, where the node ran the method and ticked its
+  clock while the caller had given up; or `CONNECTION_LOST`. The module never learns the reply's
+  Lamport time, so it has nothing to publish. E1d must not suggest that the target did nothing.
+- E1c (A7 item 4): **lookup and call are each bounded per read, not as a whole** (the E1b issue:
+  `SO_TIMEOUT` = `call-timeout-millis` bounds each read, and a peer trickling bytes can hold a call
+  longer). Worst case computed for this step:
+  - A remote call is at most three exchanges: the registry lookup, RMI's DGC dirty call inside
+    `lookup()`, and the method call. Each exchange is at most `connect-timeout-millis` (1000 ms)
+    plus `call-timeout-millis` (3000 ms) per read, so about **12 s** for a call that reads once per
+    exchange.
+  - A comparison adds its local half (item 6).
+  - A failed start adds up to 5 s per node (E1b's listener wait).
+  - Measured on loopback: a dead node is refused at once (10.6 ms in `call-crashed-target.json`);
+    the 50 ms timeout fired after 51.3 ms (`call-timed-out.json`).
+- E1c (A7 item 5): **the overview never starts anything.** `GET /api/modules/rmi` and
+  `GET /registries` make no start and change nothing. Until a start, every node is `NOT_STARTED`
+  and every registry unreachable (`registries-before-start.json`). E1d must call `POST /start` (it
+  is idempotent) when the page mounts, and again after a `CLUSTER_RESET` (a reset stops the
+  services), before showing registries.
+- E1c (A7 item 6): **the local half of a comparison has no timeout.** It is a direct Java call on
+  the target's endpoint object, on the request thread, bounded only by the work. The maximum is
+  1,000,000 SHA-256 rounds (100,000 in the public profile); 100,000 rounds measured 90.1 ms
+  locally in `comparison-compute-hash.json`. The request then also makes the remote half (item 4).
+- E1c: **the shared HTTP client's 10 s timeout is below the worst case of a call (about 12 s; more
+  for a comparison).** E1d must raise the timeout for `POST /calls` and `/comparisons` (see "E1c
+  interfaces for E1d").
+- E1c: listing registries publishes no event, and calls `registry.list()` plus one lookup per name
+  on each node in turn, without the guard. A crashed node is refused at once on loopback. A
+  registry read while a node is restarting can therefore mix states between nodes.
+- E1c: an unreadable body (for example an unknown `method`) and a non-numeric id get Spring's
+  default 400 (`title` "Bad Request", no `errors`), because changing that would need the shared
+  `GlobalExceptionHandler`. Both shapes are captured and documented for E1d.
+- E1c: a module reset cannot stop an RMI call already running on the target node's RMI thread (E1b
+  known issue). That call's history entry is dropped, through the generation check, but its events
+  are still published, because they really happened.
+- E1c: `RmiNodeServiceTest.java` (E1b) contains one literal non-ASCII character (`€` on line 138),
+  despite the E1a follow-up F2 rule. It is not changed here (not an E1c file, not a defect).
+
 ---
 
 ## Progress log
@@ -1009,3 +1254,15 @@ window); `TCPChannel`: `sock.setSoTimeout((originalSoTimeout != 0 ? originalSoTi
   CONNECTION_REFUSED; backend 1368 tests, 1 skipped (3 runs, identical; baseline 1292), frontend not
   run (no frontend change); deviations: the ten listed under "E1b deviations from the approved plan".
   Linux (Docker, --cpus=2), run by Jai: 162 rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1368 tests, 0 failures, 1 skipped; clean-clone full suite 1368 tests, 0 failures, 1 skipped.
+- 2026-10-12 E1c done: RmiModule (lab 1) and RmiController under /api/modules/rmi (overview,
+  idempotent start, network registry listing, synchronous calls with a remote failure as 200 data,
+  local-versus-remote comparisons, one bounded history with sequential ids), 14 DTO records and 2
+  enums (null never 0, proved by reflection), 5 event types with no extra Lamport tick (CALL_SUCCEEDED carries
+  whole-ms latencyMillis for link L5), RmiMetrics (4 MetricNames constants, node_id = caller),
+  lookupBasis verified in the JDK source and by RmiLookupBasisTest, 34 contract fixtures and a README
+  captured from two real backends (including a real TIMED_OUT and a real 409 busy); 7 new test
+  classes, 78 tests (5 runs, run 5 in reverse alphabetical order, all green), plus one added line
+  in CoreContextTest and three in ModuleControllerTest; backend 1446 tests, 1 skipped (3 runs plus
+  1 reverse-alphabetical run, identical; baseline 1368), no listener left on 8080, 1101-1105 or
+  28750-28799 after each run; frontend not run (no frontend code changed; the fixtures are data);
+  deviations: the six listed under "E1c deviations from the approved plan".
