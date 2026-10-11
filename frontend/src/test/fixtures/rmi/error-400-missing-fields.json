@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: targetNode, method, fromNode","instance":"/api/modules/rmi/calls","errors":{"targetNode":"targetNode is required","method":"method is required","fromNode":"fromNode is required"}}

@@ -56,6 +56,14 @@ public final class MetricNames {
     public static final String MAPREDUCE_JOB_DURATION = "distributed_mapreduce_job_duration";
     /** Experiment 7: failed task attempts per worker node, by task type (map, reduce). */
     public static final String MAPREDUCE_TASK_ATTEMPTS_FAILED_TOTAL = "distributed_mapreduce_task_attempts_failed_total";
+    /** Experiment 1: calls per calling node, by target node, method, path (LOCAL, REMOTE) and outcome. */
+    public static final String RMI_CALLS_TOTAL = "distributed_rmi_calls_total";
+    /** Experiment 1: remote failures per calling node, by target node, method, stage and kind. */
+    public static final String RMI_FAILURES_TOTAL = "distributed_rmi_failures_total";
+    /** Experiment 1: measured round trip of each completed call, per calling node, by target node, method and path. */
+    public static final String RMI_ROUND_TRIP = "distributed_rmi_round_trip";
+    /** Experiment 1: 1 while the node's NodeEndpoint is exported, 0 otherwise. */
+    public static final String RMI_ENDPOINT_EXPORTED = "distributed_rmi_endpoint_exported";
 
     /** Tag key every meter carries. */
     public static final String NODE_ID = "node_id";

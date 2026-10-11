@@ -45,6 +45,7 @@ class CoreContextTest {
         assertThat(moduleRegistry.get("clocksync").labNumber()).isEqualTo(3);
         assertThat(moduleRegistry.get("loadbalancing").labNumber()).isEqualTo(6);
         assertThat(moduleRegistry.get("mapreduce").labNumber()).isEqualTo(7);
+        assertThat(moduleRegistry.get("rmi").labNumber()).isEqualTo(1);
         assertThat(moduleRegistry.modules()).extracting(ExperimentModule::id)
                 .containsSubsequence("multithreading", "clocksync", "loadbalancing");
         assertThat(eventBus.query("cluster", 0, 100))

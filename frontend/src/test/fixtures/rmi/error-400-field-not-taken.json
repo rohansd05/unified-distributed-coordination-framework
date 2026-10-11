@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: text, rounds","instance":"/api/modules/rmi/calls","errors":{"text":"text must be left out for PING","rounds":"rounds must be left out for PING"}}

@@ -1,0 +1,26 @@
+2026-10-11 19:28:40.586 | node=1 | category=ENDPOINT_EXPORTED | seq=8 | lamport=2 | module=rmi | msg=Node 1 exported NodeEndpoint in its RMI registry on port 1101
+2026-10-11 19:28:40.598 | node=2 | category=ENDPOINT_EXPORTED | seq=10 | lamport=2 | module=rmi | msg=Node 2 exported NodeEndpoint in its RMI registry on port 1102
+2026-10-11 19:28:40.600 | node=3 | category=ENDPOINT_EXPORTED | seq=12 | lamport=2 | module=rmi | msg=Node 3 exported NodeEndpoint in its RMI registry on port 1103
+2026-10-11 19:28:40.600 | node=4 | category=ENDPOINT_EXPORTED | seq=14 | lamport=2 | module=rmi | msg=Node 4 exported NodeEndpoint in its RMI registry on port 1104
+2026-10-11 19:28:40.602 | node=5 | category=ENDPOINT_EXPORTED | seq=16 | lamport=2 | module=rmi | msg=Node 5 exported NodeEndpoint in its RMI registry on port 1105
+2026-10-11 19:28:40.950 | node=2 | category=CALL_SERVED | seq=17 | lamport=5 | module=rmi | peer=1 | msg=Node 2 answered PING (no arguments) from node 1 over RMI
+2026-10-11 19:28:40.952 | node=1 | category=CALL_SUCCEEDED | latency=7.0 | seq=18 | lamport=6 | module=rmi | peer=2 | msg=Node 1 called PING (no arguments) on node 2 over RMI and got the reply in 7.24 ms
+2026-10-11 19:28:41.271 | node=2 | category=CALL_SERVED | seq=25 | lamport=8 | module=rmi | peer=2 | msg=Node 2 answered PING (no arguments) from node 2 over RMI
+2026-10-11 19:28:41.271 | node=2 | category=CALL_SUCCEEDED | latency=1.0 | seq=26 | lamport=9 | module=rmi | peer=2 | msg=Node 2 called PING (no arguments) on node 2 over RMI and got the reply in 0.56 ms
+2026-10-11 19:28:41.015 | node=3 | category=CALL_SERVED | seq=19 | lamport=9 | module=rmi | peer=1 | msg=Node 3 answered NODE_INFO (no arguments) from node 1 over RMI
+2026-10-11 19:28:41.015 | node=1 | category=CALL_SUCCEEDED | latency=5.0 | seq=20 | lamport=10 | module=rmi | peer=3 | msg=Node 1 called NODE_INFO (no arguments) on node 3 over RMI and got the reply in 4.64 ms
+2026-10-11 19:28:41.061 | node=4 | category=CALL_SERVED | seq=21 | lamport=13 | module=rmi | peer=1 | msg=Node 4 answered ECHO (text="hello, RMI" (10 characters)) from node 1 over RMI
+2026-10-11 19:28:41.061 | node=1 | category=CALL_SUCCEEDED | latency=3.0 | seq=22 | lamport=14 | module=rmi | peer=4 | msg=Node 1 called ECHO (text="hello, RMI" (10 characters)) on node 4 over RMI and got the reply in 2.62 ms
+2026-10-11 19:28:41.230 | node=5 | category=CALL_SERVED | seq=23 | lamport=17 | module=rmi | peer=1 | msg=Node 5 answered COMPUTE_HASH (rounds=100000) from node 1 over RMI
+2026-10-11 19:28:41.230 | node=1 | category=CALL_SUCCEEDED | latency=125.0 | seq=24 | lamport=18 | module=rmi | peer=5 | msg=Node 1 called COMPUTE_HASH (rounds=100000) on node 5 over RMI and got the reply in 124.77 ms
+2026-10-11 19:28:41.482 | node=2 | category=CALL_SERVED | seq=27 | lamport=21 | module=rmi | peer=1 | msg=Node 2 answered COMPUTE_HASH (rounds=100000) from node 1 directly (local call)
+2026-10-11 19:28:41.482 | node=1 | category=CALL_SUCCEEDED | seq=28 | lamport=22 | module=rmi | peer=2 | msg=Node 1 called COMPUTE_HASH (rounds=100000) on node 2 directly (local call) and got the reply in 90.14 ms
+2026-10-11 19:28:41.482 | node=2 | category=CALL_SERVED | seq=29 | lamport=25 | module=rmi | peer=1 | msg=Node 2 answered COMPUTE_HASH (rounds=100000) from node 1 over RMI
+2026-10-11 19:28:41.482 | node=1 | category=CALL_SUCCEEDED | latency=86.0 | seq=30 | lamport=26 | module=rmi | peer=2 | msg=Node 1 called COMPUTE_HASH (rounds=100000) on node 2 over RMI and got the reply in 85.57 ms
+2026-10-11 19:28:41.482 | node=1 | category=COMPARISON_FINISHED | seq=31 | lamport=26 | module=rmi | peer=2 | msg=Node 1 compared COMPUTE_HASH on node 2: local 90.14 ms, remote 85.57 ms
+2026-10-11 19:28:41.533 | node=3 | category=CALL_SERVED | seq=32 | lamport=29 | module=rmi | peer=1 | msg=Node 3 answered PING (no arguments) from node 1 directly (local call)
+2026-10-11 19:28:41.533 | node=1 | category=CALL_SUCCEEDED | seq=33 | lamport=30 | module=rmi | peer=3 | msg=Node 1 called PING (no arguments) on node 3 directly (local call) and got the reply in 0.01 ms
+2026-10-11 19:28:41.533 | node=3 | category=CALL_SERVED | seq=34 | lamport=33 | module=rmi | peer=1 | msg=Node 3 answered PING (no arguments) from node 1 over RMI
+2026-10-11 19:28:41.533 | node=1 | category=CALL_SUCCEEDED | latency=1.0 | seq=35 | lamport=34 | module=rmi | peer=3 | msg=Node 1 called PING (no arguments) on node 3 over RMI and got the reply in 0.62 ms
+2026-10-11 19:28:41.533 | node=1 | category=COMPARISON_FINISHED | seq=36 | lamport=34 | module=rmi | peer=3 | msg=Node 1 compared PING on node 3: local 0.01 ms, remote 0.62 ms
+2026-10-11 19:28:55.680 | node=1 | category=CALL_FAILED | seq=38 | lamport=34 | module=rmi | peer=3 | msg=Node 1 called PING (no arguments) on node 3 over RMI; it failed at the lookup after 10.58 ms: CONNECTION_REFUSED (java.rmi.ConnectException)
