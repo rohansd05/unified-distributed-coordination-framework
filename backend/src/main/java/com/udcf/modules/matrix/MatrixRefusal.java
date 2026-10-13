@@ -21,7 +21,9 @@ public record MatrixRefusal(Reason reason, String message) {
         /** No node is live, so there is no participant at all. */
         NO_LIVE_PARTICIPANT,
         /** N is below the number of live participants: a rank would get no row. */
-        SIZE_BELOW_PARTICIPANTS
+        SIZE_BELOW_PARTICIPANTS,
+        /** The root is not a participant or is not live (checked by the E10b runner after the four above). */
+        ROOT_UNAVAILABLE
     }
 
     public MatrixRefusal {

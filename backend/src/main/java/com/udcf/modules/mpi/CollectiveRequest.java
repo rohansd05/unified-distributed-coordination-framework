@@ -15,9 +15,19 @@ import java.util.Set;
  * @param liveNodeIds        the nodes that are up at the start
  * @param count              vector length n: broadcast and scatter send a vector of n values; gather assembles n values
  * @param seed               the seed of the generated data ({@link PayloadGenerator})
+ * @param blockUnit          scatter and gather split the vector into blocks of whole units of this many elements
+ *                           ({@link BlockPartition#of(int, int, int)}); 1 for Experiment 9, n for Experiment 10's
+ *                           rows of an n x n matrix; count must be a multiple of it; a broadcast ignores it (E10b)
  */
 public record CollectiveRequest(long collectiveId, CollectiveOperation operation, int rootNodeId,
-                                List<Integer> participantNodeIds, Set<Integer> liveNodeIds, int count, long seed) {
+                                List<Integer> participantNodeIds, Set<Integer> liveNodeIds, int count, long seed,
+                                int blockUnit) {
+
+    /** A request with block unit 1, as before E10b. */
+    public CollectiveRequest(long collectiveId, CollectiveOperation operation, int rootNodeId,
+                             List<Integer> participantNodeIds, Set<Integer> liveNodeIds, int count, long seed) {
+        this(collectiveId, operation, rootNodeId, participantNodeIds, liveNodeIds, count, seed, 1);
+    }
 
     public CollectiveRequest {
         if (collectiveId < 1) {
@@ -31,6 +41,12 @@ public record CollectiveRequest(long collectiveId, CollectiveOperation operation
         liveNodeIds = Set.copyOf(Objects.requireNonNull(liveNodeIds, "liveNodeIds must not be null"));
         if (count < 1) {
             throw new IllegalArgumentException("count must be >= 1, was " + count);
+        }
+        if (blockUnit < 1) {
+            throw new IllegalArgumentException("blockUnit must be >= 1, was " + blockUnit);
+        }
+        if (count % blockUnit != 0) {
+            throw new IllegalArgumentException("count must be a multiple of blockUnit: count " + count + ", blockUnit " + blockUnit);
         }
     }
 }
