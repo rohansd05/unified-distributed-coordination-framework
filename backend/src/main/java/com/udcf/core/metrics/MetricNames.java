@@ -34,6 +34,7 @@ public final class MetricNames {
     public static final String RECOVERY_DURATION = "distributed_recovery_duration";
     public static final String MAP_TASKS_TOTAL = "distributed_map_tasks_total";
     public static final String REDUCE_TASKS_TOTAL = "distributed_reduce_tasks_total";
+    /** Experiment 9: remote transfers per root node, by target node, operation, direction and status (LOCAL excluded). */
     public static final String MPI_MESSAGES_TOTAL = "distributed_mpi_messages_total";
     public static final String MATRIX_EXECUTION_DURATION = "distributed_matrix_execution_duration";
     public static final String EVENTS_PUBLISHED_TOTAL = "distributed_events_published_total";
@@ -64,6 +65,12 @@ public final class MetricNames {
     public static final String RMI_ROUND_TRIP = "distributed_rmi_round_trip";
     /** Experiment 1: 1 while the node's NodeEndpoint is exported, 0 otherwise. */
     public static final String RMI_ENDPOINT_EXPORTED = "distributed_rmi_endpoint_exported";
+    /** Experiment 9: collectives per root node, by operation and outcome (COMPLETE, PARTIAL, FAILED, REFUSED). */
+    public static final String MPI_COLLECTIVES_TOTAL = "distributed_mpi_collectives_total";
+    /** Experiment 9: measured latency of each DELIVERED transfer, per root node, by target node, operation and direction. */
+    public static final String MPI_TRANSFER_LATENCY = "distributed_mpi_transfer_latency";
+    /** Experiment 9: measured total time of each collective that attempted a remote transfer, per root node, by operation and outcome. */
+    public static final String MPI_COLLECTIVE_DURATION = "distributed_mpi_collective_duration";
 
     /** Tag key every meter carries. */
     public static final String NODE_ID = "node_id";

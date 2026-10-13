@@ -1,0 +1,19 @@
+2026-10-13 14:41:44.747 | node=1 | category=COLLECTIVE_ENDPOINT_EXPORTED | seq=16 | lamport=2 | module=mpi | msg=Node 1 exported CollectiveEndpoint in its RMI registry on port 1101
+2026-10-13 14:41:44.886 | node=1 | category=COLLECTIVE_STARTED | seq=21 | lamport=2 | module=mpi | msg=Node 1 started broadcast 1 of 1000 values over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:44.747 | node=2 | category=COLLECTIVE_ENDPOINT_EXPORTED | seq=17 | lamport=2 | module=mpi | msg=Node 2 exported CollectiveEndpoint in its RMI registry on port 1102
+2026-10-13 14:41:44.747 | node=3 | category=COLLECTIVE_ENDPOINT_EXPORTED | seq=18 | lamport=2 | module=mpi | msg=Node 3 exported CollectiveEndpoint in its RMI registry on port 1103
+2026-10-13 14:41:44.747 | node=4 | category=COLLECTIVE_ENDPOINT_EXPORTED | seq=19 | lamport=2 | module=mpi | msg=Node 4 exported CollectiveEndpoint in its RMI registry on port 1104
+2026-10-13 14:41:45.162 | node=5 | category=COLLECTIVE_ENDPOINT_EXPORTED | seq=25 | lamport=4 | module=mpi | msg=Node 5 exported CollectiveEndpoint in its RMI registry on port 1105
+2026-10-13 14:41:44.958 | node=1 | category=COLLECTIVE_FINISHED | seq=22 | lamport=15 | module=mpi | msg=Node 1 finished broadcast 1: partial, 3 of 4 remote transfers delivered in 62.70 ms
+2026-10-13 14:41:45.334 | node=1 | category=COLLECTIVE_STARTED | seq=26 | lamport=15 | module=mpi | msg=Node 1 started broadcast 2 of 1000 values over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:45.349 | node=1 | category=COLLECTIVE_FINISHED | seq=27 | lamport=31 | module=mpi | msg=Node 1 finished broadcast 2: complete, 4 of 4 remote transfers delivered in 13.68 ms
+2026-10-13 14:41:45.439 | node=1 | category=COLLECTIVE_STARTED | seq=28 | lamport=31 | module=mpi | msg=Node 1 started scatter 3 of 1003 values over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:45.446 | node=1 | category=COLLECTIVE_FINISHED | seq=29 | lamport=47 | module=mpi | msg=Node 1 finished scatter 3: complete, 4 of 4 remote transfers delivered in 5.44 ms
+2026-10-13 14:41:45.523 | node=1 | category=COLLECTIVE_STARTED | seq=30 | lamport=47 | module=mpi | msg=Node 1 started gather 4 of 1003 values over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:45.625 | node=3 | category=COLLECTIVE_STARTED | seq=32 | lamport=54 | module=mpi | msg=Node 3 started broadcast 5 of 1000 values over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-13 14:41:45.534 | node=1 | category=COLLECTIVE_FINISHED | seq=31 | lamport=63 | module=mpi | msg=Node 1 finished gather 4: complete, 4 of 4 remote transfers delivered in 9.16 ms
+2026-10-13 14:41:45.879 | node=1 | category=COLLECTIVE_STARTED | seq=35 | lamport=65 | module=mpi | msg=Node 1 started broadcast 6 of 1000 values over the live nodes [1, 2, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:45.634 | node=3 | category=COLLECTIVE_FINISHED | seq=33 | lamport=78 | module=mpi | msg=Node 3 finished broadcast 5: complete, 4 of 4 remote transfers delivered in 7.78 ms
+2026-10-13 14:41:45.887 | node=1 | category=COLLECTIVE_FINISHED | seq=36 | lamport=80 | module=mpi | msg=Node 1 finished broadcast 6: complete, 3 of 3 remote transfers delivered in 6.77 ms
+2026-10-13 14:41:46.056 | node=1 | category=COLLECTIVE_STARTED | seq=37 | lamport=80 | module=mpi | msg=Node 1 started scatter 7 of 3 values over the live nodes [1, 2, 4, 5] (root: the lowest live node id)
+2026-10-13 14:41:46.059 | node=1 | category=COLLECTIVE_REFUSED | seq=38 | lamport=80 | module=mpi | msg=Node 1 refused scatter 7: A scatter needs at least one element per live participant: count 3, 4 live participants.
