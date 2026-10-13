@@ -283,10 +283,14 @@ class RmiControllerTest {
             assertThat(r.get("registryPort").asInt()).isEqualTo(RMI_BASE + k + 1);
             assertThat(r.get("state").asText()).isEqualTo("EXPORTED");
             assertThat(r.get("reachable").asBoolean()).isTrue();
-            assertThat(r.get("names")).hasSize(1);
-            assertFields(r.get("names").get(0), "name", "stubClassName");
-            assertThat(r.get("names").get(0).get("name").asText()).isEqualTo("NodeEndpoint");
-            assertThat(r.get("names").get(0).get("stubClassName").asText()).contains("$Proxy");
+            // Since E9b every node also exports Experiment 9's CollectiveEndpoint: two names, sorted.
+            assertThat(r.get("names")).hasSize(2);
+            for (int i = 0; i < 2; i++) {
+                assertFields(r.get("names").get(i), "name", "stubClassName");
+                assertThat(r.get("names").get(i).get("stubClassName").asText()).contains("$Proxy");
+            }
+            assertThat(r.get("names").get(0).get("name").asText()).isEqualTo("CollectiveEndpoint");
+            assertThat(r.get("names").get(1).get("name").asText()).isEqualTo("NodeEndpoint");
             assertNull(r, "failureKind", "failureDescription", "failureClass", "failureMessage", "failureCauseClass");
         }
         JsonNode one = json(mockMvc.perform(get(BASE + "/registries/2")).andExpect(status().isOk()));
