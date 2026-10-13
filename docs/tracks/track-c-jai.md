@@ -1388,6 +1388,8 @@ collective export, plus the barrier). Added: `RmiSerialFilterTest` +4, `RmiModul
 `NODE_GONE`, `RemoteAction`, `drainUntilRefused`, `canBind`, `acceptThreadAlive` and `methodHash` made public
 (visibility only). 39 new tests. No sleeps: latches and Awaitility only.
 
+Linux (Docker, --cpus=2), run by Jai: 354 mpi and rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1560 tests, 0 failures, 1 skipped; clean-clone full suite 1560 tests, 0 failures, 1 skipped.
+
 #### E9b deviations from the approved plan
 
 1. Q4 (approved): test ports 28500-28599 instead of 28300-28399; the grep there was not empty (the replication tests'
