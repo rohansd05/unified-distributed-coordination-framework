@@ -62,6 +62,26 @@ public final class BlockPartition {
         return List.copyOf(blocks);
     }
 
+    /**
+     * The p blocks of n elements in whole units of {@code unit} elements (added in E10b): {@link #of(int, int)}
+     * over the n / unit units, each block's offset and length multiplied by {@code unit}. Experiment 10
+     * scatters an n x n matrix with unit n, so every block is whole rows. {@code of(n, p, 1)} equals
+     * {@code of(n, p)}.
+     *
+     * @throws IllegalArgumentException if unit < 1, n is not a multiple of unit, p < 1 or n / unit < p
+     */
+    public static List<Block> of(int n, int p, int unit) {
+        if (unit < 1) {
+            throw new IllegalArgumentException("unit must be >= 1, was " + unit);
+        }
+        if (n % unit != 0) {
+            throw new IllegalArgumentException("n must be a multiple of the unit: n = " + n + ", unit = " + unit);
+        }
+        return of(n / unit, p).stream()
+                .map(block -> new Block(block.rank(), block.offset() * unit, block.length() * unit))
+                .toList();
+    }
+
     /** A copy of {@code block}'s part of {@code values}. */
     public static double[] slice(double[] values, Block block) {
         Objects.requireNonNull(values, "values must not be null");

@@ -87,7 +87,7 @@ public class MpiModule implements ExperimentModule {
     static final long MAX_SEED = (1L << 53) - 1;
 
     /** Exchanges in one transfer: the registry lookup, RMI's DGC dirty call inside it, the method call. */
-    static final int EXCHANGES_PER_TRANSFER = 3;
+    public static final int EXCHANGES_PER_TRANSFER = 3;
 
     static final CoHostingDto CO_HOSTING = new CoHostingDto(true, "All nodes run inside one backend process on one "
             + "computer, so they are separate nodes sharing a machine, not separate machines. Every transfer on this "

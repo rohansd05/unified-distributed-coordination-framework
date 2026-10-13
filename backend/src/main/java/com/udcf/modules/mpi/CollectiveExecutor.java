@@ -28,6 +28,8 @@ import java.util.function.LongSupplier;
  *       assembled vector has n elements. A block that did not arrive is a hole, never zeros.</li>
  * </ul>
  * <p>The root's own part never crosses the network: it is LOCAL, with no latency and no size.</p>
+ * <p>Scatter and gather blocks are whole units of {@link CollectiveRequest#blockUnit()} elements (1 in
+ * Experiment 9; a matrix row in Experiment 10, step E10b), so the count check is count / unit &gt;= p.</p>
  *
  * <p><b>Failures are data.</b> A failed transfer is recorded with its stage and kind (classified as
  * in Experiment 1) and the collective goes on with the next rank. A reply that names another node,
@@ -78,7 +80,7 @@ public final class CollectiveExecutor {
             return refused(request, ranks, new Refusal(RefusalReason.PAYLOAD_TOO_LARGE,
                     "count " + n + " is above max-payload-elements " + properties.maxPayloadElements() + "."));
         }
-        if (request.operation() != CollectiveOperation.BROADCAST && n < p) {
+        if (request.operation() != CollectiveOperation.BROADCAST && n / request.blockUnit() < p) {
             return refused(request, ranks, new Refusal(RefusalReason.COUNT_BELOW_PARTICIPANTS,
                     "A " + request.operation().name().toLowerCase() + " needs at least one element per live participant: count "
                             + n + ", " + p + " live participants."));
@@ -137,7 +139,7 @@ public final class CollectiveExecutor {
         CollectiveResult scatter() {
             int n = request.count();
             double[] vector = PayloadGenerator.vector(request.seed(), n);
-            List<BlockPartition.Block> blocks = BlockPartition.of(n, ranks.size());
+            List<BlockPartition.Block> blocks = BlockPartition.of(n, ranks.size(), request.blockUnit());
             List<TransferRecord> transfers = new ArrayList<>();
             for (BlockPartition.Block block : blocks) {
                 double[] chunk = BlockPartition.slice(vector, block);
@@ -151,7 +153,7 @@ public final class CollectiveExecutor {
 
         CollectiveResult gather() {
             int n = request.count();
-            List<BlockPartition.Block> blocks = BlockPartition.of(n, ranks.size());
+            List<BlockPartition.Block> blocks = BlockPartition.of(n, ranks.size(), request.blockUnit());
             double[] expectedAll = new double[n];
             List<TransferRecord> transfers = new ArrayList<>();
             List<GatheredBlock> gathered = new ArrayList<>();

@@ -53,7 +53,7 @@
 
 ### Steps
 - [x] E10a — matrix generation, row-block partitioning and the sequential product. Needs: E9d.
-- [ ] E10b — the parallel multiply over the collectives and executors. Needs: E10a, E9b, E2b.
+- [x] E10b — the parallel multiply over the collectives and executors. Needs: E10a, E9b, E2b.
 - [ ] E10c — `MatrixModule` (lab 10) and its API; replace `web/TestModuleConfig`'s fake lab-10 module mechanism so tests no longer clash with the real lab 10. Needs: E10b.
 - [ ] E10d — page and end-to-end check. Needs: E10c, E2d.
 
@@ -1849,6 +1849,266 @@ Linux (Docker, --cpus=2), run by Jai: 81 matrix tests x 5 runs plus 1 reverse-or
    hole; small helpers beyond the listed signatures.
 5. 81 tests (the plan gave no total).
 
+### E10b interfaces for E10c — parallel run over RMI (`com.udcf.modules.matrix`, add-only edits in `mpi`)
+
+Backend only: no controller, events, metrics or UI (E10c, E10d). The root scatters row blocks of A and broadcasts B
+with Experiment 9's collectives, every rank multiplies its rows on its own node's Experiment 2 executor at the same
+time, the root fetches the blocks of C one by one, assembles C and compares it bit for bit with the sequential product
+(link L6: RMI -> collectives -> matrix).
+
+**Verified facts (read in the code).**
+- Experiment 2 executor (`RequestsNodeService.execute(Callable)`): `requireRunning()` throws `NodeDownException` unless
+  `running`, and `running = true` is set only in `open()`, after `bind()` of 127.0.0.1:`ports().requests()`. So the
+  executor cannot be used without the node's request listener: the first matrix compute on a node starts its requests
+  service through `RequestsNodeService.on` -> `ClusterNode.ensureService` and binds its 720k port (7201-7205 in
+  production). On a CRASHED node `ensureService` throws `NodeDownException`; a stopped service is restarted. Executor:
+  `NodeExecutorFactory.forNode`, core = max = `NodeCapacity.threads()` (FAST 4, MEDIUM 2, SLOW 1), bounded
+  `LinkedBlockingQueue(queue-capacity)` (200 local, 100 public), `AbortPolicy`: a full queue fails the future with
+  `RejectedExecutionException` (or `NodeDownException` if the executor is shut down). `execute` runs `task.call()` as
+  given: **no work multiplier** (`workMultiplier` goes only to `RequestProcessingService`, Experiment 2's own requests).
+  A crash fails every pending `execute` future with `NodeDownException` and interrupts the workers.
+- Stored inputs: `CollectiveEndpointLogic.receive` keeps a copy per collective id, at most `udcf.mpi.receive-store-size`
+  (8), oldest dropped, a repeated id replaces. Existing read accessors are enough: `received(id)`, `storedRanks()`, via
+  `CollectiveEndpointExport.current(node)` (empty while the node's RMI is down). No change to E9's logic. The root's own
+  scatter block is LOCAL and never stored, so the root takes its rows from the A it generated.
+- **Seeds (condition 1).** `CollectiveRequest` has no seed check; `CollectiveExecutor` only passes the seed to
+  `PayloadGenerator.vector(long seed, int count)`, which accepts any long. The derived seeds (`seedA(seed)` and
+  `seedB(seed)`, full 64-bit, negative for seed 42 because both salts set the top bit) are therefore accepted. E9's only
+  seed limit is `MpiModule.MAX_SEED` = 2^53 - 1 at its HTTP API, which the matrix runner never goes through.
+- **Startup check (condition 2).** Grep of `backend/src/test` and both YAML files for `call-timeout-millis`: only
+  application.yml sets it (3000); public inherits it. Tests that build `RmiProperties` with a call timeout below 2000
+  (300 in `RmiCollectiveTransportTest`, 500 in `RmiFailureCharacterisationTest`, 700 in `MpiModuleTest`) are plain
+  unit tests that never load `MatrixEndpointExport`; every Spring context uses application.yml. So the check
+  `compute-timeout-millis < call-timeout-millis` lives in `MatrixEndpointExport`'s constructor (startup);
+  `MatrixRunPropertiesTest` proves both YAML files satisfy it.
+- **Lamport (condition 5).** `LamportClock` is an `AtomicLong`: `tick()` = `incrementAndGet`, `update(t)` =
+  `updateAndGet(max(local, t) + 1)`; both atomic, so concurrent pool threads lose no update.
+  `ParallelMatrixExecutorTest.concurrentMergesLoseNothing` proves it (5 threads x 2000 ticks and merges after a merge of
+  1000000: final value exactly 1000000 + 1 + 20000).
+- **Several extras (condition 6).** `RmiNodeService(node, properties, transport, endpoints, extras)` takes a list and
+  refuses a duplicate or blank bound name; `RmiNodeService.open()` loops `for (RmiExtraExport extra : extras)` and does
+  `UnicastRemoteObject.exportObject(object, port(), factory, factory, extra.filter())` and
+  `created.bind(extra.boundName(), extraStub)`: same registry, same port, same factory instance. `RmiModule`'s
+  `@Autowired` constructor takes `ObjectProvider<RmiExtraExport>` (`orderedStream().toList()`). Proved by
+  `MatrixEndToEndTest.registryListsThreeNames` and `RmiControllerTest` (Spring: CollectiveEndpoint, MatrixEndpoint,
+  NodeEndpoint).
+- **Call timeout.** Every RMI client socket (lookup and stub) gets `SO_TIMEOUT` = `udcf.rmi.call-timeout-millis` (3000)
+  and connect timeout `udcf.rmi.connect-timeout-millis` (1000). The node waits for its multiply at most
+  `compute-timeout-millis` (2000, queue wait included) and then answers with its reason, so a slow multiply is
+  `COMPUTE_TIMED_OUT`, never a hang and never the client's TIMED_OUT.
+
+**Add-only edits outside the matrix package** (every E9 and E1 test passes unchanged, except `RmiControllerTest`):
+`BlockPartition.of(int n, int p, int unit)` added (the old `of(n, p)` untouched); `CollectiveRequest` gains the
+component `int blockUnit` (header line changed; a 7-argument constructor keeps unit 1; checks unit >= 1 and count %
+unit == 0); `CollectiveExecutor`: the count check is `n / blockUnit < p`, and scatter and gather partition with the unit
+(3 changed lines; a broadcast ignores the unit); `MpiModule.EXCHANGES_PER_TRANSFER` is `public`. In the matrix
+package, `MatrixRefusal.Reason` gains `ROOT_UNAVAILABLE`.
+
+**Remote object.** `MatrixEndpoint` (bound name `MatrixEndpoint`, a third name on every node's registry):
+`ComputeAck computeBlock(CallContext, long runId, int rank, int n, long scatterId, long broadcastId)` and
+`BlockReply fetchBlock(CallContext, long runId, int rank)`, both `throws RemoteException, MatrixComputeException`.
+Only primitives and `CallContext` are arguments, so the filter is E1b's `RmiSerialFilter.from(limits)` (every array
+rejected). `MatrixEndpointLogic`: arguments checked first (an invalid call changes nothing), then `clock.update`, then
+the work, then the reply stamped with `clock.tick()`; it reads A and B from the node's collective store, multiplies on
+the node's executor, keeps C by run id (at most `result-store-size`, oldest dropped, a repeated run id replaces),
+`keptRunIds()` lists them. A new logic on every start and recovery (`MatrixEndpointExport.newEndpoint`), so stop, crash
+and recover drop the kept blocks. `MatrixComputeException.Reason`: INPUT_MISSING, INPUT_MISMATCH,
+EXECUTOR_UNAVAILABLE, EXECUTOR_REJECTED, COMPUTE_TIMED_OUT, COMPUTE_FAILED, BLOCK_MISSING; RMI carries it back as
+the method's own exception (stage CALL, kind METHOD_THREW) and the root reads the reason.
+
+**Executor seam.** `NodeExecutor` (functional: `submit(Callable<Timed>)`); `NodeExecutor.experimentTwo(node,
+MultithreadingProperties, MeterRegistry, ClusterEventBus)` is the production one. Its default `multiply(aRows, b, n,
+timeoutMillis, nanoClock)` times the multiply inside the task (`MatrixMultiply.timedRows`), so queue wait is excluded,
+and maps failures to reasons. **Abandoned tasks (condition 4):** on a timeout or interrupt an `AtomicBoolean` is set
+and the future cancelled; a task still queued then returns at once without multiplying (and Experiment 2's runnable
+also skips a done future). A task that had already started runs to the end (the multiply ignores interrupts) and its
+result is discarded. Proved by `NodeExecutorTest`.
+
+**Transport and runner.** `MatrixTransport` (`compute`, `fetch`, both `throws TransferException` with stage LOOKUP or
+CALL); `RmiMatrixTransport` (fresh typed lookup per call, no retry, no new sockets or timeouts; `of(RmiModule)`).
+`MatrixDispatchPool(int threads)`: prestarted daemon threads `udcf-matrix-dispatch-<i>`, `submit(Callable)`,
+`close()` = `shutdownNow` + wait 5 s (else `IllegalStateException`). `ParallelMatrixExecutor(MatrixLimits,
+MatrixRunProperties, MpiProperties, MatrixRunBudget, MatrixDispatchPool, LongSupplier nanoClock)` with
+`MatrixRunResult run(MatrixRunRequest, LamportClock rootClock, CollectiveTransport, MatrixTransport, NodeExecutor
+rootExecutor)`; it throws `IllegalStateException` only if the pool has fewer threads than ranks (configuration).
+`MatrixRunRequest(runId, n, seed, rootNodeId, participantNodeIds, liveNodeIds)`; its collectives use ids
+`1_000_000_000 + 2 x runId` (scatter) and `+ 1` (broadcast), never meeting E9's ids, which count from 1 per reset.
+
+**One run.**
+1. Refusals (data; nothing generated or sent; the clock not read): `MatrixLimits.check(n, live participants)`, then the
+   root must be a live participant (`ROOT_UNAVAILABLE`, with E9's RankAssignment message).
+2. Generate A and B (measured: `payloadGenerationNanos`).
+3. `warmup-products` untimed full products, then the timed sequential product, on the calling thread.
+4. Parallel start (clock read) = start of the run deadline (`udcf.mpi.collective-deadline-millis`).
+5. Scatter of A (E9 SCATTER, count n x n, seed `seedA(seed)`, block unit n) and broadcast of B (E9 BROADCAST, count
+   n x n, seed `seedB(seed)`), each with the time left of the run deadline, rounded up to whole ms, as its E9 deadline.
+6. A rank computes only if its rows of A and B were DELIVERED and verified (the root always). Before dispatch the
+   deadline is checked.
+7. Compute phase: every compute dispatched at once on the pool (remote: `compute` with a Lamport tick, merge on a
+   matching ack; the root: its own executor). The root waits at most `computeWaitMillis`; a compute still running is
+   FAILED with an observed TIMED_OUT.
+8. Gather: linear in rank order; before each fetch the deadline is checked; the root recomputes the checksum over what
+   arrived and compares it with the ack's and with the sequential rows'.
+9. Assemble (`MatrixAssembly`), build `MatrixTiming` and `MatrixRunResult`. C itself is not kept.
+
+**Deadline (condition 3):** if no time is left before the broadcast, the compute dispatch or a fetch, that step is not
+started and it and every later step are NOT_ATTEMPTED with the reason "The run's deadline of D ms had passed before
+this <step>.". A collective that is not started is still reported as an E9 `CollectiveResult` built by the runner (the
+public constructor): the root's part LOCAL, every other rank NOT_ATTEMPTED, `totalNanos` null, `Verification.of(0, 0,
+p - 1, null)`, outcome FAILED (COMPLETE if the root is the only rank), the run deadline as `deadlineMillis`.
+
+**Timing (extends the E10a table).**
+
+| Figure | Kind | Definition |
+|---|---|---|
+| `payloadGenerationNanos` (MatrixRunResult) | measured on the root, **informational** | around generating A and B before the timed parts; it approximates the generation that the scatter and the broadcast repeat from the seeds inside the parallel run (that part shows up in `otherNanos`); never subtracted from any figure |
+| `sequentialNanos` | measured on the root | after the warm-up, around the multiply only |
+| `scatterNanos`, `broadcastNanos` | measured on the root | E9 `totalNanos` (first to last remote transfer), including the root's sizing and checksum work between transfers; no sum of per-transfer latencies is added (the transfers are in the result) |
+| `computePhaseNanos` | measured on the root | just before the first dispatch to when the last compute (ack or the root's own) is known |
+| `ComputeRecord.roundTripNanos` | measured on the root | around one remote compute call: lookup, call, the node's queue wait and multiply, reply |
+| `RankCompute.computeNanos` | measured on the node | around the multiply only (queue wait excluded) |
+| gather `TransferRecord.latencyNanos` | measured on the root | around one fetch (lookup and call) |
+| `gatherNanos` | measured on the root | just before the first fetch to just after the last; null when no fetch was made |
+| `parallelTotalNanos` | measured on the root | parallel start to the end of the last phase that ran |
+
+**Records.** `ComputeAck(nodeId, lamportTime, runId, rank, rowCount, computeNanos, checksum)`; `BlockReply(nodeId,
+lamportTime, runId, rank, double[] values)` (copied, array equality); `ComputeRecord(rank, nodeId, rowStart, rowCount,
+local, Status status, Long roundTripNanos, Long timeToFailureNanos, Long computeNanos, String checksum,
+RemoteFailureDetail failure, MatrixComputeException.Reason nodeReason, String nodeMessage, Long senderLamportAtSend,
+Long replyLamport, Long lamportAfterReply, String notAttemptedReason)` with Status DONE, FAILED, NOT_ATTEMPTED (each
+field set exactly when it applies; unknown is null). **The two timeouts stay distinguishable (Q7, accepted):** the
+node's own (`failure.kind` METHOD_THREW + `nodeReason` COMPUTE_TIMED_OUT) versus the root's wait bound (`failure.kind`
+TIMED_OUT, observed, no class, no `nodeReason`). `MatrixRunResult(runId, n, seed, rootNodeId, Integer rootRank,
+rankNodeIds, skippedNodeIds, rowBlocks, outcome, MatrixRefusal refusal, deadlineMillis, Long payloadGenerationNanos,
+CollectiveResult scatter, CollectiveResult broadcast, List<ComputeRecord> computes, List<TransferRecord> gather,
+MatrixTiming timing, MatrixVerification verification, Boolean inputsDelivered)`: for REFUSED everything run-related is
+null or empty; otherwise rootRank, payloadGenerationNanos, scatter, broadcast, timing and verification are set and the
+lists have one entry per rank. After PARTIAL or FAILED, `MatrixVerification` keeps E10a's rules (rows received and
+blocks missing filled; `parallelChecksum` and `checksumsMatch` null; `passed` null, or false on a known mismatch; never
+true) (Q1). `inputsDelivered`: false if a check of A or B failed, null if unknown or there is no remote rank.
+
+**Failure matrix** (all data; p = 3, one remote rank affected unless stated; proved in `ParallelMatrixExecutorTest`,
+the socket rows also in `RmiMatrixTransportTest` and `MatrixEndToEndTest`).
+
+| Case | Where | Kind / node reason | Hole | Outcome |
+|---|---|---|---|---|
+| Node down at the live snapshot | not a participant | skipped | no | COMPLETE over the others |
+| Never started, or down after the snapshot, before the scatter | scatter, LOOKUP | CONNECTION_REFUSED (or LOST); its compute and fetch NOT_ATTEMPTED | yes | PARTIAL |
+| Crash between scatter and compute | compute, LOOKUP | CONNECTION_REFUSED or CONNECTION_LOST (nothing sent) | yes | PARTIAL |
+| Crash and recovery between scatter and compute | compute, CALL | METHOD_THREW / INPUT_MISSING (fresh store) | yes | PARTIAL |
+| Crash during the compute | compute, CALL | CONNECTION_LOST, or METHOD_THREW / EXECUTOR_UNAVAILABLE | yes | PARTIAL |
+| Crash after the compute, before the fetch | gather, LOOKUP | CONNECTION_REFUSED or LOST; the measured compute time is kept | yes | PARTIAL |
+| Stored A or B evicted | compute, CALL | METHOD_THREW / INPUT_MISSING | yes | PARTIAL |
+| Stored input of another rank or size | compute, CALL | METHOD_THREW / INPUT_MISMATCH | yes | PARTIAL |
+| Kept C evicted | gather, CALL | METHOD_THREW / BLOCK_MISSING | yes | PARTIAL |
+| Corrupted block (recomputed checksum differs from the ack) | gather | DELIVERED, verified false | no | COMPLETE, passed **false** |
+| Executor unavailable / rejecting / too slow | compute, CALL | METHOD_THREW / EXECUTOR_UNAVAILABLE, EXECUTOR_REJECTED, COMPUTE_TIMED_OUT | yes | PARTIAL |
+| The root's own executor fails | the root's compute (local) | `nodeReason` set, no `failure` | the root's block | PARTIAL (FAILED if the root is the only rank) |
+| The root's wait bound passes | compute, CALL | TIMED_OUT, observed | yes | PARTIAL |
+| Reply does not match (node, run, rank, rows, length) | compute or gather, CALL | OTHER, observed | yes | PARTIAL |
+| Deadline passes during the scatter | broadcast not started; every compute and fetch NOT_ATTEMPTED | none | all | FAILED |
+| Deadline passes during the gather | the remaining fetches NOT_ATTEMPTED | none | yes | PARTIAL |
+| Every remote compute fails | none | none | none | FAILED |
+| Size, participants or root invalid | none | none | none | REFUSED (timing and verification null) |
+
+**Budget** (`MatrixRunBudget.of(RmiProperties, RmiTransportProperties, MpiProperties, MatrixRunProperties)`; bounds and
+allowances, never measured):
+- `transferWorstMillis` = `MpiModule.EXCHANGES_PER_TRANSFER` (3) x (connect + call) = 3 x (1000 + 3000) = 12000;
+- `computeWaitMillis` = `transferWorstMillis` (the root's bound for the compute phase);
+- `productAllowanceMillis` = (warmup-products + 1) x compute-timeout-millis = 2 x 2000 = 4000. **The warm-up and the
+  sequential product are allowances, not enforced bounds** (calling thread, never interrupted);
+- `worstCaseRunMillis` = allowance + deadline + transferWorst + 1 = 4000 + 10000 + 12000 + 1 = **26001 ms** (local and
+  public). The + 1 is the whole-millisecond rounding of the deadline handed to each collective.
+
+**Properties** (`MatrixRunProperties`, `udcf.matrix`, no code defaults; public inherits all three):
+
+| Key | application.yml | application-public.yml |
+|---|---|---|
+| `warmup-products` | 1 | (inherited) 1 |
+| `compute-timeout-millis` | 2000 (below `udcf.rmi.call-timeout-millis`, checked at startup) | (inherited) 2000 |
+| `result-store-size` | 4 | (inherited) 4 |
+
+The dispatch pool has no property: E10c sizes it with `udcf.cluster.size` (the most ranks a run can have).
+
+**Experiment 2 side effect (condition 7).** The first compute on a node starts its requests service (port 720k,
+7201-7205 in production). The matrix never stops it; Experiment 2 owns its lifecycle. **Correction to the review's
+wording:** a cluster reset does not stop it either: `ClusterResetService.reset` recovers crashed nodes and calls each
+module's `reset`, and `MultithreadingModule.reset` only clears the request history; the listener closes on a crash or at
+shutdown (`Cluster.close` -> `ClusterNode.stop`). What the start produces: one event, `SERVICE_STARTED` (module
+`cluster`, the node's id, data `{service: requests}`), published by `ClusterNode.ensureService`; no meter is registered
+by the start (`ThreadPoolMetrics` registers counters and the timer only when Experiment 2's own requests finish, and
+`execute` records none); the executor gauges bound once per node by `MultithreadingMetrics` switch from NaN to live
+values because they read `RequestsNodeService.find(node)` and `snapshot()`. The matrix work appears in that executor's
+live stats (active, queue, `completedTasks`) but not in Experiment 2's request history or its `REQUEST_*` events
+(`MatrixEndToEndTest.runsOnExperimentTwo`). `MultithreadingModule.status()` is IDLE unless one of its own batches is
+draining, so it reports IDLE while the listener runs and matrix blocks execute on its executors.
+
+**For E10c.**
+1. Run one size per HTTP request (a whole series would take up to 4 x 26001 ms); the client timeout of a run must be at
+   least `worstCaseRunMillis` + 3000 = 29001 ms; serve the budget in the overview, as E9c does for its limits.
+2. Busy lock: recommendation, **not** shared with the MPI module. Each module keeps its own `ModuleActionGuard`; the
+   runs use disjoint collective ids, and the only interaction is eviction from a node's collective store (8 slots),
+   which needs about 7 MPI collectives between a matrix scatter and its compute (milliseconds) and is then reported as
+   INPUT_MISSING, never hidden. Sharing a lock would couple two modules' 409 behaviour for a rare, already-visible case.
+3. `runId`: a module counter from 1, held with the module's history and reset to 1 by the module's reset. A repeated run
+   id after a reset replaces the node's stored inputs and kept blocks (both stores replace a repeated id), and runs never
+   overlap under the guard.
+4. Create `MatrixDispatchPool(cluster.size())` when the module starts or on the first run, and close it in the module's
+   `close()` (5 s bound).
+5. Call `RmiModule.ensureStarted()` before each run; use `RmiCollectiveTransport.of(rmiModule)`,
+   `RmiMatrixTransport.of(rmiModule)`, `NodeExecutor.experimentTwo(root, ...)` for the root and
+   `MatrixRunBudget.of(...)`; make `MpiRoleSelector` public (one word) as decided in E10a.
+6. **The derived seeds must never be put on the wire as JSON numbers** (they are full 64-bit values, often negative or
+   above 2^53 - 1, which JavaScript cannot hold). Only the user's seed goes on the wire, limited to 0..2^53 - 1 as E9's
+   `MAX_SEED`. The scatter and broadcast `CollectiveResult.seed` are derived seeds: map them out of the DTO or as
+   strings.
+7. Fairness note: put it in the basis text served with the figures (see Known issues).
+8. The Experiment 2 side effect above: say it on the page (E10d) and in the module overview.
+9. `frontend/src/test/fixtures/rmi/registries-*.json` list one name per node, the live backend three; the README says
+   so; they are not recaptured until Phase 13. Collective ids >= 1_000_000_000 belong to matrix runs and appear in the
+   MPI page's kept ids per node.
+10. The assembled C is not in `MatrixRunResult`; only checksums, counts and times go on the wire.
+
+**Test ports (E10b): 28706-28749 bound, 28600-28659 numbers only.** A cluster needs six bases at least 10 apart, and
+bases in 28706-28749 fit at most five, so the never-bound bases live in 28600-28659 (approved). Grep of
+`backend/src/test` before E10b: no use of 28600-28659 or 28706-28749.
+
+| Class | Bound ports | Own range | Never-bound bases |
+|---|---|---|---|
+| `RmiMatrixTransportTest` | RMI 28706-28708 | 28706-28715 | clock 28600, election 28610, replication 28620, mapreduce 28630, requests 28640 |
+| `MatrixFilterTest` | RMI 28716-28718 | 28716-28725 | as above |
+| `MatrixEndToEndTest` | RMI 28726-28728, requests 28736-28738 | 28726-28749 | clock 28600, election 28610, replication 28620, mapreduce 28630 |
+| `MatrixEndpointExportTest` | none | none | all six (rmi 28650, requests 28640) |
+
+**No dedicated test (R6):** the interfaces `MatrixEndpoint` and `MatrixTransport`; the enums
+`MatrixComputeException.Reason` and `ComputeRecord.Status`; `MatrixComputeException` (a carrier with null checks,
+covered by `MatrixEndpointLogicTest` and `RmiMatrixTransportTest`). Test helpers: `InMemoryMatrixNodes` (real node
+logics, no sockets, scripted failures and hooks) and `MatrixRmiFixture` (a real three-node cluster).
+
+**Tests:** 76 new tests in 13 classes: `ParallelMatrixExecutorTest` 22, `BlockUnitTest` (mpi) 7,
+`MatrixEndpointLogicTest` 7, `RmiMatrixTransportTest` 6, `NodeExecutorTest` 5, `MatrixRunRecordsTest` 5,
+`MatrixDispatchPoolTest` 4, `MatrixEndpointExportTest` 4, `MatrixEndToEndTest` 4, `MatrixRunPropertiesTest` 4,
+`MatrixFilterTest` 3, `MatrixRunBudgetTest` 3, `RowAlignedScatterTest` 2. Changed: one assertion block in
+`RmiControllerTest` (three names). No sleeps: latches and Awaitility only; no speedup threshold is asserted (only
+non-null). Windows: new tests x 5 runs plus 1 reverse-order run, 76 each, 0 failures; packages mpi, rmi, matrix and
+multithreading 728 tests, 0 failures; full suite 3 runs, 1780 tests, 0 failures, 1 skipped each (1704 before).
+
+#### E10b deviations from the approved plan
+
+1. `NodeExecutorTest` (5 tests) is a class of its own, for condition 4's cancellation proofs; the plan had them under the
+   logic test.
+2. The root's wait-bound test uses a budget of 3 x (200 + 200) = 1200 ms rather than a few ms, so a slow CI thread
+   cannot make the other ranks miss it.
+3. `MatrixRunProperties.warmupProducts` is an `Integer` (with `@NotNull`), so a missing key fails startup although 0 is
+   a valid value.
+4. Small helpers beyond the plan's signatures: `MatrixEndpointLogic.keptRunIds()`,
+   `MatrixRunBudget.productAllowanceMillis()`, `MatrixRunRequest.MAX_RUN_ID` and `COLLECTIVE_ID_BASE`,
+   `MatrixEndpointExport.requireComputeBelowCall(...)` (public, used by the YAML test).
+5. `RmiControllerTest`: the comment line above the assertion changed too (4 lines replaced by 5).
+6. `MatrixDispatchPool` uses an unbounded queue (at most one task per rank per run, runs never overlap under E10c's guard).
+7. Condition 7's statement that a cluster reset stops the requests listener does not hold in the code (see "Experiment 2
+   side effect"); recorded as found, nothing changed.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -2154,6 +2414,28 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - E10a: no warm-up policy exists yet (`warmupProducts` is only carried and stated). Until E10b/E10c set one, figures
   with `warmupProducts = 0` include JVM compile effects, and `SpeedupBasis.text` says so.
 
+- E10b (condition 8), **fairness:** the timed parallel run executes after W + 1 full products (the warm-up and the
+  sequential product), the timed sequential product after W. With warmup-products 1 the parallel run therefore meets a
+  slightly warmer JIT and cache than the sequential product. E10c puts this sentence in the basis text it serves;
+  `SpeedupBasis` is unchanged.
+- E10b, **side effect on Experiment 2:** the first matrix compute on a node starts its requests service and binds its
+  requests port (7201-7205); the matrix never stops it and a cluster reset does not either (only a crash or shutdown).
+  It produces one `SERVICE_STARTED` event (module `cluster`); Experiment 2's executor stats show the matrix work, its
+  request history and `REQUEST_*` events do not, and `MultithreadingModule.status()` stays IDLE meanwhile.
+- E10b: collective ids >= 1_000_000_000 belong to matrix runs (scatter 1_000_000_000 + 2 x runId, broadcast + 1); they
+  are stored on the nodes like any collective and appear in the MPI page's kept ids per node.
+- E10b: a node's collective store holds 8 payloads; MPI collectives run between a matrix scatter and its compute can
+  evict the matrix input, which is then reported as INPUT_MISSING (a hole), never hidden.
+- E10b: a timed-out multiply that had already started runs to the end on its Experiment 2 worker (the multiply ignores
+  interrupts) and its result is discarded; until then it occupies that worker. A queued one never starts.
+- E10b: `payloadGenerationNanos` is informational: the scatter and the broadcast regenerate A and B from the seeds
+  inside the parallel run (that time falls in `otherNanos`); nothing is subtracted.
+- E10b: each collective gets the run deadline's remaining time rounded up to whole milliseconds, so a transfer can start
+  up to 1 ms after the run deadline (the + 1 in `worstCaseRunMillis`).
+- E10b: the warm-up policy is set (warmup-products 1, local and public), which settles the E10a item above for runs made
+  with the configured value.
+- E10b: `frontend/src/test/fixtures/rmi/registries-*.json` are stale (one name per node; the live backend lists three);
+  the README says so; not recaptured until Phase 13.
 ---
 
 ## Progress log
@@ -2299,3 +2581,12 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   MatrixProperties (udcf.matrix, add-only YAML blocks); 11 new test classes, 81 tests; backend 1704 tests, 1 skipped
   (1 run; baseline 1623), frontend not run (no frontend change); deviations: the five listed under "E10a deviations
   from the approved plan".
+- 2026-10-14 E10b done: parallel matrix run over RMI in com.udcf.modules.matrix (MatrixEndpoint/MatrixEndpointLogic
+  exported by MatrixEndpointExport as a third RmiExtraExport, compute on each node's Experiment 2 executor through
+  NodeExecutor with abandoned-task cancellation, RmiMatrixTransport, MatrixDispatchPool for concurrent computes,
+  ParallelMatrixExecutor with one run deadline, failures as holes, MatrixRunResult, MatrixRunBudget 26001 ms,
+  MatrixRunProperties warmup-products/compute-timeout-millis/result-store-size); add-only block unit in mpi
+  (BlockPartition.of(n, p, unit), CollectiveRequest.blockUnit, CollectiveExecutor 3 lines), MpiModule.EXCHANGES_PER_TRANSFER
+  public, MatrixRefusal.ROOT_UNAVAILABLE; 13 new test classes, 76 tests; backend 1780 tests, 1 skipped (3 runs; baseline
+  1704), frontend not run (only a fixtures README line changed); deviations: the seven listed under "E10b deviations from
+  the approved plan".

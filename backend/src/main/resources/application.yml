@@ -180,6 +180,13 @@ udcf:
     min-size: 2
     # Sizes of the speedup series: at least three, strictly ascending, each from min-size to the maximum.
     series-sizes: [50, 100, 200, 316]
+    # E10b: untimed full products at the run's size before the timed sequential product (JIT warm-up); 0 allowed.
+    warmup-products: 1
+    # E10b: longest a node waits for its block's multiply on its Exp 2 executor, queue wait included. Must stay
+    # below udcf.rmi.call-timeout-millis (checked at startup), so a node always answers before the caller gives up.
+    compute-timeout-millis: 2000
+    # E10b: computed blocks of C each node keeps by run id until the root fetches them; the oldest is dropped.
+    result-store-size: 4
 
 management:
   endpoints:
