@@ -1254,6 +1254,8 @@ RankAssignmentTest and BlockPartitionTest). Records with rules (`CollectiveReque
 `MpiPropertiesTest` 4, `MpiRecordsTest` 8, rmi `RemoteFailureDetailTest` 3), plus the test helper
 `ScriptedCollectiveTransport` (real `CollectiveEndpointLogic` per node; scripted failures and rewritten replies).
 
+Linux (Docker, --cpus=2), run by Jai: 75 mpi and RemoteFailureDetail tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1521 tests, 0 failures, 1 skipped; clean-clone full suite 1521 tests, 0 failures, 1 skipped.
+
 #### E9a deviations from the approved plan
 
 1. Q4 (approved): a reply that does not match its request is a FAILED transfer (CALL, OTHER), not an exception. A
@@ -1507,7 +1509,8 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - E9a: the transport seam does the lookup inside `deliver`/`collect`, so the root ticks its Lamport clock before the
   lookup. A LOOKUP failure therefore consumes one tick (a local event) although nothing was sent; the record shows
   `senderLamportAtSend` and `requestBytes` as null.
-- E9a: a FAILED transfer records no time to failure (open item 5); only DELIVERED transfers have a latency.
+- E9a: a FAILED transfer recorded no time to failure at the first final report (open item 5); only DELIVERED transfers
+  have a latency. Resolved in F1: a FAILED transfer carries `timeToFailureNanos`.
 - E9a: scatter's whole-vector check relies on the receivers' chunk checksums (SHA-256) and on the blocks tiling
   [0, n); the root never gets the chunks back to compare bytes.
 - E9a: with the root as the only rank there is nothing to verify, so `passed` is null for a COMPLETE collective.
