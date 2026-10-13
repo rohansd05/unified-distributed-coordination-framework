@@ -18,9 +18,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -33,15 +30,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Experiment 9 end to end over the HTTP API and real RMI on 127.0.0.1, five nodes: broadcast,
  * scatter and gather with every checksum checked independently of the module (from
- * {@link PayloadGenerator} and from what each node's endpoint really stored), a node crashed at the
- * start (skipped), and a live node whose RMI never started (PARTIAL: LOOKUP, refused).
+ * {@link PayloadGenerator} and from what each node's endpoint really stored), and a node crashed at
+ * the start (skipped). A live node whose RMI never started is MpiNeverStartedNodeTest (its own ports).
  *
  * <p>Own context with Jai's test ports: {@code rmi-base=28675}, so node k's registry is 28675 + k (TCP
  * 28676 to 28680), and {@code clock-base=28685} for the Experiment 3 clock service that starts with
- * the context (UDP 28686 to 28690). The never-started case binds a plain {@link Socket} (never
- * listening, no socket option changed) to 28678, node 3's registry port, before RMI starts. Each
- * test starts with a cluster reset. At class end the RMI services are stopped and the ports checked
- * free.</p>
+ * the context (UDP 28686 to 28690). Each test starts with a cluster reset. At class end the RMI
+ * services are stopped and the ports checked free.</p>
  */
 @SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28675", "udcf.cluster.ports.clock-base=28685"})
 @AutoConfigureMockMvc
@@ -190,44 +185,5 @@ class MpiEndToEndTest {
         assertThat(c.get("skippedNodeIds").toString()).isEqualTo("[3]");
         assertThat(c.get("rankNodeIds").toString()).isEqualTo("[1,2,4,5]");
         assertThat(c.get("transfers")).hasSize(4);
-    }
-
-    @Test
-    @DisplayName("a live node whose RMI never started stays a rank: PARTIAL, its transfer FAILED at LOOKUP, CONNECTION_REFUSED")
-    void neverStartedNode() throws Exception {
-        JsonNode c;
-        try (Socket squatter = new Socket()) {
-            squatter.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), RMI_BASE + 3));   // bound, never listening
-            c = run("BROADCAST");
-
-            JsonNode three = overview().get("participants").get(2);
-            assertThat(three.get("nodeStatus").asText()).isEqualTo("UP");
-            assertThat(three.get("rmiState").asText()).isEqualTo("NOT_STARTED");
-            assertThat(three.get("startFailure").asText()).contains(String.valueOf(RMI_BASE + 3));
-            assertThat(three.get("collectiveEndpointExported").asBoolean()).isFalse();
-            assertThat(three.get("storedCollectiveIds").isNull()).isTrue();
-        }
-
-        JsonNode failed = transferOf(c, 3);
-        System.out.println("E9c outcome matrix | never-started node 3 | " + c.get("outcome").asText() + " | "
-                + failed.get("failureStage").asText() + " | " + failed.get("failureKind").asText() + " | "
-                + failed.get("failureClass").asText() + " <- " + failed.get("failureCauseClass").asText() + " | "
-                + failed.get("timeToFailureNanos").asLong() + " ns");
-        assertThat(c.get("outcome").asText()).isEqualTo("PARTIAL");
-        assertThat(c.get("skippedNodeIds").toString()).isEqualTo("[]");
-        assertThat(failed.get("status").asText()).isEqualTo("FAILED");
-        assertThat(failed.get("failureStage").asText()).isEqualTo("LOOKUP");
-        assertThat(failed.get("failureKind").asText()).isEqualTo("CONNECTION_REFUSED");
-        assertThat(failed.get("timeToFailureNanos").asLong()).isPositive();
-        for (String f : List.of("latencyNanos", "requestBytes", "replyBytes", "senderLamportAtSend", "replyLamport",
-                "lamportAfterReply", "verified")) {
-            assertThat(failed.get(f).isNull()).as(f).isTrue();
-        }
-        for (int k : List.of(2, 4, 5)) {
-            assertThat(transferOf(c, k).get("status").asText()).isEqualTo("DELIVERED");
-        }
-
-        // the port is free again: the next collective starts RMI on node 3 and completes
-        assertThat(run("BROADCAST").get("outcome").asText()).isEqualTo("COMPLETE");
     }
 }

@@ -1542,32 +1542,36 @@ event (Q4).
 | Class | Binds | Notes |
 |---|---|---|
 | `MpiControllerTest` (Spring) | TCP 28661-28665 (`rmi-base=28660`), UDP 28671-28675 (`clock-base=28670`) | the clock service is started by the Experiment 3 module when the context starts (known issues); the test checks that only `clock` and `rmi` run |
-| `MpiEndToEndTest` (Spring) | TCP 28676-28680 (`rmi-base=28675`), UDP 28686-28690 (`clock-base=28685`) | the never-started case binds a plain `java.net.Socket` (never listening, no socket option set) to 28678 |
+| `MpiEndToEndTest` (Spring) | TCP 28676-28680 (`rmi-base=28675`), UDP 28686-28690 (`clock-base=28685`) | no blocker socket any more |
+| `MpiNeverStartedNodeTest` (Spring) | TCP 28695, 28696, 28698, 28699 (`rmi-base=28694`; RMI never binds node 3's 28697), plain `java.net.Socket` blocker on 28697 (bound, never listening, no socket option set, closed in `finally`), UDP 28666-28670 (`clock-base=28665`) | one test; RMI never accepts a connection on 28697, so no TIME_WAIT is left there |
 | `MpiCrashDuringCollectiveTest` | TCP 28691-28693 (RMI base 28690) | no Spring; other bases (production values) never bound |
-| `MpiModuleTest`, `MpiRoleSelectorTest`, `MpiHistoryTest`, `MpiDtoMapperTest`, `MpiMetricsTest` | none | `MpiModuleTest`'s cluster names RMI base 28695 but binds nothing (Mockito `RmiModule`) |
+| `MpiModuleTest`, `MpiRoleSelectorTest`, `MpiHistoryTest`, `MpiDtoMapperTest`, `MpiMetricsTest` | none | `MpiModuleTest`'s cluster names RMI base 28695 (nodes 28696-28698) but binds nothing (Mockito `RmiModule`) |
 
-No number overlaps between classes, and nothing is outside 28660-28699. The other bases of the two Spring contexts
-(election 7000, replication 7100, requests 7200, mapreduce 7300) are never bound (checked by `onlyRmiStarts`). After
-the full suite no TCP or UDP socket was left on 28660-28699. The Spring classes stop RMI, check the ports free in
-`@AfterAll`, and close their context.
+No port that any class binds is bound by another class, and nothing is outside 28660-28699. One numeric overlap is
+never bound: `MpiModuleTest`'s nominal ports 28696-28698 fall inside `MpiNeverStartedNodeTest`'s 28695-28699 (left
+unchanged; that test may not be changed in the fix). The other bases of the three Spring contexts (election 7000,
+replication 7100, requests 7200, mapreduce 7300) are never bound (checked by `onlyRmiStarts`). After the full suite no
+TCP or UDP socket was left on 28660-28699. The Spring classes stop RMI, check the ports free in `@AfterAll`, and close
+their context.
 
 **Observed outcome matrix** (Windows 11, JDK 21.0.12.1; logged as `E9c outcome matrix | ...`):
 
 | Case | Outcome | Failed part | Proved by |
 |---|---|---|---|
 | scatter of 2 over 3 live nodes (unit), of 4 over 5 (controller), of 3 over 4 (fixture) | REFUSED, `COUNT_BELOW_PARTICIPANTS`, no transfers | none | MpiModuleTest, MpiControllerTest, `collective-refused.json` |
-| live node whose RMI never started (port occupied by a bound, non-listening socket) | PARTIAL | LOOKUP, `CONNECTION_REFUSED`, `java.rmi.ConnectException <- java.net.ConnectException`, 10612500 ns (test), 21944300 ns (fixture) | MpiEndToEndTest, `collective-partial.json` |
+| live node whose RMI never started (port occupied by a bound, non-listening socket) | PARTIAL | LOOKUP, `CONNECTION_REFUSED`, `java.rmi.ConnectException <- java.net.ConnectException`, 630100 to 1397700 ns (10 runs of the test), 21944300 ns (fixture) | MpiNeverStartedNodeTest, `collective-partial.json` |
 | node 3 crashed when the root starts node 2's transfer, BROADCAST / SCATTER / GATHER | PARTIAL, node 3 not skipped | LOOKUP, `CONNECTION_REFUSED`, `java.rmi.ConnectException <- java.net.ConnectException`, 1212200 / 24689000 / 423600 ns | MpiCrashDuringCollectiveTest (asserts {CONNECTION_REFUSED, CONNECTION_LOST}) |
 | node crashed before the collective | COMPLETE, `skippedNodeIds: [3]` | none | MpiEndToEndTest, `collective-node-crashed-skipped.json` |
 
-**Tests.** 63 new tests in 8 classes:
+**Tests.** 63 new tests in 9 classes:
 - `MpiRoleSelectorTest` 5
 - `MpiHistoryTest` 5
 - `MpiDtoMapperTest` 5
 - `MpiMetricsTest` 6
 - `MpiModuleTest` 21 (one parameterised over the three operations)
 - `MpiControllerTest` 13
-- `MpiEndToEndTest` 5
+- `MpiEndToEndTest` 4
+- `MpiNeverStartedNodeTest` 1
 - `MpiCrashDuringCollectiveTest` 3 (parameterised)
 
 Plus the test-only helper `MpiTestResults`: real `CollectiveResult`s from E9a's executor over `ScriptedCollectiveTransport`.
@@ -1593,6 +1597,11 @@ Linux (Docker, --cpus=2), run by Jai: 417 mpi and rmi tests x 5 runs plus 1 reve
 4. `COLLECTIVE_STARTED` is published before the run, so a refused collective publishes STARTED then REFUSED (one
    collective, two events), and FINISHED is never published for it.
 5. 63 tests rather than the plan's estimate (none was given per class).
+6. CI on Linux exposed an order/timing dependent bind in neverStartedNode; the test now has its own class and ports.
+   It moved from `MpiEndToEndTest` to `MpiNeverStartedNodeTest` (rmi-base 28694, clock-base 28665). Its last step,
+   which released the blocker and ran a COMPLETE broadcast so that RMI started and accepted connections on node 3's
+   port, was dropped. That step would leave TIME_WAIT connections on the blocked port, and a later run within the
+   TIME_WAIT period could then fail the same way on Linux.
 
 ## Housekeeping H1 (after Experiment 1)
 
@@ -1868,6 +1877,10 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   - `SO_TIMEOUT` bounds each read, not a whole exchange.
 
   E9d must add its own margin.
+- E9c: a plain-Socket blocker (no SO_REUSEADDR, as it must be, or RMI could bind the port on Linux) is sensitive to
+  earlier connections on the same port: on Linux its bind fails while any connection on that port is in TIME_WAIT
+  (H1 probe), and earlier tests in the same class had connected to it. Such a test needs its own ports, and must never
+  let anything accept connections on the blocked port.
 - E9c (risk 5, accepted, RmiModule unchanged): `RmiModule.ensureStarted` checks "was running" before starting, without
   a lock. If Experiment 1's start and an Experiment 9 action run it at the same moment, `ENDPOINT_EXPORTED` (rmi) may be
   published twice or not at all. MPI's own `COLLECTIVE_ENDPOINT_EXPORTED` is computed under the mpi guard, from MPI's
