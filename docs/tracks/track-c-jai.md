@@ -41,7 +41,7 @@
 ### Steps
 - [x] E9a — broadcast, scatter and gather logic. Needs: E1d.
 - [x] E9b — `CollectiveEndpoint` over RMI on every node. Needs: E9a, E1b.
-- [ ] E9c — `MpiModule` (lab 9) and its API. Needs: E9b.
+- [x] E9c — `MpiModule` (lab 9) and its API. Needs: E9b.
 - [ ] E9d — page and end-to-end check. Needs: E9c, E2d.
 
 ---
@@ -1405,6 +1405,193 @@ Linux (Docker, --cpus=2), run by Jai: 354 mpi and rmi tests x 5 runs plus 1 reve
 6. 39 new tests rather than about 37 (`RmiCollectiveTransportTest` also covers the method's own exception and the
    root-agnostic call).
 
+### E9c interfaces for E9d — MPI module and API (`/api/modules/mpi`)
+
+**`MpiModule`** (`@Component`, id `mpi`, lab 9, title "MPI Collectives"). Every cluster node takes part; nothing in the
+request selects participants.
+- **RMI.** Experiment 1 owns the services. Every action first calls `RmiModule.ensureStarted()` (no rmi guard). Reads
+  never start anything. The transport is `RmiCollectiveTransport.of(rmiModule)`.
+- **Who is in the collective.**
+  - A node crashed at the start is not a rank: it is listed in `skippedNodeIds`.
+  - A live node whose RMI is not running (its start failed) stays a rank and fails at LOOKUP, as `CONNECTION_REFUSED`
+    on Windows.
+  - A node that crashes during the run is a FAILED transfer, and the collective is PARTIAL.
+- **Root rule** (`MpiRoleSelector`, module-local, `// TODO(L1)`):
+  1. the requested `rootNode` (**REQUESTED**);
+  2. otherwise the live leader, read-only from `Cluster.leaderId()` (**LEADER**, link L1);
+  3. otherwise the lowest live node id (**LOWEST_LIVE_ID**).
+
+  The response says which rule chose the root (`rootSource`). No election or role code was built. **Rohan should
+  agree in the pull request:** HANDOFF 6.4 schedules the MPI-root part of L1 for Phase 13, and README section 6 says a
+  module-local lowest-id selector until then. This step reads the leader early (Q1, approved by Jai).
+- **Concurrency.** Start and collective each hold the module's `ModuleActionGuard` for their whole duration, on the
+  request thread. It is released by try-with-resources. A second request gets 409; it is never queued, and it
+  publishes `ACTION_REJECTED_BUSY`. GET requests never take the guard. The mpi and rmi guards are independent, so an
+  Experiment 1 call can run during a collective.
+- **History.** At most `history-size` (20) entries, newest first. Ids start at 1 and restart after a reset; the id is
+  also the collective id sent to the nodes. If the executor throws unexpectedly, the reserved id is given back
+  (`MpiHistory.cancel`), so no id stays reserved without an entry. **The history holds no vectors**, only checksums.
+- **Status.** BUSY while the guard is held; otherwise RUNNING while any node exports `CollectiveEndpoint`; otherwise
+  IDLE.
+- **Reset** (called by the cluster reset): forgets the history only. It never throws, never takes the guard and
+  publishes nothing. `RmiModule.reset()` stops RMI.
+
+**Endpoints.** Every error is a ProblemDetail. Examples are in `frontend/src/test/fixtures/mpi/` (see its README).
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /api/modules/mpi` | | 200 `MpiOverviewDto` (no remote call). `overview-before-start.json`, `overview-after-start.json`, `overview-node-crashed.json` |
+| `POST /start` | | 200 `MpiOverviewDto`; idempotent; 409 busy. `start.json`, `start-with-failure.json` |
+| `POST /collectives` | `{operation, count, seed?, rootNode?}` | 200 `CollectiveDto` for COMPLETE, PARTIAL, FAILED **and** REFUSED. `collective-broadcast.json`, `collective-scatter.json`, `collective-gather.json`, `collective-requested-root.json`, `collective-node-crashed-skipped.json`, `collective-partial.json`, `collective-refused.json` |
+| `GET /collectives` | | 200 `CollectiveDto[]`, newest first. `collectives-history.json` |
+| `GET /collectives/latest` | | 200; 404 "Unknown collective" with `collectiveId: null` when none. `collective-latest.json`, `error-404-no-collective-yet.json` |
+| `GET /collectives/{id}` | | 200; 404 "Unknown collective" (`collectiveId`). `collective-by-id.json`, `error-404-unknown-collective.json` |
+
+**Errors.**
+- **400 "Invalid request parameters"**, every field at once under `errors`:
+  - "operation is required"
+  - "count is required"
+  - "count must be 1-M, was N" (M = `max-payload-elements`)
+  - "seed must be 0-9007199254740991, was N"
+
+  Fixtures: `error-400-missing-fields.json`, `-count`, `-seed`. Spring's default 400 (no `errors`) for an unknown
+  `operation` or a non-numeric id: `error-400-unreadable.json`, `error-400-bad-id.json`. No field is
+  operation-specific, so there is no "field not taken" case (Q5).
+- **200 REFUSED, not 400**, for scatter or gather with fewer elements than live nodes (`COUNT_BELOW_PARTICIPANTS`).
+  The same request succeeds after a recover. It is kept in the history, publishes `COLLECTIVE_REFUSED` and is counted
+  in the metric (Q2).
+- **404 "Unknown node"**: a `rootNode` that does not exist (`error-404-unknown-node.json`).
+- **409 "Node down"** (`nodeId`): the requested root is crashed (`error-409-root-down.json`).
+- **409 "Node state conflict"** (`nodeId: 0`): no root was requested and every node is crashed
+  (`error-409-no-live-node.json`).
+- **409 "Module busy"** (`moduleId`, `actionInProgress`, for example "BROADCAST of 100000 values"):
+  `error-409-busy.json`, captured live.
+
+**Seed.** An omitted seed becomes the collective id (Q6). A seed is at most 2^53 - 1, so a JavaScript number holds it
+exactly.
+
+**DTOs** (`dto/`). An unknown or inapplicable value is null, never 0.
+- `MpiOverviewDto`: status, actionInProgress, boundName, operations, limits, participants, defaultRootNodeId,
+  defaultRootSource, latencyBasis (= `RmiCollectiveTransport.LATENCY_BASIS`), payloadSizeBasis (= `PayloadSizer.LABEL`),
+  algorithmNote, coHosting (the only Simulated badge), latest.
+- `MpiNodeDto`: nodeId, nodeStatus, rmiState (`RmiNodeState`), registryPort, startFailure, collectiveEndpointExported,
+  leader, storedCollectiveIds (from E9b's `CollectiveEndpointLogic.storedIds()`; **null while the endpoint is not
+  exported**, `[]` when exported and empty).
+- `OperationDto`: operation, description, minimumCount (1 for BROADCAST; the live node count for SCATTER and GATHER;
+  null when every node is crashed).
+- `MpiLimitsDto`: maxPayloadElements, collectiveDeadlineMillis, historySize, maxSeed, connectTimeoutMillis,
+  callTimeoutMillis, worstCaseTransferMillis, recommendedMinClientTimeoutMillis.
+- `CollectiveDto` (also the history entry):
+  - identity: id, startedAt (display only), operation
+  - root and ranks: rootNodeId, rootSource, rootRank, rankNodeIds, skippedNodeIds
+  - input: count, seed
+  - result: outcome, refusal, inputChecksum, totalNanos, deadlineMillis
+  - parts: transfers, gathered, verification
+  - bases: payloadSizeBasis (set exactly when a transfer has a size), latencyBasis (set exactly when a transfer has a
+    latency)
+- `TransferDto`:
+  - placement: rank, fromNodeId, toNodeId, direction, status, offset, elementCount
+  - times: latencyNanos (DELIVERED only), timeToFailureNanos (FAILED only)
+  - sizes: requestBytes, replyBytes
+  - checks: expectedChecksum, reportedChecksum, verified
+  - failure: failureStage, failureKind, failureDescription, failureClass, failureMessage, failureCauseClass
+  - Lamport: senderLamportAtSend, replyLamport, lamportAfterReply
+  - notAttemptedReason
+
+  The root's LOCAL part has no number at all. A FAILED part at LOOKUP has only `timeToFailureNanos`.
+- `GatheredBlockDto`: rank, nodeId, offset, length, checksum, hole. **No values on the wire.**
+- `VerificationDto`: passed, checked, matched, mismatched, unknown, wholeVectorMatches.
+- `RefusalDto`: reason, message (E9a's text).
+- `RootSource`: REQUESTED, LEADER, LOWEST_LIVE_ID.
+
+**HTTP budget (for E9d's API file).** Both figures are **bounds derived from the configured timeouts, not
+measurements** (Q3):
+- `worstCaseTransferMillis` = 3 x (`udcf.rmi.connect-timeout-millis` + `udcf.rmi.call-timeout-millis`). The three
+  exchanges are the registry lookup, RMI's DGC dirty call and the method call: 12000 locally.
+- `recommendedMinClientTimeoutMillis` = `collective-deadline-millis` + `worstCaseTransferMillis`, exactly: 22000
+  locally.
+
+E9d adds its own margin (for example 25000 ms for `POST /collectives`) and reads the figure from the overview. The
+bound leaves out CPU time (known issues).
+
+**Events** (module `mpi`). No event ticks a clock; each carries the Lamport time of the step it reports. Messages are
+single-line, and operation and outcome names in them are lower case.
+
+| Type | Node, peer | Lamport time | Data |
+|---|---|---|---|
+| `COLLECTIVE_ENDPOINT_EXPORTED` | the node a start exported | its current clock | registryPort, boundName |
+| `COLLECTIVE_STARTED` | root | root's clock before the first transfer | collectiveId, operation, count, seed, rootSource, liveNodeIds |
+| `COLLECTIVE_FINISHED` | root | root's clock after the run | collectiveId, operation, outcome, delivered, failed, notAttempted, totalNanos?, passed? |
+| `COLLECTIVE_REFUSED` | root | root's clock | collectiveId, operation, count, reason |
+| `ACTION_REJECTED_BUSY` | 0 | the cluster clock | requested, actionInProgress |
+
+No event carries `latencyMillis`, so link L5 never reads a collective as one round trip. There is no per-transfer
+event (Q4).
+
+**Metrics.** `node_id` is always the **root** (it makes every call), and the called node is the `target_node` tag:
+
+| Meter | Tags |
+|---|---|
+| `distributed_mpi_collectives_total` | node_id, operation, outcome (REFUSED included) |
+| `distributed_mpi_messages_total` (existing HANDOFF name) | node_id, target_node, operation, direction, status (DELIVERED, FAILED, NOT_ATTEMPTED; never LOCAL) |
+| `distributed_mpi_transfer_latency` (timer) | node_id, target_node, operation, direction; DELIVERED only |
+| `distributed_mpi_collective_duration` (timer) | node_id, operation, outcome; only when `totalNanos` is set |
+
+**Test ports (E9c): 28660-28699.** Exact binds:
+
+| Class | Binds | Notes |
+|---|---|---|
+| `MpiControllerTest` (Spring) | TCP 28661-28665 (`rmi-base=28660`), UDP 28671-28675 (`clock-base=28670`) | the clock service is started by the Experiment 3 module when the context starts (known issues); the test checks that only `clock` and `rmi` run |
+| `MpiEndToEndTest` (Spring) | TCP 28676-28680 (`rmi-base=28675`), UDP 28686-28690 (`clock-base=28685`) | the never-started case binds a plain `java.net.Socket` (never listening, no socket option set) to 28678 |
+| `MpiCrashDuringCollectiveTest` | TCP 28691-28693 (RMI base 28690) | no Spring; other bases (production values) never bound |
+| `MpiModuleTest`, `MpiRoleSelectorTest`, `MpiHistoryTest`, `MpiDtoMapperTest`, `MpiMetricsTest` | none | `MpiModuleTest`'s cluster names RMI base 28695 but binds nothing (Mockito `RmiModule`) |
+
+No number overlaps between classes, and nothing is outside 28660-28699. The other bases of the two Spring contexts
+(election 7000, replication 7100, requests 7200, mapreduce 7300) are never bound (checked by `onlyRmiStarts`). After
+the full suite no TCP or UDP socket was left on 28660-28699. The Spring classes stop RMI, check the ports free in
+`@AfterAll`, and close their context.
+
+**Observed outcome matrix** (Windows 11, JDK 21.0.12.1; logged as `E9c outcome matrix | ...`):
+
+| Case | Outcome | Failed part | Proved by |
+|---|---|---|---|
+| scatter of 2 over 3 live nodes (unit), of 4 over 5 (controller), of 3 over 4 (fixture) | REFUSED, `COUNT_BELOW_PARTICIPANTS`, no transfers | none | MpiModuleTest, MpiControllerTest, `collective-refused.json` |
+| live node whose RMI never started (port occupied by a bound, non-listening socket) | PARTIAL | LOOKUP, `CONNECTION_REFUSED`, `java.rmi.ConnectException <- java.net.ConnectException`, 10612500 ns (test), 21944300 ns (fixture) | MpiEndToEndTest, `collective-partial.json` |
+| node 3 crashed when the root starts node 2's transfer, BROADCAST / SCATTER / GATHER | PARTIAL, node 3 not skipped | LOOKUP, `CONNECTION_REFUSED`, `java.rmi.ConnectException <- java.net.ConnectException`, 1212200 / 24689000 / 423600 ns | MpiCrashDuringCollectiveTest (asserts {CONNECTION_REFUSED, CONNECTION_LOST}) |
+| node crashed before the collective | COMPLETE, `skippedNodeIds: [3]` | none | MpiEndToEndTest, `collective-node-crashed-skipped.json` |
+
+**Tests.** 63 new tests in 8 classes:
+- `MpiRoleSelectorTest` 5
+- `MpiHistoryTest` 5
+- `MpiDtoMapperTest` 5
+- `MpiMetricsTest` 6
+- `MpiModuleTest` 21 (one parameterised over the three operations)
+- `MpiControllerTest` 13
+- `MpiEndToEndTest` 5
+- `MpiCrashDuringCollectiveTest` 3 (parameterised)
+
+Plus the test-only helper `MpiTestResults`: real `CollectiveResult`s from E9a's executor over `ScriptedCollectiveTransport`.
+
+No existing test changed and no line was added to `CoreContextTest` or `ModuleControllerTest`: both find modules by
+id, and `MpiControllerTest.listedAsLab9` proves the registration. The only existing source changed is `MetricNames`
+(add-only). No E9a or E9b class changed. No YAML change: every `udcf.mpi` key already existed.
+
+The new classes ran 5 times plus once in reverse alphabetical order (sequentially): 63 tests, 0 failures each time.
+Full suite 1623 tests, 0 failures, 1 skipped (baseline 1560). Scans of mpi main and test: no `setReuseAddress`,
+`ServerSocket` or `Thread.sleep`; no non-ASCII character (sources and fixtures); no `\u000a` or `\u000d`.
+
+#### E9c deviations from the approved plan
+
+1. Test ports: the plan's 28660/28670/28680 RMI bases became 28660/28675/28690, and the two Spring classes also set
+   `clock-base` (28670, 28685). The Experiment 3 module starts its UDP clock service on every node when a Spring
+   context starts, so without this the Spring tests bound the production UDP ports 6001-6005 (found by the
+   `onlyRmiStarts` check; condition 6).
+2. An extra test-only helper, `MpiTestResults`, and an extra fixture, `overview-node-crashed.json`.
+3. The history entry is `CollectiveDto` itself (no separate record), as stated in the plan.
+4. `COLLECTIVE_STARTED` is published before the run, so a refused collective publishes STARTED then REFUSED (one
+   collective, two events), and FINISHED is never published for it.
+5. 63 tests rather than the plan's estimate (none was given per class).
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -1663,6 +1850,34 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   Experiment 1's separate lookup and round-trip figures.
 - E9b: the E1c registry fixtures (`frontend/src/test/fixtures/rmi/registries-*.json`) and their README list one name per
   node; since E9b a live backend lists two. Not changed here (finding for E9d).
+- E9c (risk 1, accepted): **a root that crashes during its own collective is not noticed.** The root's sending runs on
+  the request thread, and its Lamport clock still works, so the collective goes on. This is the same as E1c's crashed
+  caller. A requested root that is already crashed is refused with 409 before anything is sent.
+- E9c (risk 2): the 409 busy fixture could only be captured from one Python process: a 100000-value broadcast holds
+  the module for about 50-65 ms, which is shorter than a curl process start. It was captured live on the first such
+  attempt (see the fixture README). The rejection's `ACTION_REJECTED_BUSY` event is covered by MpiModuleTest, not by a
+  fixture.
+- E9c (risk 4, accepted): **`recommendedMinClientTimeoutMillis` is a bound from configured timeouts, not a
+  measurement**, and it leaves out three things:
+  - CPU time outside the transfers (generating the vector, SHA-256 checksums, and `PayloadSizer` serialising every
+    request again);
+  - RMI's 5 s listener wait per node when an RMI start fails inside `ensureStarted` (E1b; fixed in code, not
+    configured);
+  - `SO_TIMEOUT` bounds each read, not a whole exchange.
+
+  E9d must add its own margin.
+- E9c (risk 5, accepted, RmiModule unchanged): `RmiModule.ensureStarted` checks "was running" before starting, without
+  a lock. If Experiment 1's start and an Experiment 9 action run it at the same moment, `ENDPOINT_EXPORTED` (rmi) may be
+  published twice or not at all. MPI's own `COLLECTIVE_ENDPOINT_EXPORTED` is computed under the mpi guard, from MPI's
+  own before and after view.
+- E9c: if the executor throws unexpectedly (its own contract, for example a time source going backwards), the guard is
+  released and the history id is given back. The `COLLECTIVE_STARTED` event already published stays, with no
+  FINISHED, and the next collective reuses that id.
+- E9c, **finding for Track D (Rohan), not changed:** `ClockSyncModule`'s constructor starts the UDP clock service on
+  every live node (`ensureService` at lines 102-112) when the Spring context starts. Every Spring test that does not
+  set `udcf.cluster.ports.clock-base` therefore binds the production UDP ports 6001-6005 (local profile), including
+  E1c's `RmiControllerTest` and `RmiEndToEndTest`. E9c's Spring tests set `clock-base` inside Jai's block. This is
+  safe while test classes run one at a time, but it is outside the README's "lazy start" rule and the test-port rule.
 
 ---
 
@@ -1785,3 +2000,12 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   rmi packages 354 tests (5 runs plus 1 reverse-alphabetical run, all green); backend 1560 tests,
   1 skipped (1 run; baseline 1521), frontend not run (no frontend change); deviations: the six listed under "E9b
   deviations from the approved plan".
+- 2026-10-13 E9c done: MpiModule (lab 9) and MpiController under /api/modules/mpi (overview, idempotent start, one
+  collective per request with COMPLETE/PARTIAL/FAILED/REFUSED as 200 data, bounded history without vectors), root rule
+  REQUESTED > LEADER (read-only Cluster.leaderId, TODO(L1)) > LOWEST_LIVE_ID with rootSource, 10 DTO records and the
+  RootSource enum (null never 0), 5 event types with no extra Lamport tick, MpiMetrics (3 MetricNames constants added,
+  existing MPI_MESSAGES_TOTAL used, node_id = root), timeout bound computed from properties, 28 contract fixtures and a
+  README captured from the real backend (including a real PARTIAL for a never-started node and a real 409 busy); 8 new
+  test classes, 63 tests (5 runs plus 1 reverse-alphabetical run, all green); backend 1623 tests, 1 skipped (1 run;
+  baseline 1560), frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under
+  "E9c deviations from the approved plan".
