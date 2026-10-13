@@ -1062,6 +1062,8 @@ replication tests, which crash and rebind on real sockets, are the proof.
 - **For Rohan:** `docs/HANDOFF.md` contains no SO_REUSEADDR rule (`grep -i reuse` finds none). The
   rule exists only in the two track notes quoted above.
 
+Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1446 tests, 0 failures, 1 skipped; clean-clone full suite 1446 tests, 0 failures, 1 skipped.
+
 ---
 
 ## Known issues
