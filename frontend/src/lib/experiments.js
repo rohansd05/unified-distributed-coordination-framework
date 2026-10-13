@@ -7,7 +7,13 @@
  * Static catalog; Step 2.3 merges live status from GET /api/modules.
  */
 export const EXPERIMENTS = [
-  { lab: 1, id: 'rmi', title: 'Client-Server via Java RMI', arrivesIn: 10 },
+  {
+    lab: 1,
+    id: 'rmi',
+    title: 'Client-Server via Java RMI',
+    arrivesIn: 10,
+    concept: 'Call a method on another node as if it were local: RMI finds it in a registry, sends the arguments, and brings the result back.',
+  },
   {
     lab: 2,
     id: 'multithreading',

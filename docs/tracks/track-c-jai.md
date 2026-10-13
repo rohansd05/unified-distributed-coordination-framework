@@ -29,7 +29,7 @@
 - [x] E1a — the `NodeEndpoint` remote interface (ping, nodeInfo, echo, computeHash(rounds)), its implementation, and a local-versus-remote timing helper. Needs: E5d.
 - [x] E1b — an RMI registry per node on `ports().rmi()` (110k); export on start and recover, unexport on crash. Needs: E1a.
 - [x] E1c — `RmiModule` (lab 1): invoke a method on a node (result, round-trip time, payload size, stub class), the local-versus-remote comparison, registry listing. Needs: E1b.
-- [ ] E1d — page and end-to-end check. Needs: E1c, E2d.
+- [x] E1d — page and end-to-end check. Needs: E1c, E2d.
 
 ---
 
@@ -1009,6 +1009,78 @@ thread or RMI's reaper thread.
 
 ---
 
+### E1d — RMI page (`/experiments/1-rmi`, `frontend/src/modules/rmi/`)
+
+Nothing another track needs to call. Frontend only; the backend is unchanged since E1c.
+
+**Page.** `index.jsx` exports `{ id: 'rmi', Page: RmiPage }`, so the existing `experiments/:slug` route renders it; no
+router change. `RmiPage` passes `howItWorks` (four paragraphs), `controls`, `visualisation`, `measurements` and
+`whatToNotice` to the shared `ExperimentLayout`, which adds the module event log.
+- **Controls** (`RmiControls`): calling node (a crashed node is disabled and marked "down"), target node (a crashed
+  target is allowed, so calling it shows the real failure), method with the overview's description, echo text and hash
+  rounds. Every limit comes from `overview.methods[].parameters` and `overview.limits`, and the form checks them itself
+  (`noValidate`, so the page's own message shows). Buttons: Invoke call, Compare local and remote, Refresh registries,
+  and Crash or Recover per node through the shared `api.crashNode` / `api.recoverNode` (as the Cluster page).
+- **Visualisation:** `NodeMap` (the bold element; hand-drawn SVG, node count from the overview, state as colour plus a
+  glyph plus a word, the last call as a solid arrow, a dashed arrow labelled with the failure kind, or a loop for a
+  self-call) and `RegistryList` (bound names and stub classes; an unreachable node shows as unreachable with its
+  failure kind, description and exception class, never as an empty registry).
+- **Measurements:** a MetricCard strip (last round trip, last lookup, both marshalled sizes, last comparison overhead),
+  the `lookupBasis` and `payloadSizeBasis` texts, `RoundTripChart` (bars for completed remote calls, a cross for a
+  failed one, never a zero bar) and `HistoryTable` (newest first; a row opens `GET /calls/{id}` in a detail panel).
+- **Results** (`CallResult`, `ComparisonResult`): outcome, result, stage, kind (description from
+  `overview.failureKinds`), exception and cause class, the message as plain text, every time and size, stub class,
+  the three Lamport values; the comparison's direct and remote times, overhead, ratio, digests and the backend `note`.
+- **What to notice** (`noticeModel`): three hedged sentences. A measured figure is added only when the history holds it:
+  the first-versus-later figure needs two successful remote calls to the same node with the same method (the earliest
+  and the latest kept); the crash callout uses the latest remote failure; the overhead callout the latest comparison.
+
+**Start and reset (`useRmi`).** `POST /start` once on mount, then only on the edge "no up node is unstarted" to "some
+up node is unstarted" (for example after a cluster reset). A failed start is not retried by itself; the page offers
+"Try again". An overview read sent before a start answered is discarded and read again, so a stale "not started" can
+never trigger a second start. Overview, history and registries are read together on every module event, cluster event
+and reconnect, coalesced (one in flight, one queued); no polling. The history is replaced wholesale.
+
+**Honest numbers.** A null is "n/a" with its reason as a tooltip and for screen readers (`NotAvailable`), never 0 or
+hidden; MetricCard gets it as its value and is unchanged. Times below 1 microsecond in ns, below 1 ms in microseconds
+(one decimal), otherwise ms (three decimals); the exact ns in a tooltip. Negative values keep a hyphen-minus; the ratio
+has three decimals with the exact value in a tooltip. One Simulated badge, on the node map, for co-hosting
+(`coHosting.reason`).
+
+**Timeouts (deliberate choice).** `rmiApi.js` gives `POST /calls` `CALL_TIMEOUT_MS = 20000` and `POST /comparisons`
+`COMPARE_TIMEOUT_MS = 25000` (E1c: about 12 s for a call; a comparison adds its local half, which has no timeout).
+Every GET keeps the shared client's 10000 ms; the shared client is unchanged.
+
+**Errors.** `describeProblem` maps each case to its own message: 400 with `errors` (also beside the fields), 400
+without `errors`, 404, 409 busy (the server's message plus `actionInProgress`, read from the original response because
+`ApiError` drops it; never retried), 409 "Node down", 409 "Node state conflict", a client timeout and a network error.
+Buttons are disabled only while this page has a request in flight; a BUSY overview (another tab) shows a banner with
+`actionInProgress` and leaves the buttons enabled.
+
+**Files.** Created in `frontend/src/modules/rmi/`: `index.jsx`, `rmiApi.js`, `labels.js`, `rmiModel.js`, `useRmi.js`,
+`RmiPage.jsx`, `RmiControls.jsx`, `CallResult.jsx`, `NodeMap.jsx`, `RoundTripChart.jsx`, `RegistryList.jsx`,
+`HistoryTable.jsx`, and 11 test files (`rmiApi`, `labels`, `rmiModel`, `useRmi`, `CallResult`, `NodeMap`,
+`RoundTripChart`, `RegistryList`, `HistoryTable`, `RmiPage`, `contract`). Shared, add-only (approved): the lab 1
+`concept` line in `frontend/src/lib/experiments.js`, and one import plus four `rmiApi` spies in
+`frontend/src/routes.test.jsx`. Reused across modules (as the Experiment 5 page already does): `usePoliteAnnouncement`
+and `moduleStatusLabel` from multithreading.
+
+**Tests.** 109 new tests in 11 files, all on the real E1c fixtures; frontend 676 -> 785 tests, 85 -> 96 files. Main
+chunk 646.27 kB -> 690.50 kB (gzip 195.79 -> 208.27 kB).
+
+#### E1d deviations from the approved plan
+
+1. Two timeout constants (`CALL_TIMEOUT_MS` 20000, `COMPARE_TIMEOUT_MS` 25000) instead of one (Q4, approved).
+2. The 409 "Node state conflict" tests import the real `fixtures/replication/error-409-node-state.json` (same shared
+   `GlobalExceptionHandler`); no rmi capture of it exists (Q2, approved).
+3. The BUSY-banner test uses a copy of `overview-after-start.json` with only `status` set to BUSY and
+   `actionInProgress` taken from `error-409-busy.json`: no BUSY overview was captured.
+4. `useRmi` discards an overview read that was sent before a start answered and reads again (found while writing the
+   hook; it prevents a second start from a stale read). Tested.
+5. The call form has `noValidate`: the browser's own `max` check blocked submission before the page's message (with
+   the overview's limit) could show.
+6. 109 new tests rather than about 85.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -1232,6 +1304,17 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - E1c: `RmiNodeServiceTest.java` (E1b) contains one literal non-ASCII character (`€` on line 138),
   despite the E1a follow-up F2 rule. It is not changed here (not an E1c file, not a defect).
   **Resolved in H1** (now the escape `\u20ac`).
+- E1d: the live check against the real backend is run by Jai (the agent did not start the backend). The page was
+  verified by lint, build and 785 tests on the real fixtures only.
+- E1d: in development React's StrictMode runs the mount effect twice, so the page sends `POST /start` twice on mount
+  (idempotent: a running service does nothing). A production build sends it once.
+- E1d: every refresh reads the registries over the network (one `list()` plus one lookup per node), triggered by each
+  module event; refreshes are coalesced, so a call's three events cost at most two reads.
+- E1d: the history detail panel checks that `GET /calls/{id}` returned the same kind and `calledAt` as the row (ids
+  restart after a reset); on a mismatch it says so and refreshes the list instead of showing another call.
+- E1d: the failure message is shown exactly as the backend escaped it (a literal `\n\t` stays as text).
+- E1d: `npm run build` warns that the main chunk is above 500 kB (690.50 kB); code-splitting is a shared-build
+  decision, not part of this step.
 
 ---
 
@@ -1330,3 +1413,9 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   package 209 tests x 5 runs plus 1 reverse-alphabetical run, RmiNodeServiceTest 18 tests x 5 runs,
   all green; backend 1446 tests, 1 skipped (1 run; baseline 1446), frontend not run (no frontend
   change); deviations: none (ReplicationClientTest added by approval, Q1).
+- 2026-10-13 E1d done: Experiment 1 page at /experiments/1-rmi on the E2d kit (node map with the last call and its
+  failure kind, registry list, call and comparison results with n/a for nulls and the backend's notes, round-trip
+  chart with failure markers, history with details, start on mount and after a reset, per-request timeouts 20 s and
+  25 s, every 400/404/409, timeout and network error with its own message); 11 new test files, 109 tests on the real
+  fixtures; backend not changed (1446 tests at H1), frontend 785 tests (baseline 676), lint and build pass; deviations:
+  the six listed under "E1d deviations from the approved plan".
