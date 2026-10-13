@@ -1068,6 +1068,13 @@ and `moduleStatusLabel` from multithreading.
 **Tests.** 109 new tests in 11 files, all on the real E1c fixtures; frontend 676 -> 785 tests, 85 -> 96 files. Main
 chunk 646.27 kB -> 690.50 kB (gzip 195.79 -> 208.27 kB).
 
+Linux (Docker, node:22.11, clean clone), run by Jai: npm ci, lint, build and 785 tests (96 files) passed.
+
+**Known issue.** Main chunk grew from 646.27 kB (gzip 195.79) to 690.50 kB (gzip 208.27) with the E1d page
+(+44.23 kB, gzip +12.48 kB). Module pages are bundled in the main chunk: `frontend/src/modules/registry.js` loads
+every page with `import.meta.glob('./*/index.jsx', { eager: true })`, which imports them statically. Route-level
+code splitting is open for Phase 14.
+
 #### E1d deviations from the approved plan
 
 1. Two timeout constants (`CALL_TIMEOUT_MS` 20000, `COMPARE_TIMEOUT_MS` 25000) instead of one (Q4, approved).
