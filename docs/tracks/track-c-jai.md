@@ -1837,6 +1837,8 @@ either "no warm-up products were run, so the figures include JVM compile effects
 `MatrixMultiplyTest` 8, `ParallelProductTest` 8, `MatrixAssemblyTest` 7, `MatrixTimingTest` 7, `RowPartitionTest` 6,
 `MatrixPropertiesTest` 4, `MatrixRecordsTest` 4, `SpeedupBasisTest` 4, `SpeedupSeriesTest` 3).
 
+Linux (Docker, --cpus=2), run by Jai: 81 matrix tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1704 tests, 0 failures, 1 skipped; clean-clone full suite 1704 tests, 0 failures, 1 skipped.
+
 #### E10a deviations from the approved plan
 
 1. `SpeedupBasis.cores()` is named `processors()` and `text` takes `(ranks, warmupProducts)` (conditions 1 and 2).
