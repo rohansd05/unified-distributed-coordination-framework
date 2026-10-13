@@ -57,7 +57,13 @@ export const EXPERIMENTS = [
     concept: 'Split one big job across the workers, then combine their partial answers into one exact result.',
   },
   { lab: 8, id: 'faulttolerance', title: 'Fault Tolerance', arrivesIn: 7 },
-  { lab: 9, id: 'mpi', title: 'MPI Collectives', arrivesIn: 11 },
+  {
+    lab: 9,
+    id: 'mpi',
+    title: 'MPI Collectives',
+    arrivesIn: 11,
+    concept: 'One root and every live node: send everyone the same data, give each node its own share, or collect a share from each.',
+  },
   { lab: 10, id: 'matrix', title: 'Parallel Matrix Multiplication', arrivesIn: 12 },
 ].map((experiment) => ({ ...experiment, slug: `${experiment.lab}-${experiment.id}` }))
 
