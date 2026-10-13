@@ -35,6 +35,9 @@ udcf:
   mpi:
     max-payload-elements: 10000
     max-failure-message-length: 300
+  # The maximum size follows mpi.max-payload-elements (100 here), so the series stays within it.
+  matrix:
+    series-sizes: [25, 50, 100]
 
 management:
   endpoints:
