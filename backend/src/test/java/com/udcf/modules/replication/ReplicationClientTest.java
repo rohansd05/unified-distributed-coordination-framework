@@ -41,7 +41,7 @@ class ReplicationClientTest {
 
         FakeNode(int port, Function<ReplicationProtocol.Request, List<String>> responder) throws IOException {
             server = new ServerSocket();
-            server.setReuseAddress(true);
+            // No setReuseAddress: the JDK default (off on Windows, on on Linux) is kept, as in ReplicationNodeService.
             server.bind(new InetSocketAddress(ReplicationProtocol.LOOPBACK, port));
             acceptThread = new Thread(() -> {
                 while (!server.isClosed()) {
