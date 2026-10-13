@@ -52,7 +52,7 @@
 - **Special rules:** scatter row blocks of A, broadcast B, compute each block on that node's Exp 2 executor, gather; check the result against the sequential product (checksum); cap the size in the public profile; report speedup honestly (bounded by the machine's cores).
 
 ### Steps
-- [ ] E10a — matrix generation, row-block partitioning and the sequential product. Needs: E9d.
+- [x] E10a — matrix generation, row-block partitioning and the sequential product. Needs: E9d.
 - [ ] E10b — the parallel multiply over the collectives and executors. Needs: E10a, E9b, E2b.
 - [ ] E10c — `MatrixModule` (lab 10) and its API; replace `web/TestModuleConfig`'s fake lab-10 module mechanism so tests no longer clash with the real lab 10. Needs: E10b.
 - [ ] E10d — page and end-to-end check. Needs: E10c, E2d.
@@ -1723,6 +1723,130 @@ as they are (exported from this folder), with the same null rules.
 3. The synthetic states listed above (Q3, approved).
 4. 131 new tests rather than about 90 to 110.
 
+### E10a interfaces for E10b/E10c — matrix model (`com.udcf.modules.matrix`)
+
+Pure classes: no socket, registry, thread, executor, controller or Spring (except `MatrixProperties`). Time comes
+only from an injected nanosecond clock. Reused from Experiment 9 unchanged: `PayloadGenerator.vector`,
+`VectorChecksum.of`, `BlockPartition.of`, `MpiProperties.maxPayloadElements` and `CollectiveOutcome`; from
+Experiment 1: `CallTimer` (and `ScriptedNanoClock` in tests). No existing class changed.
+
+**Data.** Square N x N, row-major `double[]` (element (i, j) at `i * n + j`). `MatrixGenerator.a(seed, n)` =
+`PayloadGenerator.vector(seedA(seed), n * n)`, `b(seed, n)` the same with `seedB(seed)`; `seedA = seed ^
+0xA5A5A5A5A5A5A5A5`, `seedB = seed ^ 0x5A5A5A5A5A5A5A5A` (XOR is a bijection and the salts differ, so the two seeds
+differ for every seed). Values in [-1000, 1000), so every element of C is below `n * 1e6` (at most about 4.6e10): no
+NaN or infinity. An Experiment 9 collective given `seedB(seed)` and count `n * n` regenerates exactly B.
+
+**Sizes** (`MatrixLimits(MatrixProperties, MpiProperties)`). The maximum is derived, never configured:
+`floorSqrt(max-payload-elements)` in exact integer arithmetic (316 locally, 100 public), because B (N x N) is the
+largest single vector sent. The constructor refuses a series size above it or a min-size above it.
+`check(n, liveParticipants)` gives an `Optional<MatrixRefusal>`, tested in this order: `SIZE_ABOVE_MAXIMUM`,
+`SIZE_BELOW_MINIMUM`, `NO_LIVE_PARTICIPANT`, `SIZE_BELOW_PARTICIPANTS` (n < p).
+
+| Key (`MatrixProperties`, `udcf.matrix`, no code defaults) | application.yml | application-public.yml |
+|---|---|---|
+| `min-size` | 2 | (inherited) 2 |
+| `series-sizes` (at least 3, strictly ascending, each >= min-size; within the maximum, checked by `MatrixLimits`) | [50, 100, 200, 316] | [25, 50, 100] |
+
+**Partition.** `RowPartition.of(n, p)` is `BlockPartition.of(n, p)` applied to rows: `RowBlock(rank, rowStart,
+rowCount, n)` with `rowEnd()`, `elementOffset()` = `rowStart * n` and `elementLength()` = `rowCount * n`; n < p is
+refused. Example: n = 10 over p = 4 gives rows 3, 3, 2, 2, element offsets 0, 30, 60, 80.
+`RowPartition.rows(matrix, block)` copies the block's rows.
+
+**Multiply and exactness.** `MatrixMultiply.multiplyRows(aRows, b, n)`; `multiply(a, b, n)` is the same method over
+all rows, so the sequential product and every block run one code path. Each C[i][j] is `s = +0.0; for k = 0..n-1:
+s = s + a[i][k] * b[k][j]` (loops in i-k-j order, which does not change the order of additions into an element); no
+`Math.fma`, no reordering, no reduction across ranks. Since Java 17 (JEP 306, JLS 15.4) all floating point is strict
+IEEE 754 binary64, round-to-nearest, never fused or widened, so the same operand bits in the same order give the same
+result bits on every JVM, thread and node. `ParallelProductTest` proves bitwise equality for N in {1, 2, 3, 7, 16,
+50, 101}, every p from 1 to 7 (p <= N) and three seeds, against an independent i-j-k reference too, and shows that a
+k-descending order does change bits (the check is not vacuous). `timedRows(nanoClock, aRows, b, n)` returns
+`Timed(values, nanos)`, measured with `CallTimer` around the multiply only (arguments checked before the clock is
+read).
+
+**Assembly and verification.** `ResultBlock(RowBlock block, int nodeId, double[] values, String reportedChecksum)`:
+a hole has both null, never zeros; values copied in and out. `MatrixAssembly.assemble(n, blocks, rootRank,
+sequential)` (blocks in rank order, tiling rows [0, n), else `IllegalArgumentException`) returns `Assembled(product,
+verification, outcome)`; `product` is null while any block is missing.
+`MatrixVerification(rowsExpected, rowsReceived, blocksMissing, blocksWithBadChecksum, elementsCompared,
+mismatchedElements, parallelChecksum, sequentialChecksum, checksumsMatch, passed)`:
+- mismatches are counted bitwise (`doubleToLongBits`) over the arrived rows only; a bad checksum is a reported
+  checksum that differs from the root's recomputation over what arrived;
+- `parallelChecksum` and `checksumsMatch` are null while a block is missing;
+- `passed`: false on any known mismatch (element, bad checksum, checksums differ), otherwise null while a block is
+  missing, otherwise true. A missing block is never "passed".
+
+**Outcomes** (as Experiment 9; REFUSED comes from `MatrixLimits.check`, never from assembly): COMPLETE when no block
+is missing (also a root-only run); FAILED when no block arrived at all, or a remote rank was needed and no remote
+block arrived; PARTIAL otherwise, including only the root's own block missing. A failed compute or transfer is a hole,
+so it is data, not an exception.
+
+**Timing** (`MatrixTiming(n, warmupProducts, sequentialNanos, scatterNanos, broadcastNanos, computePhaseNanos,
+gatherNanos, parallelTotalNanos, rankComputes)`; every time nullable, null = unknown, never 0, never negative).
+`warmupProducts` (int, >= 0, never null) counts the untimed products done before the timed ones.
+
+| Figure | Kind | Definition |
+|---|---|---|
+| `sequentialNanos` | measured on the root | around the multiply of the whole matrix only, run separately from the parallel run |
+| `scatterNanos`, `broadcastNanos` | measured on the root | Experiment 9's `totalNanos` of that collective; **includes the root's payload sizing and checksum work between transfers**, not only time on the wire |
+| `computePhaseNanos` | measured on the root | just before the first compute is dispatched to just after the last block (remote or the root's own) is computed; the computation time |
+| `gatherNanos` | measured on the root | first fetch of C to the last |
+| `parallelTotalNanos` | measured on the root | just before the scatter to just after the last gathered block; one interval, not a sum |
+| `RankCompute(rank, nodeId, rowCount, computeNanos)` | **measured on the node** | around that rank's multiply only (all nodes share one process and one `System.nanoTime`); null when the compute failed |
+| `communicationNanos()` | derived | scatter + broadcast + gather; null if any is null |
+| `otherNanos()` | derived | total - communication - compute phase; **can be negative, never clamped** |
+| `communicationShare()` | derived | communication / total |
+| `speedup()` | derived | sequential / parallel total, the measured speedup; null if either is null or the total is 0 |
+| `computeBoundSpeedup()` | derived, **never the measured speedup** | sequential / slowest rank compute: what the multiply alone would allow if communication cost nothing; null if any rank is null |
+| `multiplyAdds()` | derived, exact | n cubed (316 gives 31554496) |
+
+**Series and honesty.** `SpeedupSeries(points)`: `Point(n, sequentialNanos, parallelTotalNanos, communicationNanos,
+computePhaseNanos, speedup)` from `Point.of(MatrixTiming)`, sorted by n, a repeated n refused, `sizesWithSpeedup()`
+counts the known speedups (done when needs at least three). `SpeedupBasis(IntSupplier availableProcessors)`
+(production: `Runtime.getRuntime()::availableProcessors`): `processors()`, `ceiling(ranks)` = min(ranks,
+processors), `text(ranks, warmupProducts)`: all nodes share one process and the **available processors reported by
+the JVM** (never "physical cores"; can be lower inside a container); the speedup cannot exceed the ceiling;
+communication dominates small sizes (speedup below 1 possible); node compute times are measured on the node; and
+either "no warm-up products were run, so the figures include JVM compile effects" or the warm-up count.
+
+**For E10b (decided at the E10a review).**
+1. (a) Row-aligned scatter: an add-only block unit in mpi (`BlockPartition.of(n, p, unit)`, `of(n, p)` = unit 1; a
+   `blockUnit` component in `CollectiveRequest` with the old constructor kept as unit 1; scatter and gather partition
+   by unit; the count check becomes n / unit < p). Default 1, so every E9 test is unchanged. A test proves
+   `BlockPartition.of(n * n, p, n)` equals `RowPartition`'s element ranges.
+2. (b) Gather of the computed block: a separate `MatrixEndpoint` (matrix package) exported through a new
+   `RmiExtraExport` bean, filter `RmiSerialFilter.from(limits)` (no array argument). A third bound name on every
+   node: `RmiControllerTest`'s two-name assertion (lines 287-293) changes in E10b, and the rmi registry fixtures go
+   stale (README note).
+3. (c) The block multiply runs on the node's own Experiment 2 executor (`RequestsNodeService.execute(Callable)`).
+4. (d) In E10c, `MpiRoleSelector` becomes public (a one-word visibility change) instead of copying the rule.
+5. (i) The compute calls are dispatched **concurrently** from the root, one caller per remote rank on a small
+   module-owned pool. Otherwise the nodes compute one after another and parallel can never beat sequential, by
+   construction.
+6. (ii) The Experiment 2 executor only runs the multiply. Any simulated-work multiplier of the capacity profile (FAST
+   x1, MEDIUM x2, SLOW x4) must NOT be part of the measured compute (R7).
+7. (iii) Warm-up policy: decide how many untimed products run before the timed ones (sequential and blocks) and pass
+   the count as `warmupProducts`; with 0 the basis text says the figures include JVM compile effects.
+8. (iv) Label the scatter and broadcast times: they are E9 `totalNanos` and include the root's payload sizing and
+   checksum work. E10b decides whether to separate that out.
+9. `MatrixRunResult` (the record of a whole run) is defined in E10b.
+
+**No dedicated test (R6):** the enum `MatrixRefusal.Reason` (no behaviour). Every record with rules is covered by
+`MatrixRecordsTest` or its class's test.
+
+**Tests:** 81 new tests in 11 classes, no socket, thread or port (`MatrixLimitsTest` 21, `MatrixGeneratorTest` 9,
+`MatrixMultiplyTest` 8, `ParallelProductTest` 8, `MatrixAssemblyTest` 7, `MatrixTimingTest` 7, `RowPartitionTest` 6,
+`MatrixPropertiesTest` 4, `MatrixRecordsTest` 4, `SpeedupBasisTest` 4, `SpeedupSeriesTest` 3).
+
+#### E10a deviations from the approved plan
+
+1. `SpeedupBasis.cores()` is named `processors()` and `text` takes `(ranks, warmupProducts)` (conditions 1 and 2).
+2. `MatrixTiming` has `warmupProducts` (condition 1).
+3. Outcome: a root-only run whose own block is missing is FAILED (nothing arrived), not PARTIAL; the plan's rule
+   did not cover that case.
+4. `MatrixVerification.of(...)` derives `checksumsMatch` and `passed`, and `ResultBlock.hole(block, nodeId)` builds a
+   hole; small helpers beyond the listed signatures.
+5. 81 tests (the plan gave no total).
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -2022,6 +2146,11 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   first connect` fails under `npx vitest run --sequence.shuffle` for some seeds (for example 1791907079925), also
   when that file runs alone (4 of 6 shuffled runs of the file alone failed). It is an order dependence inside that
   file; the default (unshuffled) order passes.
+- E10a (Q3, accepted): the scatter and broadcast times are Experiment 9's `totalNanos`, which include the root's
+  payload sizing (PayloadSizer re-serialises every request) and checksum work between transfers, so they overstate the
+  time on the wire. They must be labelled so; E10b decides whether to separate that out.
+- E10a: no warm-up policy exists yet (`warmupProducts` is only carried and stated). Until E10b/E10c set one, figures
+  with `warmupProducts = 0` include JVM compile effects, and `SpeedupBasis.text` says so.
 
 ---
 
@@ -2160,3 +2289,11 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   timeout and network error with its own message); 11 new test files, 131 tests on the real fixtures plus listed
   synthetic copies; backend not run (no backend change; 1623 tests at E9c), frontend 916 tests (baseline 785), lint and build pass;
   deviations: the four listed under "E9d deviations from the approved plan".
+- 2026-10-13 E10a done: pure Experiment 10 model in com.udcf.modules.matrix (MatrixGenerator on E9's PayloadGenerator
+  with derived seeds for A and B, MatrixLimits with the exact floor-sqrt maximum from udcf.mpi.max-payload-elements and
+  four refusal reasons, RowPartition on E9's BlockPartition, one MatrixMultiply code path for sequential and blocks with
+  bitwise equality proved, MatrixAssembly and MatrixVerification with holes as null never passed, MatrixTiming with
+  measured and derived figures and warmupProducts, SpeedupSeries, SpeedupBasis on the JVM's available processors),
+  MatrixProperties (udcf.matrix, add-only YAML blocks); 11 new test classes, 81 tests; backend 1704 tests, 1 skipped
+  (1 run; baseline 1623), frontend not run (no frontend change); deviations: the five listed under "E10a deviations
+  from the approved plan".

@@ -173,6 +173,14 @@ udcf:
     max-failure-message-length: 300
     
 
+  # Experiment 10 (lab 10). Parallel matrix multiplication (E10a model). There is no maximum size here: it is
+  # floor(sqrt(udcf.mpi.max-payload-elements)), so B (N x N) fits one broadcast: 316 here, 100 in public.
+  matrix:
+    # Smallest N a run accepts; N below the number of live nodes is refused separately.
+    min-size: 2
+    # Sizes of the speedup series: at least three, strictly ascending, each from min-size to the maximum.
+    series-sizes: [50, 100, 200, 316]
+
 management:
   endpoints:
     web:
