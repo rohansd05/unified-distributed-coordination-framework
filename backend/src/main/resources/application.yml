@@ -157,6 +157,20 @@ udcf:
       # The chosen node's catch-up from the other live peers (in parallel); a peer not done is skipped.
       catch-up-timeout-millis: 1000
     history-limit: 10
+
+  # Experiment 9 (lab 9). MPI collectives over the Experiment 1 RMI layer (E9a model; E9b transport).
+  mpi:
+    # Longest vector a collective may move; also the array limit of E9b's serial filter.
+    max-payload-elements: 100000
+    # No new transfer starts once this much time has passed; the rest are NOT_ATTEMPTED. A transfer already
+    # running is bounded by the RMI timeouts, so one HTTP call can last up to about 22 s (deadline + one transfer).
+    collective-deadline-millis: 10000
+    # Collectives the module keeps for the page (E9c).
+    history-size: 20
+    # Received payloads each node keeps by collective id (8 x 800 KB at most per node locally).
+    receive-store-size: 8
+    # Longest failure message kept in a transfer record; as udcf.rmi.
+    max-failure-message-length: 300
     
 
 management:

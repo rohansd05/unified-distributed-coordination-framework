@@ -39,7 +39,7 @@
 - **Special rules:** collectives run over the Exp 1 RMI layer; the root comes from a module-local selector (TODO(L1)); a crashed node is reported, and the operation never hangs.
 
 ### Steps
-- [ ] E9a — broadcast, scatter and gather logic. Needs: E1d.
+- [x] E9a — broadcast, scatter and gather logic. Needs: E1d.
 - [ ] E9b — `CollectiveEndpoint` over RMI on every node. Needs: E9a, E1b.
 - [ ] E9c — `MpiModule` (lab 9) and its API. Needs: E9b.
 - [ ] E9d — page and end-to-end check. Needs: E9c, E2d.
@@ -1088,6 +1088,186 @@ code splitting is open for Phase 14.
    the overview's limit) could show.
 6. 109 new tests rather than about 85.
 
+### E9a interfaces for E9b/E9c — MPI collectives model (`com.udcf.modules.mpi`)
+
+Pure classes: no socket, registry, export, controller or Spring (except `MpiProperties`). Reused from Experiment 1:
+`CallContext`, `EndpointReply.requireStamp`, `CallTimer`, `PayloadSizer` (no extension needed: a `double[]` is
+`Serializable` and is written with `writeObject`), `RemoteFailureClassifier` and `CallStage`. Added to rmi, add-only:
+`RemoteFailureDetail` (record; `of(Throwable, CallStage, maxLength)` gives stage, kind, exception class, single-line
+cut message and innermost cause class by the E1a rules; `observed(stage, kind, message, maxLength)` for a failure found
+without an exception). The rmi test helper `ScriptedNanoClock` is now public (class, constructor, `reads()`).
+
+**Contract (E9b exports it).** `CollectiveEndpoint extends Remote`, `BOUND_NAME = "CollectiveEndpoint"`:
+`ReceiveReceipt receive(CallContext, long collectiveId, int rank, double[] values)` (broadcast: the whole vector;
+scatter: this rank's block) and `Contribution contribute(CallContext, long collectiveId, int rank, int count, long seed)`
+(gather). `CollectiveEndpointLogic implements CollectiveEndpoint`: `new CollectiveEndpointLogic(nodeId, LamportClock,
+MpiProperties)`, `static forNode(ClusterNode, MpiProperties)` (the node's shared clock). Every call: arguments checked
+first (an invalid call changes nothing; length 1 to `max-payload-elements`), then `clock.update(senderLamport)`, the
+work, and the reply stamped with `clock.tick()`. `receive` stores a copy by collective id in a bounded map
+(`receive-store-size`, insertion order): a repeated id replaces its entry and becomes the newest; the oldest entry is
+dropped when full. Thread-safe (one `ReentrantLock` around the store; the clock is atomic), proved by two latch-based
+tests. Inspection: `received(id)`, `storedIds()` (oldest first), `storedRanks()`, `nodeId()`.
+
+**Replies** (records, `Serializable`, `serialVersionUID = 1L`): `ReceiveReceipt(nodeId, lamportTime, collectiveId,
+rank, elementCount, checksum)` (what the node actually received) and `Contribution(nodeId, lamportTime, collectiveId,
+rank, values, checksum)` (values copied in and out; equality by element).
+
+**Transport seam (E9b implements it over RMI).** `CollectiveTransport`: `ReceiveReceipt deliver(int targetNodeId,
+CallContext, long collectiveId, int rank, double[] values)` and `Contribution collect(int targetNodeId, CallContext,
+long collectiveId, int rank, int count, long seed)`, both `throws TransferException`. `TransferException(CallStage,
+Exception)` says whether the endpoint could not be reached (`LOOKUP`) or the call failed (`CALL`) and wraps the
+original, which the executor classifies. Any other exception from the transport counts as `CALL`. Each transfer must
+be bounded by the transport's own timeouts: the executor cannot interrupt one.
+
+**Entry point (E9c).** `new CollectiveExecutor(MpiProperties, LongSupplier nanoClock)`;
+`CollectiveResult execute(CollectiveRequest, LamportClock rootClock, CollectiveTransport)`. `CollectiveRequest(long
+collectiveId, CollectiveOperation operation, int rootNodeId, List<Integer> participantNodeIds, Set<Integer>
+liveNodeIds, int count, long seed)`: the root is an explicit input (E9c chooses it; the leader via link L1 in Phase
+13), the live set a snapshot taken by the caller. Single-threaded and deterministic.
+
+**Result.** `CollectiveResult(collectiveId, operation, rootNodeId, rootRank, rankNodeIds, skippedNodeIds, count, seed,
+outcome, refusal, inputChecksum, transfers, totalNanos, gathered, verification, deadlineMillis)`; `assembled()` gives
+the gathered vector, or null while any block is a hole. `TransferRecord(rank, fromNodeId, toNodeId, direction
+TO_RANK/FROM_RANK, status, offset, elementCount, latencyNanos, timeToFailureNanos, requestBytes, replyBytes, expectedChecksum,
+reportedChecksum, verified, failure (RemoteFailureDetail), senderLamportAtSend, replyLamport, lamportAfterReply,
+notAttemptedReason)`; its constructor enforces null-never-0 per status. `GatheredBlock(rank, nodeId, offset, length,
+values, checksum)`: a hole has null values and checksum, never zeros. `Verification(passed, checked, matched,
+mismatched, unknown, wholeVectorMatches)`. The size basis to show next to every size is `PayloadSizer.LABEL`.
+
+**Ranks.** The participants that are live at the start, sorted by ascending node id, get ranks 0 to p-1. The root is
+one of them; its rank need not be 0. A participant that is not live is excluded and listed in `skippedNodeIds`.
+Example: participants 1 to 5, live {1, 2, 4, 5}, root 4: ranks 0 to 3 are nodes 1, 2, 4, 5, the root has rank 2,
+node 3 is skipped.
+
+**Blocks (scatter and gather).** n elements over p ranks: `base = n / p`, and the first `n % p` ranks get one more,
+in rank order; block i belongs to rank i. Example: n = 10 over p = 4 gives lengths 3, 3, 2, 2 at offsets 0, 3, 6, 8.
+n < p (for example 3 over 4) is refused. **Gather: rank i contributes exactly block i's length, so the assembled
+vector has n elements.**
+
+**Algorithm.** Linear: the root handles the ranks one after another in rank order (real MPI libraries use trees;
+not part of this step). BROADCAST sends the whole vector to every other rank; SCATTER sends block i to rank i; GATHER
+asks every other rank for its contribution and assembles the blocks in rank order. The root's own part never crosses
+the network: status LOCAL, latency, sizes and Lamport times null, not verified and not counted in `checked`.
+
+**Failure semantics.**
+
+| Outcome | When |
+|---|---|
+| REFUSED | `NO_PARTICIPANTS`, `ROOT_NOT_PARTICIPANT`, `ROOT_DOWN`, `COUNT_BELOW_PARTICIPANTS` (scatter or gather with n < p), `PAYLOAD_TOO_LARGE` (n > `max-payload-elements`); nothing sent, no transfers, time or verification |
+| COMPLETE | every remote transfer DELIVERED, or none was needed (the root is the only rank) |
+| PARTIAL | at least one DELIVERED and at least one FAILED or NOT_ATTEMPTED |
+| FAILED | at least one remote transfer was needed and none was DELIVERED |
+
+Skipped nodes are not participants and do not change the outcome. Transfer statuses: LOCAL, DELIVERED, FAILED (stage
+and kind as in Experiment 1; the collective goes on with the next rank), NOT_ATTEMPTED (the deadline had passed: once
+`collective-deadline-millis` have passed since the start, no transfer starts; different from FAILED). A reply that
+names another node, collective or rank, or a contribution of the wrong length, or no reply, is a FAILED transfer
+(stage CALL, kind OTHER, message "reply did not match the request: ...") and the next rank is still attempted; it is
+never DELIVERED or verified. `IllegalStateException` is kept for the executor's own contract (for example a clock going
+backwards); a null argument or a duplicate or non-positive participant id is a programming error.
+
+**Timing and sizes.** `latencyNanos`: measured around the transport call, DELIVERED only (a latency is a completed,
+accepted exchange). `timeToFailureNanos` (F1): FAILED only, including a reply that did not match, a contribution of the
+wrong length and no reply; the nanoseconds from just before the transport call until the failure or mismatch was
+detected, measured by the same `CallTimer` around the same call. It is always set on a FAILED transfer (the executor
+times every call itself, so no transport can leave it unknown) and null for DELIVERED, LOCAL and NOT_ATTEMPTED; the
+record's constructor enforces both, and rejects a negative value. `totalNanos`: the clock just
+after the last remote transfer minus the clock just before the first one, measured separately (not a sum); null when
+no remote transfer was attempted. `requestBytes`: `PayloadSizer` of exactly the endpoint's arguments (context,
+collective id, rank, values; or count and seed), set when something was sent (not after a LOOKUP failure);
+`replyBytes`: of the reply. Both measured outside the timed window.
+
+**Lamport (L4).** Before each transfer the root ticks and sends `CallContext(root, t)`; on a matching reply it applies
+`update(reply.lamportTime())`; a failed or unmatched transfer merges nothing.
+
+**Verification (from what arrived; unknown is null, never passed).** Broadcast: each receipt's checksum and count
+equal the root's vector's. Scatter: each receipt equals its planned chunk's checksum and length; `wholeVectorMatches`
+is true when every chunk is verified and the blocks tile [0, n), false on any mismatch, null while a chunk is
+unverified. Gather: the root recomputes the checksum over the values it received; it must equal the node's reported
+checksum and the independently generated expected block; `wholeVectorMatches` compares the assembled vector with the
+expected one, null while a block is a hole. `passed`: false on any mismatch, null on any unknown or when nothing was
+checked, else true.
+
+**Data (reproducible).** `PayloadGenerator.vector(seed, count)`: SplitMix64. For element i (from 0):
+`state = seed + (i + 1) * 0x9E3779B97F4A7C15` (mod 2^64); `z = state; z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9;
+z = (z ^ (z >>> 27)) * 0x94D049BB133111EB; z = z ^ (z >>> 31)`; value `((z >>> 11) * 2^-53) * 2000.0 - 1000.0`, in
+[-1000, 1000). Gather contribution of node k: `vector(seed ^ (k * 0x9E3779B97F4A7C15) mod 2^64, count)`.
+`VectorChecksum.of(values)`: SHA-256 over each value's `Double.doubleToLongBits` as 8 big-endian bytes, lower-case
+hex. The reference constants in PayloadGeneratorTest, VectorChecksumTest and CollectiveEndpointLogicTest come from this
+Python 3 script (run with `python -I`):
+
+```
+import struct, hashlib
+M = (1 << 64) - 1; G = 0x9E3779B97F4A7C15
+def mix(z):
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & M
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & M
+    return z ^ (z >> 31)
+def vector(seed, count):
+    s = seed & M; v = []
+    for _ in range(count):
+        s = (s + G) & M; v.append((mix(s) >> 11) * 2.0**-53 * 2000.0 - 1000.0)
+    return v
+def checksum(v): return hashlib.sha256(b''.join(struct.pack('>d', x) for x in v)).hexdigest()
+print(hex(mix(G)), hex(mix((2 * G) & M)))     # e220a8397b1dcdaf 6e789e6aa1b965f4
+print(vector(42, 3), checksum(vector(42, 3)))  # [483.1297575436465, -680.1792142461597, -442.79773948972263] 5f1b64cf...
+cs = (42 ^ ((2 * G) & M)) & M                  # contribution seed of node 2: 0x3c6ef372fe94f800
+print(vector(cs, 2), checksum(vector(cs, 2)))  # [-251.37171903782416, -208.8065498773675] 4056f0d1...
+print(checksum([1.0, -2.5, 0.1]), checksum([]))  # 6f832def... e3b0c442...
+```
+
+**Properties** (`MpiProperties`, `udcf.mpi`, no code defaults, every value `@Min(1)`, registered by scan like
+`RmiProperties`):
+
+| Key | application.yml | application-public.yml | Use |
+|---|---|---|---|
+| `max-payload-elements` | 100000 | 10000 | vector length; also E9b's filter array limit |
+| `collective-deadline-millis` | 10000 | same | no new transfer after it |
+| `history-size` | 20 | same | E9c |
+| `receive-store-size` | 8 | same | payloads each node keeps (local worst case 8 x 800 KB per node) |
+| `max-failure-message-length` | 300 | 300 (as `udcf.rmi`) | cut of a transfer's failure message |
+
+**Open items for later steps.**
+1. **E9b serial filter.** E9b must give each exported `CollectiveEndpoint` its own per-object serial filter that allows
+   `double[]` up to `max-payload-elements` elements, plus `CallContext` (the E1b `RmiSerialFilter` rejects every array).
+   The reply direction stays unfiltered (the E1b known issue: both ends are our own objects in this JVM).
+2. **Experiment 10 sizes.** One message carries at most `max-payload-elements` doubles, so an N x N matrix broadcast in
+   one message needs N <= floor(sqrt(max-payload-elements)): 316 locally, 100 in the public profile.
+3. **HTTP budget.** One collective can last up to the deadline plus one worst-case transfer (connect, then lookup with
+   RMI's DGC call, then the method: about 12 s per E1c), about 22 s. E9c/E9d must give the collective POST a
+   per-request timeout of at least 25 s in the module's own API file (the shared client's 10 s is too short).
+4. **Reduce and allgather** are not built. Reduce: a new `CollectiveOperation` value whose executor case collects every
+   rank's contribution with the existing `collect` and combines them element-wise at the root with an operator (sum,
+   max). Allgather: gather to the root, then broadcast the assembled vector, both with the existing transport methods.
+   Neither needs a new transport method or endpoint method.
+5. **Time to failure.** Resolved in F1: a FAILED transfer carries `timeToFailureNanos` (see "Timing and sizes"), and
+   `totalNanos` still includes it, measured separately.
+
+**No dedicated test (R6):** the enums `CollectiveOperation`, `CollectiveOutcome`, `TransferStatus`, `TransferDirection`
+and `RefusalReason` (no behaviour); the interfaces `CollectiveEndpoint` and `CollectiveTransport`; `TransferException`
+(a carrier with null checks); `Refusal` and `BlockPartition.Block` (records with checks only, covered by
+RankAssignmentTest and BlockPartitionTest). Records with rules (`CollectiveRequest`, `ReceiveReceipt`, `Contribution`,
+`GatheredBlock`, `TransferRecord`, `Verification`, `CollectiveResult`) are covered by MpiRecordsTest.
+
+**Tests:** 75 new tests in 9 classes, no socket and no port (`PayloadGeneratorTest` 6, `VectorChecksumTest` 4,
+`BlockPartitionTest` 5, `RankAssignmentTest` 6, `CollectiveEndpointLogicTest` 8, `CollectiveExecutorTest` 31,
+`MpiPropertiesTest` 4, `MpiRecordsTest` 8, rmi `RemoteFailureDetailTest` 3), plus the test helper
+`ScriptedCollectiveTransport` (real `CollectiveEndpointLogic` per node; scripted failures and rewritten replies).
+
+#### E9a deviations from the approved plan
+
+1. Q4 (approved): a reply that does not match its request is a FAILED transfer (CALL, OTHER), not an exception. A
+   contribution of the wrong length and a null reply are treated the same way.
+2. `RemoteFailureDetail` also has `observed(...)` (the plan named only `of`), for those mismatches, which have no
+   exception; its message is cut by the same rule.
+3. Small accessors beyond the listed signatures: `VectorChecksum.isChecksum`, `Contribution.length`,
+   `GatheredBlock.hole`, `CollectiveResult.assembled`, `BlockPartition.Block.end`, `Verification.of`, and the
+   inspection methods of `CollectiveEndpointLogic`.
+4. The first final report gave a FAILED transfer no time of its own; superseded by F1 (item 6).
+5. 71 tests rather than about 69 at the first final report (`CollectiveEndpointLogicTest` 8 instead of 10,
+   `CollectiveExecutorTest` 28 instead of 24, `RemoteFailureDetailTest` 3); 75 after F1.
+6. F1: timeToFailureNanos added after the first final report.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -1322,6 +1502,17 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - E1d: the failure message is shown exactly as the backend escaped it (a literal `\n\t` stays as text).
 - E1d: `npm run build` warns that the main chunk is above 500 kB (690.50 kB); code-splitting is a shared-build
   decision, not part of this step.
+- E9a: the deadline stops new transfers but cannot interrupt one already running, so a collective can overrun
+  `collective-deadline-millis` by one transfer, bounded by E9b's RMI timeouts (about 22 s in all; see open item 3).
+- E9a: the transport seam does the lookup inside `deliver`/`collect`, so the root ticks its Lamport clock before the
+  lookup. A LOOKUP failure therefore consumes one tick (a local event) although nothing was sent; the record shows
+  `senderLamportAtSend` and `requestBytes` as null.
+- E9a: a FAILED transfer records no time to failure (open item 5); only DELIVERED transfers have a latency.
+- E9a: scatter's whole-vector check relies on the receivers' chunk checksums (SHA-256) and on the blocks tiling
+  [0, n); the root never gets the chunks back to compare bytes.
+- E9a: with the root as the only rank there is nothing to verify, so `passed` is null for a COMPLETE collective.
+- E9a: every request is sized by serializing it once more (outside the timed window), which costs CPU for large
+  payloads (100000 doubles, about 800 KB, per remote rank).
 
 ---
 
@@ -1426,3 +1617,12 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   25 s, every 400/404/409, timeout and network error with its own message); 11 new test files, 109 tests on the real
   fixtures; backend not changed (1446 tests at H1), frontend 785 tests (baseline 676), lint and build pass; deviations:
   the six listed under "E1d deviations from the approved plan".
+- 2026-10-13 E9a done: pure MPI collectives model in com.udcf.modules.mpi (CollectiveEndpoint contract and its thread-safe
+  CollectiveEndpointLogic with a bounded store, CollectiveTransport seam with TransferException, CollectiveExecutor for
+  linear broadcast, scatter and gather with ranks from live participants, block distribution, LOCAL root part, failures
+  and unmatched replies as data, deadline with NOT_ATTEMPTED, measured latency and separate total, PayloadSizer sizes,
+  Lamport send and receive rules, verification from received data, reproducible SplitMix64 data and SHA-256 checksums),
+  MpiProperties (udcf.mpi, add-only YAML blocks), rmi RemoteFailureDetail (add-only), ScriptedNanoClock public; follow-up
+  F1 added TransferRecord.timeToFailureNanos for FAILED transfers; 9 new test classes, 75 tests (5 runs plus 1
+  reverse-alphabetical run, all green); backend 1521 tests, 1 skipped (1 run; baseline 1446), frontend not run (no
+  frontend change); deviations: the six listed under "E9a deviations from the approved plan".
