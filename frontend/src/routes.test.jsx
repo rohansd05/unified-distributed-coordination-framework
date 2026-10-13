@@ -12,6 +12,7 @@ import { clockSyncApi } from '@/modules/clocksync/clockSyncApi'
 import { electionApi } from '@/modules/election/electionApi'
 import { mapReduceApi } from '@/modules/mapreduce/mapReduceApi'
 import mapReduceOverviewIdle from '@/test/fixtures/mapreduce/overview-idle.json'
+import { rmiApi } from '@/modules/rmi/rmiApi'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -30,6 +31,10 @@ beforeEach(() => {
   vi.spyOn(mapReduceApi, 'getOverview').mockResolvedValue(mapReduceOverviewIdle)
   vi.spyOn(mapReduceApi, 'getRuns').mockResolvedValue([])
   vi.spyOn(mapReduceApi, 'getLatestRun').mockResolvedValue(null)
+  vi.spyOn(rmiApi, 'getOverview').mockResolvedValue(null)
+  vi.spyOn(rmiApi, 'start').mockResolvedValue(null)
+  vi.spyOn(rmiApi, 'getRegistries').mockResolvedValue(null)
+  vi.spyOn(rmiApi, 'getHistory').mockResolvedValue(null)
 })
 
 afterEach(() => {
