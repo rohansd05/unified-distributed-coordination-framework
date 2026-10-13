@@ -1009,6 +1009,61 @@ thread or RMI's reaper thread.
 
 ---
 
+## Housekeeping H1 (after Experiment 1)
+
+**Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
+unbound `java.net.ServerSocket` before binding 127.0.0.1, and the E5b test `ReplicationClientTest`
+(FakeNode) did the same. The rule comes from two places:
+- `track-b-swanand.md`, E8b note: "`ReplicationNodeService.java:806` calls
+  `socket.setReuseAddress(true)` on the replication server socket unconditionally, with no guard for
+  Windows or any other OS. Not changed (Track C's file). On Windows the JDK binds exclusively by
+  default, so a second bind still fails".
+- `LoopbackSocketFactory` Javadoc (E1b): "It never calls {@code setReuseAddress}: the JDK default is
+  kept (off on Windows, so no other socket can take over the port; on on Linux, so a port with
+  TIME_WAIT connections can be bound again)."
+
+**Proved by a throwaway probe** (`ReuseProbe.java`, outside the repository, ports 28720-28725, JDK
+21.0.12.1 on Windows 11 and on Linux in Docker `maven:3.9-eclipse-temurin-21`, `--pull never
+--network none`):
+
+| Case | Windows | Linux |
+|---|---|---|
+| Default `getReuseAddress()` of an unbound `ServerSocket` | false | true |
+| Second bind on a live listener's port, both with `setReuseAddress(true)` | refused (`BindException`) | refused |
+| The same with `-Dsun.net.useExclusiveBind=false` | **succeeds: the port is taken over** | (not applicable) |
+| Rebind right after close, with 3 TIME_WAIT connections, default setting | succeeds | succeeds |
+| The same with SO_REUSEADDR explicitly OFF | succeeds | **fails** (`BindException`) |
+
+On Windows with the JDK default (exclusive bind) the call is harmless: the JDK only records the flag,
+and a second bind is still refused. The hazard appears only with `-Dsun.net.useExclusiveBind=false`,
+where the call really sets SO_REUSEADDR and another socket can take the port. On Linux the default is
+already on, so the call did nothing, and that default is what allows the immediate rebind after a
+crash. Leaving the call out is therefore correct on both OSes.
+
+**Changed** (4 files):
+- `ReplicationNodeService.java`: the call removed; a two-line ASCII comment in its place.
+  `new ServerSocket()` plus `bind` unchanged; no import became unused.
+- `ReplicationClientTest.java`: the FakeNode call removed; a one-line ASCII comment in its place.
+- `RmiNodeServiceTest.java` line 138: the literal euro sign replaced by the escape `\u20ac` (by
+  script). The file now has no non-ASCII character; `longestEchoPassesTheFilter` passes.
+- This file.
+
+No new test: the call was removed rather than guarded, so there is no decision to test. The existing
+replication tests, which crash and rebind on real sockets, are the proof.
+
+**Findings for other owners (not changed):**
+- `clocksync/ClockNodeService.java:467` (Rohan, Track D): `DatagramSocket` (UDP),
+  `setReuseAddress(true)` unconditional. Not probed (H1 probed TCP `ServerSocket` only).
+- `multithreading/RequestsNodeService.java:303` (Nidhi, Track A): `ServerSocket`, unconditional.
+- `test/.../loadbalancing/TcpWorkerTransportTest.java:70` (Nidhi, Track A): test `ServerSocket`,
+  unconditional.
+- `mapreduce/MapReduceNodeService.java:207` (Rohan, Track D): already guarded by `if (!isWindows())`.
+  No action.
+- **For Rohan:** `docs/HANDOFF.md` contains no SO_REUSEADDR rule (`grep -i reuse` finds none). The
+  rule exists only in the two track notes quoted above.
+
+---
+
 ## Known issues
 
 - E5a: the same version (epoch, Lamport time, origin) with a different value is refused as `STALE`
@@ -1174,6 +1229,7 @@ thread or RMI's reaper thread.
   are still published, because they really happened.
 - E1c: `RmiNodeServiceTest.java` (E1b) contains one literal non-ASCII character (`€` on line 138),
   despite the E1a follow-up F2 rule. It is not changed here (not an E1c file, not a defect).
+  **Resolved in H1** (now the escape `\u20ac`).
 
 ---
 
@@ -1267,3 +1323,8 @@ thread or RMI's reaper thread.
   28750-28799 after each run; frontend not run (no frontend code changed; the fixtures are data);
   deviations: the six listed under "E1c deviations from the approved plan".
   Linux (Docker, --cpus=2), run by Jai: 78 new tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1446 tests, 0 failures, 1 skipped; clean-clone full suite 1446 tests, 0 failures, 1 skipped; clean-clone frontend lint, build and tests pass.
+- 2026-10-13 H1 done: no SO_REUSEADDR in ReplicationNodeService or ReplicationClientTest (JDK default
+  kept, proved by a Windows and Linux probe), ASCII-only RmiNodeServiceTest (`\u20ac`); replication
+  package 209 tests x 5 runs plus 1 reverse-alphabetical run, RmiNodeServiceTest 18 tests x 5 runs,
+  all green; backend 1446 tests, 1 skipped (1 run; baseline 1446), frontend not run (no frontend
+  change); deviations: none (ReplicationClientTest added by approval, Q1).

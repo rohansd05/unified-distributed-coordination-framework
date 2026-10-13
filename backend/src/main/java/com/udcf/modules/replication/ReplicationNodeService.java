@@ -803,7 +803,8 @@ public class ReplicationNodeService implements NodeService {
     private ServerSocket bind() throws IOException {
         ServerSocket socket = new ServerSocket();
         try {
-            socket.setReuseAddress(true);   // as RequestsNodeService: immediate rebind after a crash
+            // No setReuseAddress: the JDK default (off on Windows, on on Linux) keeps the port
+            // exclusive and still allows an immediate rebind after a crash.
             socket.bind(new InetSocketAddress(ReplicationProtocol.LOOPBACK, port()));
             return socket;
         } catch (IOException e) {

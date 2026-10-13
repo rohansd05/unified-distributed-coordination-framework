@@ -135,7 +135,7 @@ class RmiNodeServiceTest {
     @DisplayName("an echo of the longest allowed text, all 3-byte characters (U+20AC), passes the filter intact")
     void longestEchoPassesTheFilter() {
         start(1);
-        String text = "€".repeat(RmiTestSupport.PROPERTIES.maxEchoLength());
+        String text = "\u20ac".repeat(RmiTestSupport.PROPERTIES.maxEchoLength());
 
         RmiCallResult result = RmiTestSupport.invoker(cluster, 2).invoke(remote, 1, RmiCall.echo(text));
 
