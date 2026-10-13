@@ -42,7 +42,7 @@
 - [x] E9a — broadcast, scatter and gather logic. Needs: E1d.
 - [x] E9b — `CollectiveEndpoint` over RMI on every node. Needs: E9a, E1b.
 - [x] E9c — `MpiModule` (lab 9) and its API. Needs: E9b.
-- [ ] E9d — page and end-to-end check. Needs: E9c, E2d.
+- [x] E9d — page and end-to-end check. Needs: E9c, E2d.
 
 ---
 
@@ -1603,6 +1603,126 @@ Linux (Docker, --cpus=2), run by Jai: 417 mpi and rmi tests x 5 runs plus 1 reve
    port, was dropped. That step would leave TIME_WAIT connections on the blocked port, and a later run within the
    TIME_WAIT period could then fail the same way on Linux.
 
+### E9d — MPI page (`/experiments/9-mpi`, `frontend/src/modules/mpi/`)
+
+Nothing another track needs to call. Frontend only; the backend is unchanged since E9c.
+
+**Page.** `index.jsx` exports `{ id: 'mpi', Page: MpiPage }`, so the existing `experiments/:slug` route renders it; no
+router change and no lazy loading (`registry.js` loads every page eagerly, README section 7). `MpiPage` passes
+`howItWorks` (three paragraphs plus the overview's `algorithmNote`, verbatim), `controls`, `visualisation`,
+`measurements` and `whatToNotice` to the shared `ExperimentLayout`, which adds the module event log (`ModuleEventLog`,
+`moduleId="mpi"`: every COLLECTIVE_* event and `ACTION_REJECTED_BUSY`; a refused collective shows STARTED then REFUSED).
+- **Controls** (`MpiControls`): operation (with the overview's description), element count (1 to
+  `limits.maxPayloadElements`; the hint gives the operation's `minimumCount`, n/a when null), optional seed (0 to
+  `limits.maxSeed`; empty means the backend uses the collective id), optional root (the first option names the
+  default from `defaultRootNodeId` and `defaultRootSource` in plain words, with the Phase 13 note; a crashed node stays
+  selectable, marked "(down)", so the real 409 shows). Count and seed are checked with `Number.isSafeInteger` in the
+  backend's own words; **a count below `minimumCount` is sent** (the backend's 200 REFUSED is the demonstration). Crash
+  and recover through the shared `api.crashNode` / `api.recoverNode`, as on the Experiment 1 page.
+- **Visualisation:** `CollectiveMap` (the bold element; the root in the centre, an arrow per remote transfer, outward
+  for broadcast and scatter, inward for gather; delivered solid, failed dashed with its kind, not attempted dotted;
+  skipped nodes marked with no arrow; arrows fade in in rank order, not under reduced motion; the page's only
+  Simulated badge, rendered only when `overview.coHosting` is non-null) and `NodeStrip` (status, RMI state, registry
+  port, CollectiveEndpoint exported, leader marker, kept collective ids, start failure).
+- **Measurements:** a MetricCard strip (last total time, remote transfers delivered, checksum verification), the
+  total-time explanation, `LatencyChart` (one slot per rank: a bar for DELIVERED only, a cross for FAILED, a dashed
+  outline for NOT_ATTEMPTED, a dot for the root's LOCAL part; never a zero bar; the time to failure only in words,
+  marked "not a latency"; the collective's `latencyBasis` under it) and `HistoryTable` (newest first, rows keyed by id
+  plus `startedAt`; a row shows the list entry itself in a detail panel, no further request).
+- **Results** (`CollectiveResult`): outcome badge (icon plus word), refusal reason and message, root and rank, seed,
+  input checksum, total time with its explanation, deadline, rank table (root, participant, skipped), transfer table
+  (direction, status, offset and element count, latency, time to failure, request and reply bytes, expected and
+  reported checksum with verified / mismatch / not checked, the three Lamport values; a FAILED row has a sub-row with
+  stage, kind, description, exception and cause class and message; a NOT_ATTEMPTED row a sub-row with its reason),
+  `latencyBasis` and `payloadSizeBasis` under the table whenever latencies or sizes are shown, verification, gathered
+  blocks (checksums and holes; no values exist on the wire).
+
+**Start and reset (`useMpi`, adapted from `useRmi` without registries).** `POST /start` once on mount, then only on the
+edge "no up node lacks CollectiveEndpoint" to "some up node lacks it" (`needsStart`: `nodeStatus === 'UP' &&
+collectiveEndpointExported === false`). `start-with-failure` keeps the condition true, so there is no loop; the page
+offers "Try again". An overview read sent before a start answered is discarded and read again. Overview and history
+are read together on every module event, cluster event and reconnect, coalesced (one in flight, one queued); no
+polling.
+
+**Timeouts.** `POST /collectives` waits `collectiveTimeoutMs(overview)` =
+`limits.recommendedMinClientTimeoutMillis` + `COLLECTIVE_TIMEOUT_MARGIN_MS` (3000), so 25000 ms locally; before the overview has loaded,
+`COLLECTIVE_TIMEOUT_FALLBACK_MS` (25000). Every other request keeps the shared 10000 ms. The help text under the form
+takes every figure from the overview (deadline, worst-case transfer, connect, call, the bound); the only page literal
+is the margin constant.
+
+**Errors.** Experiment 1's `describeProblem`, re-exported: 400 with `errors` (also beside the fields), 400 without
+`errors`, 404, 409 "Module busy" (with `actionInProgress`), 409 "Node down", 409 "Node state conflict", client timeout,
+network error. Run is disabled only while this page's own request is in flight; a BUSY overview (another tab) shows a
+banner and leaves Run enabled.
+
+**Null handling as implemented** (a null is "n/a" with its reason as tooltip and screen-reader text, never 0):
+
+| Field | Where | Shown for null |
+|---|---|---|
+| `storedCollectiveIds` | NodeStrip | n/a, "The endpoint is not exported, so it keeps nothing"; `[]` is "none" |
+| `startFailure` | NodeStrip | no sub-row |
+| `minimumCount` | count hint | n/a, "Every node is down, so there is no live participant" |
+| `defaultRootNodeId` | root select | "Default: none, every node is down" |
+| `latencyNanos` | transfer table, chart | LOCAL "The root's own part never crosses the network"; FAILED "No latency: the transfer did not complete"; NOT_ATTEMPTED "Not attempted: the deadline had passed"; chart: no bar |
+| `timeToFailureNanos` | own column; chart's words | n/a "The transfer did not fail"; never in the latency column |
+| `requestBytes` / `replyBytes` | transfer table | LOCAL as above; FAILED at LOOKUP "Nothing was sent: the registry lookup failed" / "No reply came back" |
+| `reportedChecksum` / `verified` | transfer table | n/a with the reason / "not checked" |
+| Lamport values | transfer table | n/a (local part, nothing sent, no reply) |
+| `failureMessage` | failure sub-row | n/a "The exception had no message" |
+| `notAttemptedReason` | not-attempted sub-row | n/a "No reason was sent" |
+| `rootRank` | result | n/a "Refused before ranks were used" |
+| `inputChecksum` | result | n/a "Refused: no input was generated" |
+| `totalNanos` | result, MetricCard, history | n/a "Refused: nothing was sent" or "No remote transfer was attempted"; the explanation is hidden with it |
+| `verification` | result | n/a and "Nothing was sent, so nothing was checked" |
+| `passed` / `wholeVectorMatches` | verification | n/a (unknown, or not compared), never "passed" |
+| `latencyBasis` / `payloadSizeBasis` | under the transfer table and chart | not shown (they are null exactly when no such figure exists) |
+| gathered `checksum` (hole) | gathered blocks | "hole: nothing arrived" |
+
+**Synthetic test states** (Q3, approved): minimal copies of real fixtures made inside the test, every changed field
+commented, "synthetic" in the test name; `contract.test.js` uses real fixtures only.
+1. A NOT_ATTEMPTED transfer (from `collective-partial.json`, rank 4): `mpiModel`, `CollectiveResult`, `CollectiveMap`,
+   `LatencyChart`.
+2. A checksum mismatch (from `collective-broadcast.json`): `CollectiveResult`.
+3. Outcome FAILED and a gathered hole (from `collective-gather.json`): `CollectiveResult`.
+4. A leader (`leader: true`; and `defaultRootSource: LEADER` with `defaultRootNodeId: 2`): `CollectiveMap`,
+   `NodeStrip`, `MpiPage`.
+5. `minimumCount: null` and `defaultRootNodeId: null`: `MpiPage`.
+6. A BUSY overview (`status`, `actionInProgress` from `error-409-busy.json`): `MpiPage`.
+7. Other limits for the timeout help text and for `collectiveTimeoutMs`, a smaller `maxSeed`, and `coHosting: null`:
+   `MpiPage`, `mpiApi`, `mpiModel`, `CollectiveMap`.
+
+**Files.** Created in `frontend/src/modules/mpi/`: `index.jsx`, `mpiApi.js`, `labels.js`, `mpiModel.js`, `useMpi.js`,
+`MpiPage.jsx`, `MpiControls.jsx`, `CollectiveResult.jsx`, `CollectiveMap.jsx`, `NodeStrip.jsx`, `LatencyChart.jsx`,
+`HistoryTable.jsx`, and 11 test files. Shared, add-only (approved): the lab 9 `concept` in `frontend/src/lib/experiments.js`;
+one import and three `mpiApi` spies in `frontend/src/routes.test.jsx`; one line in
+`frontend/src/test/fixtures/rmi/README.md` (the registries fixtures predate E9b). Reused: `describeProblem`,
+the number formats and labels and `NotAvailable` from rmi; `usePoliteAnnouncement` and `moduleStatusLabel` from
+multithreading.
+
+**Tests.** 131 new tests in 11 files (mpiApi 10, labels 4, mpiModel 18, useMpi 10, CollectiveResult 12, CollectiveMap 8,
+NodeStrip 5, LatencyChart 4, HistoryTable 3, MpiPage 28, contract 29); frontend 785 -> 916 tests, 96 -> 107 files.
+Main chunk 690.50 kB -> 738.64 kB (gzip 208.27 -> 220.77 kB). Whole suite under `--sequence.shuffle`: the final run
+passed (seed 1791907336687); some earlier shuffled runs had one failure, and every one whose failing test was listed
+was Track A's `useMultithreading` test (Known issues). The mpi and routes files passed under 5 shuffle seeds.
+
+**For Phase 13.** The default root already reads the leader (`defaultRootSource: LEADER`), but only synthetic tests
+cover it (no capture has a leader). When L1 makes the leader the MPI root, change the root hint in `MpiControls`
+("The leader becomes the MPI root fully in Phase 13") and recapture an overview with a leader.
+
+**For Experiment 10.** If E10c returns `CollectiveDto`s for its scatter of A, broadcast of B and gather of C, E10d can
+render them with `CollectiveResult`, `OutcomeBadge`, `LatencyChart` + `chartModel` and `CollectiveMap` + `fanModel`
+as they are (exported from this folder), with the same null rules.
+
+#### E9d deviations from the approved plan
+
+1. Crash and recover (Q1): the block is written in `MpiControls` with the same JSX pattern and the shared
+   `api.crashNode` / `api.recoverNode`, not extracted from `RmiControls`: extracting it would change an rmi file, which
+   condition 5 excludes. The crash logic itself is the shared api; only about 20 lines of markup repeat.
+2. `experiments.js`: the one-line lab 9 entry became a seven-line object like lab 1's; the only content added is the
+   `concept` key.
+3. The synthetic states listed above (Q3, approved).
+4. 131 new tests rather than about 90 to 110.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -1893,6 +2013,15 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   set `udcf.cluster.ports.clock-base` therefore binds the production UDP ports 6001-6005 (local profile), including
   E1c's `RmiControllerTest` and `RmiEndToEndTest`. E9c's Spring tests set `clock-base` inside Jai's block. This is
   safe while test classes run one at a time, but it is outside the README's "lazy start" rule and the test-port rule.
+- E9d: `useMpi` is an adapted copy of `useRmi`, and `MpiPage`'s `ProblemAlert` a copy of `RmiPage`'s (Q6, accepted).
+  A shared hook and alert are a later refactor.
+- E9d: main chunk grew from 690.50 kB (gzip 208.27) to 738.64 kB (gzip 220.77) with the E9d page (+48.14 kB, gzip
+  +12.50 kB). Pages are bundled in the main chunk (eager `registry.js`); route-level code splitting is open for Phase 14.
+- E9d, **finding for Track A (Nidhi), not changed:**
+  `src/modules/multithreading/useMultithreading.test.js > useMultithreading > reloads after a reconnect, but not on the
+  first connect` fails under `npx vitest run --sequence.shuffle` for some seeds (for example 1791907079925), also
+  when that file runs alone (4 of 6 shuffled runs of the file alone failed). It is an order dependence inside that
+  file; the default (unshuffled) order passes.
 
 ---
 
@@ -2024,3 +2153,10 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   test classes, 63 tests (5 runs plus 1 reverse-alphabetical run, all green); backend 1623 tests, 1 skipped (1 run;
   baseline 1560), frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under
   "E9c deviations from the approved plan".
+- 2026-10-13 E9d done: Experiment 9 page at /experiments/9-mpi on the E2d kit (fan-out and fan-in map of the shown
+  collective with failed, not-attempted and skipped nodes, node table with RMI state and kept ids, full collective
+  result with n/a for every null, latency per rank with no zero bars, history from the list itself, start on mount and
+  on the edge, POST timeout = recommendedMinClientTimeoutMillis + 3000 ms, crash and recover, every 400/404/409,
+  timeout and network error with its own message); 11 new test files, 131 tests on the real fixtures plus listed
+  synthetic copies; backend not run (no backend change; 1623 tests at E9c), frontend 916 tests (baseline 785), lint and build pass;
+  deviations: the four listed under "E9d deviations from the approved plan".

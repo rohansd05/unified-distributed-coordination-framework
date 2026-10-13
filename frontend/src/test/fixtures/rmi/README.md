@@ -6,6 +6,7 @@ profile, five nodes, RMI registries on ports 1101 to 1105), captured on 2026-10-
 `-H "Content-Type: application/json" --data-binary "@<body>.json"`. Nothing here was edited by
 hand. The capture script ran outside the repository and was deleted afterwards. Steps marked
 "not kept" were run, but their responses were not saved.
+The registries-*.json files predate E9b and list one bound name per node; the live backend now lists two (CollectiveEndpoint and NodeEndpoint).
 
 ## Backend 1 (default settings), in capture order
 
