@@ -40,7 +40,7 @@
 
 ### Steps
 - [x] E9a — broadcast, scatter and gather logic. Needs: E1d.
-- [ ] E9b — `CollectiveEndpoint` over RMI on every node. Needs: E9a, E1b.
+- [x] E9b — `CollectiveEndpoint` over RMI on every node. Needs: E9a, E1b.
 - [ ] E9c — `MpiModule` (lab 9) and its API. Needs: E9b.
 - [ ] E9d — page and end-to-end check. Needs: E9c, E2d.
 
@@ -1270,6 +1270,141 @@ Linux (Docker, --cpus=2), run by Jai: 75 mpi and RemoteFailureDetail tests x 5 r
    `CollectiveExecutorTest` 28 instead of 24, `RemoteFailureDetailTest` 3); 75 after F1.
 6. F1: timeToFailureNanos added after the first final report.
 
+### E9b interfaces for E9c/E9d — RMI transport for collectives (`com.udcf.modules.mpi`, `com.udcf.modules.rmi`)
+
+Backend only: no controller, events or metrics (E9c). No new `NodeService`: RMI keeps the first equal socket factory per
+port (E1b), so the registry and every object on a node's port must share the one factory its `RmiNodeService` owns.
+
+**Seam (rmi, add-only).** `RmiExtraExport`: `String boundName()`, `Class<? extends Remote> remoteType()`,
+`Remote newEndpoint(ClusterNode node)` (called on EVERY start and recovery: a fresh object), `ObjectInputFilter
+filter()`. `RmiNodeService` has a new constructor and a new `on(node, properties, transport, extras)` taking
+`List<? extends RmiExtraExport>`; the old constructor and `on` delegate with no extras, so Experiment 1 alone behaves
+exactly as in E1b. A bound name must be non-blank, unique, and never `NodeEndpoint`. The rmi package never imports mpi.
+- **Start / recover:** loopback host name check, new `NodeEndpoint`, `createRegistry`, export and bind `NodeEndpoint`
+  (unchanged), then for each extra in order: `newEndpoint(node)` (type checked against `remoteType`), export on the
+  SAME port with the SAME factory instance and `extra.filter()`, bind under its name; `running = true` last. Any failure
+  unexports the extras (reverse order), then `NodeEndpoint`, then the registry, then the same bounded listener wait and
+  the same `finally` that closes accepted connections, and throws `IllegalStateException("Node N cannot start RMI on
+  port P: ...")`.
+- **Crash / stop:** `running = false`; unexport the extras (reverse order, force), then `NodeEndpoint`, then the
+  registry (no explicit unbind, as in E1b: the registry's bindings go with it); the 5 s listener wait; in `finally`
+  close accepted connections and drop the references.
+- **Thread safety (A2):** lifecycle methods are synchronized. The fields read outside the lock (`running`, `endpoint`,
+  `exportedExtras`, an unmodifiable map by bound name) are volatile and published in order: an open sets the objects
+  before `running`; a close clears `running` before the objects. `localExport(name)` reads `running` first and then the
+  map, so it never returns an object of a closed service.
+- `RmiNodeService.localExport(String boundName)`: the current exported object itself; `IllegalStateException("node N is
+  not running")` while down; `IllegalArgumentException` for a name no extra export has.
+- **Spring:** `mpi/CollectiveEndpointExport` is a `@Component implements RmiExtraExport` (`MpiProperties`,
+  `RmiTransportProperties`); `newEndpoint(node)` is `CollectiveEndpointLogic.forNode(node, mpiProperties)`, so every
+  start and recovery has a fresh logic with an empty store on the node's own clock. `RmiModule` has an `@Autowired`
+  constructor taking `ObjectProvider<RmiExtraExport>` (ordered; none means no extras), a constructor taking the list,
+  and the unchanged 6-argument constructor (no extras). `ensureStarted` passes the extras to `RmiNodeService.on`. Lazy
+  start is unchanged (E1c).
+
+**Lookup (rmi, add-only).** `RemoteEndpointLookup.lookup(int nodeId, String boundName, Class<T> type)`: a fresh
+`getRegistry` + `lookup(name)` every time (no caching), `IllegalStateException` "... not a <Type>" for the wrong type,
+`NotBoundException` for a missing name. `lookup(nodeId)` delegates to it (same message as before).
+
+**Transport (mpi).** `RmiCollectiveTransport implements CollectiveTransport`: `new RmiCollectiveTransport(
+RemoteEndpointLookup)`, `static of(RmiModule)` (the module's single lookup, one client channel per node). Each transfer:
+the typed lookup of `CollectiveEndpoint` (any exception: `TransferException(LOOKUP, cause)`), then the call (any
+exception, including the method's own, which RMI rethrows: `TransferException(CALL, cause)`). No retry, nothing
+swallowed, no new timeouts or sockets (Experiment 1's connect 1000 ms and call 3000 ms through the shared factory).
+Root-agnostic: the caller is the `CallContext` sender, which the executor sets from the root; one instance serves every
+root.
+
+**Latency basis (A1).** `RmiCollectiveTransport.LATENCY_BASIS` is the text to show next to every `latencyNanos`: the
+whole transfer, i.e. a fresh registry lookup (including RMI's DGC "dirty" call when this process holds no other live
+stub for that endpoint) plus the method call. **This differs from Experiment 1**, where the lookup and the call are
+separate figures (`lookupNanos`, `roundTripNanos`).
+
+**Serial filter.** Per exported CollectiveEndpoint (`CollectiveEndpointExport.filterFor`), built with E1b's helper
+(`RmiSerialFilter.allowing`, add-only; `RmiSerialFilter.from` is unchanged and still rejects every array):
+- allowed classes: `com.udcf.modules.rmi.CallContext`; allowed arrays: `double[]` only; everything else ends in `!*`,
+  and every other array type (`long[]`, `int[]`, `Object[]`, `CallContext[]`, `double[][]`, ...) is rejected;
+- `maxarray` = `max-payload-elements` (100000 local, 10000 public);
+- `maxbytes` = 8 x `max-payload-elements` + `udcf.rmi.serial-filter.max-bytes` (16384): local 816384, public 96384.
+  **`udcf.rmi.serial-filter.max-bytes` therefore has a second meaning:** besides E1b's limit for a NodeEndpoint call,
+  it is the overhead on top of the payload for a CollectiveEndpoint call;
+- `maxdepth` and `maxrefs` from `udcf.rmi.serial-filter` (5 and 20). No new keys, no YAML change.
+The reply direction stays unfiltered (the E1b known issue). The filter never sees a String (known issue below).
+
+**Access for E9c.** (a) `RmiCollectiveTransport.of(rmiModule)`. (b) `CollectiveEndpointExport.current(ClusterNode)`:
+`Optional<CollectiveEndpointLogic>`, the node's CURRENT local object (no stub), empty while its RMI service is not
+running or exports no CollectiveEndpoint; use its `received`, `storedIds` and `storedRanks` to show what each node
+received.
+
+**Notes for E9c and E9d (A3).**
+1. E9c must call `RmiModule.ensureStarted()` (RMI starts lazily) before running a collective, and treat a node whose
+   RMI is not running as a participant that fails at LOOKUP with CONNECTION_REFUSED, shown, never hidden.
+2. E9d: `frontend/src/test/fixtures/rmi/registries-*.json` and their README were captured before E9b and list one name
+   per node; a live backend now lists two (`CollectiveEndpoint` and `NodeEndpoint`). The E1d page
+   (`RegistryList.jsx`) maps over every name and handles this, but E9d must not rely on the old fixtures for the
+   registry's shape, and the README needs a one-line note (not changed here).
+3. The Experiment 1 page now shows two registry entries per node. That is correct.
+4. The HTTP budget of E9a open item 3 is unchanged (deadline plus one worst-case transfer, about 22 s; at least 25 s
+   per request in the module's API file).
+
+**Observed failure matrix** (Windows 11, JDK 21.0.12.1; logged as `E9b failure matrix | ...` and from the Stage B probe;
+class <- cause):
+
+| Case | Stage | Observed (Windows) | Asserted |
+|---|---|---|---|
+| (a) node never started | LOOKUP | CONNECTION_REFUSED: `java.rmi.ConnectException <- java.net.ConnectException` | CONNECTION_REFUSED |
+| (b) crashed, no pooled connection | LOOKUP | CONNECTION_REFUSED: `java.rmi.ConnectException <- java.net.ConnectException` | CONNECTION_REFUSED |
+| (c) crashed after a pooled call | LOOKUP | CONNECTION_LOST: `java.rmi.UnmarshalException <- java.net.SocketException` | {CONNECTION_LOST, CONNECTION_REFUSED} |
+| (d) latch-blocked endpoint, call timeout 300 ms | CALL | TIMED_OUT: `java.rmi.UnmarshalException <- java.net.SocketTimeoutException`; entered once (no retry) | TIMED_OUT |
+| (e) oversize, local limit + 1 (100001 doubles) | CALL | CONNECTION_LOST: `java.rmi.MarshalException <- java.net.SocketException` "An established connection was aborted by the software in your host machine" (3 of 3 probe runs, also 150000) | {ARGUMENTS_REJECTED, CONNECTION_LOST} + barrier proof |
+| (e) oversize, public limit + 1 (10001 doubles) | CALL | ARGUMENTS_REJECTED: `ServerException <- UnmarshalException <- InvalidClassException("filter status: REJECTED")` (3 of 3; also 20000); 50000 gave CONNECTION_LOST | {ARGUMENTS_REJECTED, CONNECTION_LOST} + barrier proof |
+| forged `long[]`, `Object[]`, `int[]` in the `double[]` slot | CALL | ARGUMENTS_REJECTED (filter) | ARGUMENTS_REJECTED + barrier proof |
+| forged `String` in the `double[]` slot | CALL | METHOD_THREW: `java.lang.IllegalArgumentException` "argument type mismatch" (RMI's dispatch; the filter never sees it) | METHOD_THREW + barrier proof |
+| (f) Experiment 1 only (nothing bound under CollectiveEndpoint) | LOOKUP | NOT_BOUND: `java.rmi.NotBoundException` | NOT_BOUND |
+| (g) the method threw (count 0) | CALL | METHOD_THREW: `java.lang.IllegalArgumentException` | METHOD_THREW |
+| end to end, participant crashed after the start | LOOKUP | CONNECTION_REFUSED: `java.rmi.ConnectException <- java.net.ConnectException`; PARTIAL, later rank delivered | {CONNECTION_REFUSED, CONNECTION_LOST} |
+| recovery | | success, a fresh logic with an empty store (after E1b's pool drain) | success |
+
+**Oversize size dependence.** The node's filter refuses a too-long `double[]` at the array's header. If the caller has
+finished writing by then (small payloads: up to 20000 doubles in the probe), it reads the node's refusal:
+ARGUMENTS_REJECTED. If not (large payloads on Windows: from 50000 doubles), the node replies and closes while the caller
+is still writing, and the caller's write fails: CONNECTION_LOST. The cut-over depends on socket buffers and may differ
+on Linux. **Barrier proof** (all refusal rows): after the refused call, one valid call to the same node with sender
+Lamport time 0, waiting for its reply; then the store holds only the valid ids and the node's clock moved by exactly 2,
+what the valid call alone does. A refused call that had run, early or late, would have stored its id and moved the
+clock by 2 more.
+
+**Test ports (E9b): 28500-28599.** RMI bases 28560 (`RmiNodeServiceExtrasTest`), 28570 (`RmiCollectiveTransportTest`),
+28580 (`CollectiveFilterTest`), 28590 (`CollectiveEndToEndTest`), each binding base + 1 to base + 3; the other five
+bases 28505, 28515, 28525, 28535 and 28545 are never bound (only the rmi service starts). Grep of `backend/src/test`
+for 28500-28599 (no test YAML or properties exist): only the replication tests' requests bases 28500 (ReplicationNodeServiceTest),
+28510 (ReplicaSetTest), 28540 (ReplicationModuleTest) and 28550 (ReplicationMetricsTest), never bound by those tests;
+their ranges end at 28559, below every port bound here (28561-28595). All below 32768.
+
+**Tests.** New: `RmiNodeServiceExtrasTest` 7 (rmi; a test-only `Probe` remote interface, so rmi tests never depend on
+mpi), `CollectiveEndpointExportTest` 5, `RmiCollectiveTransportTest` 11, `CollectiveFilterTest` 5,
+`CollectiveEndToEndTest` 6, and the test-only helper `CollectiveRmiFixture` (mpi; a three-node cluster with the
+collective export, plus the barrier). Added: `RmiSerialFilterTest` +4, `RmiModuleTest` +1. Changed: one assertion in
+`RmiControllerTest` (two names in the live context). `RmiTestSupport`: the class, `PROPERTIES`, `TRANSPORT`, `bus`,
+`NODE_GONE`, `RemoteAction`, `drainUntilRefused`, `canBind`, `acceptThreadAlive` and `methodHash` made public
+(visibility only). 39 new tests. No sleeps: latches and Awaitility only.
+
+Linux (Docker, --cpus=2), run by Jai: 354 mpi and rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1560 tests, 0 failures, 1 skipped; clean-clone full suite 1560 tests, 0 failures, 1 skipped.
+
+#### E9b deviations from the approved plan
+
+1. Q4 (approved): test ports 28500-28599 instead of 28300-28399; the grep there was not empty (the replication tests'
+   requests bases, see above), but no bound port collides.
+2. Findings 1 and 2 (approved after Stage B evidence): an oversized payload fails with a kind in
+   {ARGUMENTS_REJECTED, CONNECTION_LOST} (size dependent), not ARGUMENTS_REJECTED alone; a forged String gives
+   METHOD_THREW ("argument type mismatch", refused by RMI's dispatch, not the filter); every refusal is proved by the
+   barrier.
+3. Q-C (approved): the test-only helper `CollectiveRmiFixture`, not in the plan's file list.
+4. `RmiTestSupport.cluster()` stayed package-private: the mpi tests need their own never-bound bases (28505-28545).
+5. `RmiModule` has three constructors (the unchanged 6-argument one, one taking the extras list, and the `@Autowired`
+   one taking `ObjectProvider<RmiExtraExport>`).
+6. 39 new tests rather than about 37 (`RmiCollectiveTransportTest` also covers the method's own exception and the
+   root-agnostic call).
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -1516,6 +1651,18 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - E9a: with the root as the only rank there is nothing to verify, so `passed` is null for a COMPLETE collective.
 - E9a: every request is sized by serializing it once more (outside the timed window), which costs CPU for large
   payloads (100000 doubles, about 800 KB, per remote rank).
+- E9b: a payload longer than `max-payload-elements` is refused by the node's filter, but what the caller sees depends on
+  its size: ARGUMENTS_REJECTED for a small one, CONNECTION_LOST for a large one on Windows (the node closes while the
+  caller is still writing; the cut-over depends on socket buffers and may differ on Linux). It cannot happen through
+  `CollectiveExecutor`, which refuses count > `max-payload-elements` (PAYLOAD_TOO_LARGE) before sending anything; only
+  a call that bypasses the executor reaches the filter with an oversized payload.
+- E9b: the filter never sees a String (the E1b known issue): a String forged into the `double[]` slot is read into the
+  node's memory first and only then refused by RMI's dispatch ("argument type mismatch", METHOD_THREW); the method never
+  runs.
+- E9b: a transfer's `latencyNanos` includes the registry lookup and RMI's DGC dirty call (`LATENCY_BASIS`), unlike
+  Experiment 1's separate lookup and round-trip figures.
+- E9b: the E1c registry fixtures (`frontend/src/test/fixtures/rmi/registries-*.json`) and their README list one name per
+  node; since E9b a live backend lists two. Not changed here (finding for E9d).
 
 ---
 
@@ -1629,3 +1776,12 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   F1 added TransferRecord.timeToFailureNanos for FAILED transfers; 9 new test classes, 75 tests (5 runs plus 1
   reverse-alphabetical run, all green); backend 1521 tests, 1 skipped (1 run; baseline 1446), frontend not run (no
   frontend change); deviations: the six listed under "E9a deviations from the approved plan".
+- 2026-10-13 E9b done: CollectiveEndpoint exported by each node's RmiNodeService beside NodeEndpoint on the same
+  registry, port and factory through the add-only RmiExtraExport seam (CollectiveEndpointExport bean, fresh logic on
+  every start and recovery, rollback and crash cleanup as in E1b), per-object filter (CallContext and double[] up to
+  max-payload-elements), RmiCollectiveTransport (fresh typed lookup per transfer, LOOKUP/CALL stages, LATENCY_BASIS),
+  access for E9c (RmiCollectiveTransport.of, CollectiveEndpointExport.current), observed failure matrix and end-to-end
+  broadcast, scatter and gather at 100000 doubles over real RMI; 5 new test classes and 5 added tests, 39 tests; mpi and
+  rmi packages 354 tests (5 runs plus 1 reverse-alphabetical run, all green); backend 1560 tests,
+  1 skipped (1 run; baseline 1521), frontend not run (no frontend change); deviations: the six listed under "E9b
+  deviations from the approved plan".

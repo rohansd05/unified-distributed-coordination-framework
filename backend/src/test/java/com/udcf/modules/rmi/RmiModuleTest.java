@@ -74,6 +74,21 @@ class RmiModuleTest {
                 Clock.systemUTC());
     }
 
+    @Test
+    @DisplayName("extra exports given to the module are exported by each node's RMI service: the registry lists both names")
+    void extraExportsAreExported() throws Exception {
+        module.close();
+        module = new RmiModule(cluster, bus, RmiTestSupport.PROPERTIES, RmiTestSupport.TRANSPORT, new SimpleMeterRegistry(),
+                Clock.systemUTC(), List.of(new RmiNodeServiceExtrasTest.ProbeExport()));
+        module.ensureStarted();
+
+        RegistrySnapshot snapshot = module.remoteLookup().snapshot(2);
+        assertThat(snapshot.names()).extracting(RegistrySnapshot.BoundName::name)
+                .containsExactly(NodeEndpoint.BOUND_NAME, RmiNodeServiceExtrasTest.Probe.BOUND_NAME);
+        assertThat(module.remoteLookup().lookup(2, RmiNodeServiceExtrasTest.Probe.BOUND_NAME, RmiNodeServiceExtrasTest.Probe.class)
+                .nodeId()).isEqualTo(2);
+    }
+
     private static CallCommand ping(int from, int to) {
         return new CallCommand(from, to, RmiMethod.PING, null, null);
     }

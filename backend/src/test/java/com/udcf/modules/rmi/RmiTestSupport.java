@@ -33,19 +33,19 @@ import static com.udcf.core.cluster.NodeCapacity.SLOW;
  * k. The other five bases (28850-28890) are never bound here, because only the rmi service
  * starts.</p>
  */
-final class RmiTestSupport {
+public final class RmiTestSupport {
 
     /** Equal to application.yml (RmiPropertiesTest). */
-    static final RmiProperties PROPERTIES = new RmiProperties(1_000_000, 1024, 50, 3000, 300);
+    public static final RmiProperties PROPERTIES = new RmiProperties(1_000_000, 1024, 50, 3000, 300);
 
     /** Equal to application.yml (RmiTransportPropertiesTest). */
-    static final RmiTransportProperties TRANSPORT = new RmiTransportProperties(1000, 50,
+    public static final RmiTransportProperties TRANSPORT = new RmiTransportProperties(1000, 50,
             new RmiTransportProperties.SerialFilter(5, 20, 16384, 16));
 
     private RmiTestSupport() {
     }
 
-    static ClusterEventBus bus() {
+    public static ClusterEventBus bus() {
         return new ClusterEventBus(new EventProperties(5000, 5000), Clock.systemUTC());
     }
 
@@ -97,11 +97,11 @@ final class RmiTestSupport {
     }
 
     /** The verdicts a call to a node that is down may get (see {@link #drainUntilRefused}). */
-    static final java.util.Set<RemoteFailureKind> NODE_GONE =
+    public static final java.util.Set<RemoteFailureKind> NODE_GONE =
             java.util.EnumSet.of(RemoteFailureKind.CONNECTION_REFUSED, RemoteFailureKind.CONNECTION_LOST);
 
     /** A remote action expected to fail. */
-    interface RemoteAction {
+    public interface RemoteAction {
         void run() throws Exception;
     }
 
@@ -113,7 +113,7 @@ final class RmiTestSupport {
      * so the pool of that channel is then empty and a later call after a recovery is
      * deterministic. At most 10 attempts.
      */
-    static java.util.List<RemoteFailureKind> drainUntilRefused(RemoteAction action) {
+    public static java.util.List<RemoteFailureKind> drainUntilRefused(RemoteAction action) {
         java.util.List<RemoteFailureKind> seen = new java.util.ArrayList<>();
         for (int attempt = 0; attempt < 10; attempt++) {
             RemoteFailureKind kind;
@@ -135,7 +135,7 @@ final class RmiTestSupport {
     }
 
     /** Whether a plain listener can bind 127.0.0.1:{@code port} right now (no reuse flag set). */
-    static boolean canBind(int port) {
+    public static boolean canBind(int port) {
         try (ServerSocket socket = new ServerSocket()) {
             socket.bind(new InetSocketAddress(LoopbackSocketFactory.LOOPBACK, port));
             return true;
@@ -145,7 +145,7 @@ final class RmiTestSupport {
     }
 
     /** RMI's listener thread for {@code port}, named by the JDK "RMI TCP Accept-<port>". */
-    static boolean acceptThreadAlive(int port) {
+    public static boolean acceptThreadAlive(int port) {
         return liveThreadNames().contains("RMI TCP Accept-" + port);
     }
 
@@ -168,7 +168,7 @@ final class RmiTestSupport {
     }
 
     /** The RMI method hash (Java RMI specification 8.3): SHA-1 of writeUTF(name + descriptor), first 8 bytes little-endian. */
-    static long methodHash(Method method) throws IOException, NoSuchAlgorithmException {
+    public static long methodHash(Method method) throws IOException, NoSuchAlgorithmException {
         StringBuilder descriptor = new StringBuilder(method.getName()).append('(');
         for (Class<?> parameter : method.getParameterTypes()) {
             descriptor.append(parameter.descriptorString());

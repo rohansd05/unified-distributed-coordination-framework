@@ -47,12 +47,26 @@ public final class RemoteEndpointLookup implements EndpointLookup {
 
     @Override
     public NodeEndpoint lookup(int nodeId) throws RemoteException, NotBoundException {
-        Remote found = registry(nodeId).lookup(NodeEndpoint.BOUND_NAME);
-        if (!(found instanceof NodeEndpoint stub)) {
-            throw new IllegalStateException("node " + nodeId + " bound " + NodeEndpoint.BOUND_NAME + " to "
-                    + (found == null ? "null" : found.getClass().getName()) + ", not a NodeEndpoint");
+        return lookup(nodeId, NodeEndpoint.BOUND_NAME, NodeEndpoint.class);
+    }
+
+    /**
+     * The stub bound under {@code boundName} in node {@code nodeId}'s registry, looked up afresh (no
+     * caching), as a {@code type} (added in E9b for Experiment 9's {@code CollectiveEndpoint}).
+     *
+     * @throws RemoteException       if the node cannot be reached
+     * @throws NotBoundException     if nothing is bound under that name
+     * @throws IllegalStateException if the bound object is not a {@code type}
+     */
+    public <T extends Remote> T lookup(int nodeId, String boundName, Class<T> type) throws RemoteException, NotBoundException {
+        Objects.requireNonNull(boundName, "boundName must not be null");
+        Objects.requireNonNull(type, "type must not be null");
+        Remote found = registry(nodeId).lookup(boundName);
+        if (!type.isInstance(found)) {
+            throw new IllegalStateException("node " + nodeId + " bound " + boundName + " to "
+                    + (found == null ? "null" : found.getClass().getName()) + ", not a " + type.getSimpleName());
         }
-        return stub;
+        return type.cast(found);
     }
 
     @Override

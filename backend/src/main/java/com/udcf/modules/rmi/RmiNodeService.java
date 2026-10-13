@@ -11,8 +11,15 @@ import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -35,8 +42,16 @@ import java.util.function.Supplier;
  * connection fails instead of being answered), and they return only once the port is free. The
  * node's Lamport clock is never touched here.</p>
  *
+ * <p><b>Extra exports (step E9b).</b> Objects from {@link RmiExtraExport}s (Experiment 9's
+ * {@code CollectiveEndpoint}) are exported on the same port with the same factory instance and their
+ * own filter, and bound in the same registry after the {@link NodeEndpoint}: a fresh object on every
+ * start and recovery. A failure rolls them back with everything else; crash and stop unexport them
+ * first. Without extras the service behaves exactly as in E1b.</p>
+ *
  * <p><b>Threads.</b> This class creates none; RMI owns its accept, connection and reaper
- * threads. Lifecycle methods are synchronized.</p>
+ * threads. Lifecycle methods are synchronized. The fields read by {@link #localEndpoint()} and
+ * {@link #localExport(String)} outside the lock are volatile and published in order: an open sets
+ * the objects before {@code running}, a close clears {@code running} before the objects.</p>
  */
 public class RmiNodeService implements NodeService {
 
@@ -48,9 +63,11 @@ public class RmiNodeService implements NodeService {
     private final Supplier<? extends NodeEndpoint> endpoints;
     private final LoopbackSocketFactory factory;
     private final RmiSerialFilter filter;
+    private final List<RmiExtraExport> extras;
 
     private volatile boolean running;
     private volatile NodeEndpoint endpoint;   // the exported object; null while not running
+    private volatile Map<String, Remote> exportedExtras = Map.of();   // by bound name, export order; empty while not running
     private Registry registry;                // guarded by this
 
     /**
@@ -59,10 +76,28 @@ public class RmiNodeService implements NodeService {
      */
     public RmiNodeService(ClusterNode node, RmiProperties properties, RmiTransportProperties transport,
                           Supplier<? extends NodeEndpoint> endpoints) {
+        this(node, properties, transport, endpoints, List.of());
+    }
+
+    /**
+     * @param endpoints called on every start and recovery for the {@link NodeEndpoint} to export
+     * @param extras    further objects to export and bind on the same port (each bound name once, never
+     *                  {@link NodeEndpoint#BOUND_NAME})
+     */
+    public RmiNodeService(ClusterNode node, RmiProperties properties, RmiTransportProperties transport,
+                          Supplier<? extends NodeEndpoint> endpoints, List<? extends RmiExtraExport> extras) {
         this.node = Objects.requireNonNull(node, "node must not be null");
         this.endpoints = Objects.requireNonNull(endpoints, "endpoints must not be null");
         this.factory = LoopbackSocketFactory.from(properties, transport);
         this.filter = RmiSerialFilter.from(transport.serialFilter());
+        this.extras = List.copyOf(Objects.requireNonNull(extras, "extras must not be null"));
+        Set<String> names = new HashSet<>(Set.of(NodeEndpoint.BOUND_NAME));
+        for (RmiExtraExport extra : this.extras) {
+            String name = extra.boundName();
+            if (name == null || name.isBlank() || !names.add(name)) {
+                throw new IllegalArgumentException("every extra export needs its own bound name, not " + name);
+            }
+        }
     }
 
     /**
@@ -75,6 +110,17 @@ public class RmiNodeService implements NodeService {
         Objects.requireNonNull(properties, "properties must not be null");
         return node.ensureService(NAME, n -> new RmiNodeService(n, properties, transport,
                 () -> NodeEndpointLogic.forNode(n, properties, System::nanoTime)));
+    }
+
+    /**
+     * As {@link #on(ClusterNode, RmiProperties, RmiTransportProperties)}, with {@code extras} exported
+     * beside the {@link NodeEndpoint}. The extras are fixed when the service is first created.
+     */
+    public static RmiNodeService on(ClusterNode node, RmiProperties properties, RmiTransportProperties transport,
+                                    List<? extends RmiExtraExport> extras) {
+        Objects.requireNonNull(properties, "properties must not be null");
+        return node.ensureService(NAME, n -> new RmiNodeService(n, properties, transport,
+                () -> NodeEndpointLogic.forNode(n, properties, System::nanoTime), extras));
     }
 
     /** The node's RMI service if it has ever been started; never starts one. */
@@ -133,6 +179,25 @@ public class RmiNodeService implements NodeService {
         return current;
     }
 
+    /**
+     * The object exported under {@code boundName} by an extra export, itself (a direct call, no stub);
+     * a new one after every start and recovery.
+     *
+     * @throws IllegalArgumentException if no extra export has that name
+     * @throws IllegalStateException    "node N is not running" while the service is not running
+     */
+    public Remote localExport(String boundName) {
+        Objects.requireNonNull(boundName, "boundName must not be null");
+        if (extras.stream().noneMatch(extra -> extra.boundName().equals(boundName))) {
+            throw new IllegalArgumentException("node " + node.id() + " exports nothing under " + boundName);
+        }
+        Remote current = running ? exportedExtras.get(boundName) : null;
+        if (current == null) {
+            throw new IllegalStateException("node " + node.id() + " is not running");
+        }
+        return current;
+    }
+
     LoopbackSocketFactory socketFactory() {
         return factory;
     }
@@ -156,14 +221,22 @@ public class RmiNodeService implements NodeService {
         NodeEndpoint fresh = Objects.requireNonNull(endpoints.get(), "the endpoint supplier returned null");
         Registry created = null;
         boolean exported = false;
+        Map<String, Remote> extrasExported = new LinkedHashMap<>();   // export order, for the rollback
         try {
             created = LocateRegistry.createRegistry(port(), factory, factory);
             Remote stub = UnicastRemoteObject.exportObject(fresh, port(), factory, factory, filter);
             exported = true;
             created.bind(NodeEndpoint.BOUND_NAME, stub);
+            for (RmiExtraExport extra : extras) {
+                Remote object = newExtra(extra);
+                Remote extraStub = UnicastRemoteObject.exportObject(object, port(), factory, factory, extra.filter());
+                extrasExported.put(extra.boundName(), object);
+                created.bind(extra.boundName(), extraStub);
+            }
         } catch (RemoteException | AlreadyBoundException | RuntimeException e) {
             IllegalStateException failure = new IllegalStateException("Node " + node.id()
                     + " cannot start RMI on port " + port() + ": " + e.getMessage(), e);
+            unexportInReverse(extrasExported);
             if (exported) {
                 unexport(fresh);
             }
@@ -181,14 +254,33 @@ public class RmiNodeService implements NodeService {
         }
         registry = created;
         endpoint = fresh;
-        running = true;
+        exportedExtras = Collections.unmodifiableMap(extrasExported);
+        running = true;   // last: the objects above are published first
+    }
+
+    private Remote newExtra(RmiExtraExport extra) {
+        Remote object = Objects.requireNonNull(extra.newEndpoint(node), "extra export " + extra.boundName() + " returned null");
+        if (!extra.remoteType().isInstance(object)) {
+            throw new IllegalStateException("extra export " + extra.boundName() + " returned a "
+                    + object.getClass().getName() + ", not a " + extra.remoteType().getName());
+        }
+        return object;
+    }
+
+    private static void unexportInReverse(Map<String, Remote> objects) {
+        List<Remote> inOrder = new ArrayList<>(objects.values());
+        for (int i = inOrder.size() - 1; i >= 0; i--) {
+            unexport(inOrder.get(i));
+        }
     }
 
     private void close() {
         running = false;
         NodeEndpoint exportedEndpoint = endpoint;
         Registry exportedRegistry = registry;
+        Map<String, Remote> extrasToClose = exportedExtras;
         try {
+            unexportInReverse(extrasToClose);   // exported last, so unexported first
             if (exportedEndpoint != null) {
                 unexport(exportedEndpoint);
             }
@@ -201,6 +293,7 @@ public class RmiNodeService implements NodeService {
             factory.closeAcceptedConnections();
             endpoint = null;
             registry = null;
+            exportedExtras = Map.of();
             running = false;
         }
     }

@@ -25,6 +25,8 @@ import com.udcf.web.NodeStateConflictException;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.rmi.NotBoundException;
@@ -125,9 +127,27 @@ public class RmiModule implements ExperimentModule, AutoCloseable {
     private final List<MethodDto> methods;
     private final ModuleActionGuard guard = new ModuleActionGuard(ID);
     private final Map<Integer, String> startFailures = new ConcurrentHashMap<>();
+    private final List<RmiExtraExport> extras;
 
     public RmiModule(Cluster cluster, ClusterEventBus bus, RmiProperties properties, RmiTransportProperties transport,
                      MeterRegistry meterRegistry, Clock clock) {
+        this(cluster, bus, properties, transport, meterRegistry, clock, List.of());
+    }
+
+    /**
+     * The Spring constructor (step E9b): every {@link RmiExtraExport} bean (Experiment 9's
+     * {@code CollectiveEndpoint}) is exported by each node's RMI service beside its {@link NodeEndpoint}.
+     */
+    @Autowired
+    public RmiModule(Cluster cluster, ClusterEventBus bus, RmiProperties properties, RmiTransportProperties transport,
+                     MeterRegistry meterRegistry, Clock clock, ObjectProvider<RmiExtraExport> extras) {
+        this(cluster, bus, properties, transport, meterRegistry, clock, extras.orderedStream().toList());
+    }
+
+    /** As the Spring constructor, with the extra exports given directly. */
+    public RmiModule(Cluster cluster, ClusterEventBus bus, RmiProperties properties, RmiTransportProperties transport,
+                     MeterRegistry meterRegistry, Clock clock, List<? extends RmiExtraExport> extras) {
+        this.extras = List.copyOf(Objects.requireNonNull(extras, "extras must not be null"));
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
@@ -235,7 +255,7 @@ public class RmiModule implements ExperimentModule, AutoCloseable {
             }
             boolean wasRunning = running(node);
             try {
-                RmiNodeService service = RmiNodeService.on(node, properties, transport);
+                RmiNodeService service = RmiNodeService.on(node, properties, transport, extras);
                 startFailures.remove(node.id());
                 if (!wasRunning && service.isRunning()) {
                     publishExported(node, service);

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The filter alone, with fake {@link ObjectInputFilter.FilterInfo} values. The end-to-end checks
@@ -95,5 +96,52 @@ class RmiSerialFilterTest {
 
         assertThat(ObjectInputFilter.Config.getSerialFilter()).isSameAs(before);
         assertThat(System.getProperty("jdk.serialFilter")).isNull();
+    }
+
+    // ------------------------------------------------------------------ allowing (E9b)
+
+    /** As Experiment 9 builds it: CallContext and double[] up to 100 elements, bytes 8 x 100 + the E1b max-bytes. */
+    private static final RmiSerialFilter WITH_DOUBLES = RmiSerialFilter.allowing(RmiTestSupport.TRANSPORT.serialFilter(),
+            8L * 100 + 16384, 100, java.util.List.of(CallContext.class.getName()), java.util.Set.of(double[].class));
+
+    private static Status checkWithDoubles(Class<?> type, long arrayLength) {
+        return WITH_DOUBLES.checkInput(new Info(type, arrayLength, 1, 1, 10));
+    }
+
+    @Test
+    @DisplayName("allowing: a listed array type is allowed up to maxarray and rejected beyond; listed classes still pass")
+    void allowingListedArray() {
+        assertThat(checkWithDoubles(double[].class, 100)).isEqualTo(Status.ALLOWED);
+        assertThat(checkWithDoubles(double[].class, 0)).isEqualTo(Status.ALLOWED);
+        assertThat(checkWithDoubles(double[].class, 101)).isEqualTo(Status.REJECTED);
+        assertThat(checkWithDoubles(CallContext.class, -1)).isEqualTo(Status.ALLOWED);
+    }
+
+    @Test
+    @DisplayName("allowing: every other array type and every other class is rejected")
+    void allowingRejectsTheRest() {
+        for (Class<?> type : new Class<?>[] {long[].class, int[].class, byte[].class, Object[].class, CallContext[].class,
+                double[][].class, Double[].class}) {
+            assertThat(checkWithDoubles(type, 1)).as(type.getName()).isEqualTo(Status.REJECTED);
+        }
+        assertThat(checkWithDoubles(String.class, -1)).isEqualTo(Status.REJECTED);
+        assertThat(checkWithDoubles(java.util.HashMap.class, -1)).isEqualTo(Status.REJECTED);
+    }
+
+    @Test
+    @DisplayName("allowing: the pattern carries its own byte and array limits and the E1b depth and reference limits")
+    void allowingPattern() {
+        assertThat(WITH_DOUBLES.pattern())
+                .isEqualTo("maxdepth=5;maxrefs=20;maxbytes=17184;maxarray=100;com.udcf.modules.rmi.CallContext;!*");
+    }
+
+    @Test
+    @DisplayName("from() still rejects every array (E1b unchanged); allowing() checks its arguments")
+    void fromUnchangedAndAllowingValidates() {
+        assertThat(FILTER.checkInput(new Info(double[].class, 1, 1, 1, 10))).isEqualTo(Status.REJECTED);
+        assertThatThrownBy(() -> RmiSerialFilter.allowing(RmiTestSupport.TRANSPORT.serialFilter(), 10, 10,
+                java.util.List.of(), java.util.Set.of(String.class))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> RmiSerialFilter.allowing(RmiTestSupport.TRANSPORT.serialFilter(), 10, 0,
+                java.util.List.of(), java.util.Set.of())).isInstanceOf(IllegalArgumentException.class);
     }
 }
