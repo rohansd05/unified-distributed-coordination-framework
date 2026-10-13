@@ -2093,6 +2093,8 @@ logics, no sockets, scripted failures and hooks) and `MatrixRmiFixture` (a real 
 non-null). Windows: new tests x 5 runs plus 1 reverse-order run, 76 each, 0 failures; packages mpi, rmi, matrix and
 multithreading 728 tests, 0 failures; full suite 3 runs, 1780 tests, 0 failures, 1 skipped each (1704 before).
 
+Linux (Docker), run by Jai: mpi, rmi, matrix and multithreading packages 728 tests x 5 runs plus 1 reverse-order run at 2 CPUs, 0 failures; matrix package 150 tests x 10 runs at 1 CPU, 0 failures; full suite 1780 tests, 0 failures, 1 skipped; clean-clone full suite 1780 tests, 0 failures, 1 skipped.
+
 #### E10b deviations from the approved plan
 
 1. `NodeExecutorTest` (5 tests) is a class of its own, for condition 4's cancellation proofs; the plan had them under the
