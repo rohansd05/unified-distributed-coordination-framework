@@ -1580,6 +1580,8 @@ The new classes ran 5 times plus once in reverse alphabetical order (sequentiall
 Full suite 1623 tests, 0 failures, 1 skipped (baseline 1560). Scans of mpi main and test: no `setReuseAddress`,
 `ServerSocket` or `Thread.sleep`; no non-ASCII character (sources and fixtures); no `\u000a` or `\u000d`.
 
+Linux (Docker, --cpus=2), run by Jai: 417 mpi and rmi tests x 5 runs plus 1 reverse-order run, 0 failures; full suite 1623 tests, 0 failures, 1 skipped; clean-clone full suite 1623 tests, 0 failures, 1 skipped.
+
 #### E9c deviations from the approved plan
 
 1. Test ports: the plan's 28660/28670/28680 RMI bases became 28660/28675/28690, and the two Spring classes also set
