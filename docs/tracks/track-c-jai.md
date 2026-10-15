@@ -2260,7 +2260,7 @@ No port is bound by two classes. The base numbers 28708, 28718, 28728 and 28738 
 but these classes never bind their bases. The Spring classes stop RMI and the request listeners in `@AfterAll`, wait
 until their TCP ports can be bound, and close their context.
 
-**Fixtures** (`frontend/src/test/fixtures/matrix/`, 33 files plus README; one Python stdlib script with curl, the
+**Fixtures** (`frontend/src/test/fixtures/matrix/`, 34 files plus README; one Python stdlib script with curl, the
 blocker socket and the in-process busy request, as E9c): overview-before-start, overview-after-start,
 overview-node-crashed, start, start-with-failure, run-complete-50/-100/-200/-316, run-partial (node 5's RMI port
 held), run-failed (live nodes 1 and 5, node 5 unreachable: a real FAILED), run-node-crashed-skipped,
@@ -2285,7 +2285,8 @@ from E10b's runner over `InMemoryMatrixNodes`), `MatrixJsonChecks` (safe numbers
 speedup threshold (only non-null and `done`). Windows: new tests 5 runs plus 1 reverse-alphabetical run, 67 each, 0
 failures; packages mpi, rmi, matrix, multithreading and web 846 tests, 0 failures; full suite 3 runs, 1893 tests, 0
 failures, 1 skipped each (1826 before). Scans of every new and changed file (42): no non-ASCII character, no
-`\u000a`/`\u000d`, no `setReuseAddress`, no `Thread.sleep`.
+`\u000a`/`\u000d`, no `setReuseAddress`, no `Thread.sleep`. Linux (Docker, --cpus=2), run by Jai on a clean clone of
+7d17c7d: the new tests x 3, 67 each, 0 failures; the full suite x 1, 1893 tests, 0 failures, 1 skipped.
 
 **For E10d.**
 1. `POST /runs` waits `limits.recommendedMinClientTimeoutMillis` + 3000 ms (29001 locally); one size per request; loop
@@ -2813,4 +2814,5 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   public, MatrixRefusal.ROOT_UNAVAILABLE; 13 new test classes, 76 tests; backend 1780 tests, 1 skipped (3 runs; baseline
   1704), frontend not run (only a fixtures README line changed); deviations: the seven listed under "E10b deviations from
   the approved plan".
-- 2026-10-16 E10c done: MatrixModule (lab 10) and MatrixController under /api/modules/matrix (overview, idempotent start with RMI, pool and an untimed request-listener prepare step, one synchronous run per request with COMPLETE/PARTIAL/FAILED/REFUSED as 200 data, bounded history with run ids from 1, series over the configured sizes from the newest complete run per size), root rule REQUESTED > LEADER > LOWEST_LIVE_ID through the now-public MpiRoleSelector, 409 Node state conflict (node 0) when no node is live, 12 DTO records (no derived seed on the wire, null never 0, speedup only for a matched COMPLETE run), MatrixTexts with the glossary, 4 event types, MatrixMetrics (3 MetricNames constants added, existing MATRIX_EXECUTION_DURATION used), udcf.matrix.history-size, TestModuleConfig now spies the real lab 10, 33 contract fixtures and a README captured from the real backend; backend 1893 tests, frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under "E10c deviations from the approved plan".
+- 2026-10-16 E10c done: MatrixModule (lab 10) and MatrixController under /api/modules/matrix (overview, idempotent start with RMI, pool and an untimed request-listener prepare step, one synchronous run per request with COMPLETE/PARTIAL/FAILED/REFUSED as 200 data, bounded history with run ids from 1, series over the configured sizes from the newest complete run per size), root rule REQUESTED > LEADER > LOWEST_LIVE_ID through the now-public MpiRoleSelector, 409 Node state conflict (node 0) when no node is live, 12 DTO records (no derived seed on the wire, null never 0, speedup only for a matched COMPLETE run), MatrixTexts with the glossary, 4 event types, MatrixMetrics (3 MetricNames constants added, existing MATRIX_EXECUTION_DURATION used), udcf.matrix.history-size, TestModuleConfig now spies the real lab 10, 34 contract fixtures and a README captured from the real backend; backend 1893 tests, frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under "E10c deviations from the approved plan".
+- 2026-10-16 E10c Linux check: clean clone of 7d17c7d on Linux (Docker, maven:3.9-eclipse-temurin-21, --cpus=2), run by Jai: the 10 new test classes x 3 runs, 67 tests, 0 failures each; the full backend suite x 1, 1893 tests, 0 failures, 1 skipped, BUILD SUCCESS. GitHub CI is still the Linux gate.
