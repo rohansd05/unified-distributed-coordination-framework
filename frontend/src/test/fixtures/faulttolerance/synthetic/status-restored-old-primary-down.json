@@ -1,0 +1,92 @@
+{
+  "status": "RUNNING",
+  "actionInProgress": null,
+  "started": true,
+  "phase": "RESTORED",
+  "currentPrimaryId": 2,
+  "primaryEpoch": 3,
+  "highestEpoch": 3,
+  "nodes": [
+    {
+      "nodeId": 1,
+      "nodeStatus": "CRASHED",
+      "role": null,
+      "serving": false,
+      "epoch": null,
+      "believedPrimaryId": null,
+      "rejoin": null
+    },
+    {
+      "nodeId": 2,
+      "nodeStatus": "UP",
+      "role": "PRIMARY",
+      "serving": true,
+      "epoch": 3,
+      "believedPrimaryId": 2,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 3,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 3,
+      "believedPrimaryId": 2,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 4,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 3,
+      "believedPrimaryId": 2,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 5,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 3,
+      "believedPrimaryId": 2,
+      "rejoin": "READY"
+    }
+  ],
+  "stream": {
+    "state": "RUNNING",
+    "mode": "SYNCHRONOUS",
+    "ratePerSecond": 4,
+    "sent": 13,
+    "acknowledged": 13,
+    "gaveUp": 0,
+    "inFlightSequence": null,
+    "maxUpdates": 400,
+    "remainingUpdates": 387,
+    "startedAt": "2026-10-15T18:18:13.155940500Z",
+    "stoppedAt": null,
+    "stopReason": null
+  },
+  "splitBrain": {
+    "passed": true,
+    "highestEpoch": 3,
+    "livePrimaries": [
+      2
+    ],
+    "violations": [],
+    "violationsSeen": 0
+  },
+  "dataLossNow": {
+    "acknowledged": 13,
+    "lost": 0,
+    "lostKeys": [],
+    "lostSynchronous": 0,
+    "lostAsynchronous": 0,
+    "simulated": false,
+    "simulatedDelayMillis": null,
+    "simulatedReason": null,
+    "notAssessed": null
+  },
+  "acknowledgedUpdates": 13,
+  "rejectedEventCount": 0
+}

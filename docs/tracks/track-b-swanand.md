@@ -31,7 +31,7 @@
 - [X] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
 - [X] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
 - [x] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
-- [ ] E8d — page and end-to-end check. Needs: E8c, E2d.
+- [x] E8d — page and end-to-end check. Needs: E8c, E2d.
 
 ---
 
@@ -406,6 +406,76 @@ Ranges taken before E8c: 26100-26199, 26200-26255, 26300-26355, 26360-26395, 264
 
 ---
 
+## E8d: the Experiment 8 page (frontend only)
+
+Route `/experiments/8-faulttolerance` (the catalog slug; no router or sidebar change: the sidebar status comes from `GET /api/modules`, which lists `faulttolerance` since E8c). Built on the E2d kit (`ExperimentLayout`, `MetricCard`, `SimulatedBadge`, `ModuleEventLog`), the shared axios client, `useStomp`, `useCluster`, `useToast`, Exp 1's `describeProblem` and Exp 2's `usePoliteAnnouncement`. No backend file, `package.json` or lock file changed; no new dependency.
+
+**Files created** (`frontend/src/modules/faulttolerance/`): `index.jsx`, `FaultTolerancePage.jsx`, `FaultToleranceControls.jsx` (with the module-specific `ProblemAlert`), `ReplicaRail.jsx`, `FailoverTimeline.jsx` (hand-written SVG), `MeasurementsPanel.jsx` (with `GlossaryTerm`, `NotMeasured`), `DataLossPanel.jsx`, `SplitBrainPanel.jsx`, `useFaultTolerance.js`, `faultToleranceApi.js`, `faultToleranceModel.js`; tests `faultToleranceApi.test.js` (17), `faultToleranceModel.test.js` (45), `useFaultTolerance.test.js` (17), `ReplicaRail.test.jsx` (8), `FailoverTimeline.test.jsx` (9), `MeasurementsPanel.test.jsx` (8), `DataLossPanel.test.jsx` (6), `SplitBrainPanel.test.jsx` (4), `FaultToleranceControls.test.jsx` (13), `FaultTolerancePage.test.jsx` (12), `contract.test.js` (53). Synthetic fixtures in `frontend/src/test/fixtures/faulttolerance/synthetic/` (below).
+
+**Files changed (add-only):** `frontend/src/lib/experiments.js` (the lab 8 entry gets `concept`; its one-line object becomes the multi-line form the other entries use: 1 line removed, 7 added); `frontend/src/routes.test.jsx` (one import of the api, one fixture import, three spies so the route test never reaches the network: 5 lines added, 0 removed).
+
+**UI states** (`faultToleranceModel.uiState`, most specific first) and the enabled controls (`controlsModel`; every control is also disabled while a request from the page is pending, and after a crash or recover timeout until the backend is idle, C2):
+
+| State | Detected by | Start | Mode | Rate, Start stream | Stop stream | Crash primary | Recover old primary |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| not-started | `!started` | on | on | on (also starts Exp 8) | off | off: "Start the update stream first ..." | off: "No primary has failed since the last reset." |
+| failover | run IN_PROGRESS, or phase SUSPECTED/PROMOTING, stream running | off | on | off (running) | on | off: "A failover is in progress ..." (Q3) | on while the old primary is down (C8) |
+| failover-waiting (C3) | as failover, stream stopped | off | on | on, unless the budget is 0 | off | off | on while the old primary is down |
+| appointing | started, `currentPrimaryId` null | off | on | per stream | per stream | off: "No primary serves yet ..." | per run |
+| recovering | run RESTORED, OLD_PRIMARY_RECOVERED without RESYNCHRONISED | off | on | per stream | per stream | per stream | off: "Node k is rejoining." |
+| restored | run RESTORED, old primary down | off | on | per stream | per stream | per stream | on |
+| streaming | stream RUNNING | off | on | off | on | on | per run |
+| demoted | run has DEMOTED, stream stopped | off | on | on | off | off: start the stream first | off: "Node k, the old primary, is already up." |
+| no-stream | otherwise | off | on | on | off | off: start the stream first | per run |
+
+Budget (Q1): at `remainingUpdates` 0, "Start stream" is disabled with "Budget used: N of N updates this session. A cluster reset gives a fresh budget." (N = `maxUpdates`) and a link to `/cluster`. A 409 `UPDATE_LIMIT_REACHED` (a race) still shows the backend text and the link.
+
+**Data flow.** Mount and STOMP reconnect: `GET /api/modules/faulttolerance` (its overview carries `current`, `latestRun`, settings, glossary, notes, so a reload mid-failover restores everything, C5). Refresh: `GET /status` and `GET /runs/latest` (404 = no run, the empty state), coalesced, on every `/topic/modules/faulttolerance` and `/topic/cluster` message and after each action. Polling (`useFaultTolerance`):
+
+| Constant | Value | When |
+| --- | --- | --- |
+| `STATUS_POLL_INTERVAL_MS` | 500 | `GET /status` while the stream runs, a failover is in progress, the old primary is rejoining, or after a timeout until idle (C2); `GET /runs/latest` joins it while a failover or a recovery is open, while no primary serves and after a timeout |
+| `FALLBACK_POLL_INTERVAL_MS` | 2000 | status and latest run while the STOMP connection is not `connected` (no events arrive); the existing "backend is not reachable" banner shows for `reconnecting`/`error` |
+
+Nothing is polled otherwise. Timeouts: the shared 10000 ms for every call (Q2). A timeout of crash-primary or recover says "The request timed out after 10 s. The crash (recovery) may still have happened; reading the status again." and keeps every action disabled until a status read started after the timeout shows `actionInProgress` null, then reads status and run again (C2).
+
+**Honesty.** A null is "Not measured", "Not assessed" or "Unknown" with its reason, never 0; a measured 0 is "0 lost". Simulated badges only for `settings.asyncDelaySimulated` (on the asynchronous mode), `dataLoss.simulated` (data loss panel and card) and `settings.coHostingSimulated` (the rail), each with its served reason. Labels, kinds and definitions are the served glossary; the explanation is the eight served notes. The expected detection window is computed only from `heartbeatTimeoutMillis` minus and plus `heartbeatIntervalMillis` (C4), shown as a dashed band labelled derived and in a separate "Derived" box; hidden or "Not available" if a setting is missing. `recoveryMillis` is read from the run only.
+
+**Synthetic fixtures** (`synthetic/README.md`; copies of real captures, each test that uses one says "synthetic"): `status-split-brain-failed.json` (from `status-stream-running.json`), `run-in-progress.json`, `run-interrupted.json`, `run-primary-returned.json` (from `run-sync-restored.json`), `run-recovering.json` (from `run-sync-recovered.json`), `status-stream-error.json` (from `status-stream-running.json`), `status-rejoin-stalled.json` and `status-restored-old-primary-down.json` (from `status-after-demotion.json`), `status-failover-stream-stopped.json` (from `status-during-failover.json`), `events-synthetic.json` (ROLE_QUERY_FAILED and NO_CANDIDATE, from the first event of `events.json`). The 39 real fixtures are unchanged.
+
+**End-to-end checklist** (run by the person; result column left empty):
+
+| # | Action | Expected | Result |
+| --- | --- | --- | --- |
+| 1 | `cd backend; .\mvnw.cmd spring-boot:run` and `cd frontend; npm run dev`; open `http://localhost:5173/experiments/8-faulttolerance` with the browser console open | Lab badge 8, title, concept; "Experiment 8 has not started ..."; every node's epoch "Unknown"; timeline "No failover yet"; sidebar Exp 8 not "Planned"; console clean | PASS |
+| 2 | Click "Start experiment 8" | Toast; node 1 Primary at epoch 2, nodes 2 to 5 Backup at epoch 2; the start button disabled | PASS |
+| 3 | Look at "Crash primary" | Disabled, hint "Start the update stream first: ..." | PASS |
+| 4 | Synchronous, rate 4, "Start stream" | Stream running; sent and acknowledged rise; budget falls from 400; shield "No two primaries: check passed"; "Crash primary" enabled | PASS |
+| 5 | "Crash primary" | Node 1 Down, epoch "Unknown"; "Failover in progress"; timeline fills CRASHED, DETECTED (inside the derived band), ELECTED, PROMOTED, SERVICE_RESTORED; node 2 Primary at epoch 3; "Crash primary" disabled during the failover | PASS |
+| 6 | Read Measurements and Data loss | Detection about 1.8 to 3.2 s and "inside the expected window"; failover, time to first update, outage in ms; recovery "Not measured"; data loss "0 of N", "0 lost", no Simulated badge on the loss | PASS |
+| 7 | "Recover old primary" | Node 1 "Demoted itself: primary at epoch 2, now backup at epoch 3"; recovery rows filled; recovery time measured; shield passed; recover disabled ("already up") | PASS |
+| 8 | "Stop stream"; Cluster page, reset the cluster; back to the page | Not started; no run; "400 of 400 updates left" | PASS |
+| 9 | Asynchronous (Simulated badge, reason on hover or focus), rate 10, "Start stream"; after a few acknowledged updates "Crash primary" | After the restore: at least 1 lost (if 0, repeat once from step 8 and note it), lost keys listed, all asynchronous, Simulated badge with its reason, delay 450 ms | PASS (4 lost, all asynchronous, Simulated badge, 450 ms) |
+| 10 | "Stop stream" | "Crash primary" disabled again with its hint | PASS |
+| 11 | C3: "Start stream", "Crash primary", then at once (within 2 s) "Stop stream" | "The new primary only starts serving when the next update arrives. Start the update stream to finish the failover."; crash disabled, "Start stream" enabled; "Start stream" again: SERVICE_RESTORED appears and the measurements fill | PASS |
+| 12 | C5: "Crash primary" with the stream running and reload the page (F5) within 2 s | The page comes back with the open run on the timeline (recorded rows filled, the rest hollow) and keeps filling by itself; controls as in the failover state | PASS |
+| 13 | 409: open the page in two tabs with the stream running; click "Crash primary" in both at the same moment | One tab gets the toast; the other shows a calm warning (busy, or "No primary to crash right now. A failover is in progress ..."); no broken page | PASS |
+| 14 | Q1: reset the cluster; "Start stream" at rate 10 and let it run out (400 updates) | "Stopped: the session budget is used."; "0 of 400 updates left"; "Start stream" disabled with "Budget used: 400 of 400 updates this session. A cluster reset gives a fresh budget." and the Cluster page link (the 409 text itself is covered by the tests) | PASS |
+| 15 | Throughout; then devtools at 375 px; keyboard only; OS reduced motion | Shield never "Two primaries seen"; console clean; usable at 375 px (the timeline scrolls inside its own box only); every control reachable with visible focus; no animation with reduced motion | PASS |
+| 16 | Stop both servers; `Get-NetTCPConnection -LocalPort 8080,5173 -State Listen` | Nothing listening | PASS (ports free) |
+
+Run by Swanand on 2026-10-16 against the real backend; browser console clean.
+
+Playwright: not installed (not in `package.json`, no specs or config); adding it is a new dependency (R15), so the end-to-end check is this manual list.
+
+**For Phase 9A**
+
+1. When L1 and L2 are wired, served note 6 (lowest-numbered ready node) and note 8 (Exp 5 interference) change or disappear: update `NOTE` in `faultToleranceModel.js`; `contract.test.js` pins eight notes and note 8's wording, so it fails on purpose when the served notes change.
+2. The rail must then show the elected leader as the primary. It reads `role` from the status nodes, so no page change is needed if the backend reports it; the `exp5-note` line goes away with note 8.
+3. Polling needs no change: it follows the stream, the run and the phase, not the selector.
+
+---
+
 ## Deliberate differences from the legacy code
 
 - **Legacy deviation (Lower-ID Coordinator Acceptance):** When a Bully node receives a `COORDINATOR` announcement, it unconditionally accepts it, even if the announcing node has a lower ID than itself. This faithfully ports a quirk from the legacy `exp04-election` demo.
@@ -592,6 +662,18 @@ Ranges taken before E8c: 26100-26199, 26200-26255, 26300-26355, 26360-26395, 264
 - E8c (C5): `dataLossNow` is null whenever no primary serves, also when nothing was acknowledged yet (E8a's `DataLoss.measure` reports NOTHING_ACKNOWLEDGED before NO_PRIMARY_STORE). `rejoin` is also null for a node that is down (E8b reports REJOINING for a crashed node; found in the first capture).
 - E8c: no recommended client timeout in the overview. No call waits on the network or a failover; the only blocking is `Cluster.crash`'s thread joins, bounded by the 5 s code constant of each service, not by a property (see "For E8d" item 6).
 - E8c: the derived "expected detection window" text was corrected during Stage C from "between the heartbeat timeout and the timeout plus one interval" to "between the timeout minus one interval and the timeout plus one interval" (1.8 to 3.2 s with the shared timings, as E8a recorded): the first capture measured a detection of 2204.75 ms, below the 2500 ms timeout. The fixtures were recaptured after the fix.
+- E8d (Q1): at a used budget "Start stream" is disabled with a hint built from the served numbers ("Budget used: N of N updates this session. A cluster reset gives a fresh budget.") and a link to the Cluster page, instead of showing the backend's 409 text; the 409 `UPDATE_LIMIT_REACHED` path is kept for a race and tested (approved).
+- E8d (Q2): crash-primary and recover keep the shared 10000 ms timeout; a timeout is followed by a status read, never reported as a failure (approved).
+- E8d (Q3): "Crash primary" is disabled while a failover is in progress, stricter than the conflict matrix (which accepts a crash once the new primary serves and ends the run INTERRUPTED), so every run started from the page can be measured; a crash from the Cluster page can still interrupt a run (synthetic `run-interrupted.json`) (approved).
+- E8d (Q4): a module-specific `ProblemAlert` in `FaultToleranceControls.jsx`; Track C's files are not edited (approved).
+- E8d (C2): after a timeout of crash-primary or recover, every action stays disabled until a status read started after the timeout shows `actionInProgress` null; then status and run are read again.
+- E8d (C3): a new UI state "failover-waiting" (a failover in progress with the stream stopped) with its own message; "Start stream" stays enabled unless the budget is 0, "Crash primary" stays disabled.
+- E8d: the initial load is the overview alone (it already carries status and latest run), not three separate reads; status and runs/latest are read on refresh.
+- E8d: runs/latest is also read with each poll while no primary serves, during an open recovery and after a timeout (beyond "status only"), so the timeline grows live and `recoveryMillis` comes from the run.
+- E8d: while the WebSocket is not connected the page polls status and latest run every 2000 ms (`FALLBACK_POLL_INTERVAL_MS`); no earlier page does this.
+- E8d: timeline rows are linked to the event log by naming their event kind ("In the event log: Failure detected"); no Lamport value is shown per milestone (that would need a second event subscription); the log below shows them.
+- E8d: five synthetic fixtures beyond the README's list (`run-in-progress`, `run-recovering`, `status-restored-old-primary-down`, `status-failover-stream-stopped`, `status-rejoin-stalled`), because those states were not captured.
+- E8d: `GET /runs` and `GET /runs/{id}` are not used (no run history on the page).
 
 ---
 
@@ -627,6 +709,12 @@ Ranges taken before E8c: 26100-26199, 26200-26255, 26300-26355, 26360-26395, 264
 - E8c: `POST /crash-primary` can exceed the page's 10000 ms HTTP timeout in the worst case (55 s for a node running only Experiment 8's services, 75 s with every service); see "For E8d" item 6.
 - E8c: the live checks on a status read copy the acknowledged ledger and the primary's store (each at most `max-updates` entries per session) on the HTTP thread; cheap, but not free.
 - E8c: verified on Windows and on Linux (Docker, run by Swanand); see the 2026-10-16 progress-log line.
+- E8d: `ProblemAlert` now exists in three private copies (Exp 1 `RmiPage.jsx`, Exp 9 `MpiPage.jsx`, Exp 8 `FaultToleranceControls.jsx`); a candidate for one shared component in Phase 14.
+- E8d: the eager main chunk (warning above 500 kB, carried over) grew from 738.64 kB to 783.50 kB (gzip 220.77 to 233.74 kB); code splitting is out of scope.
+- E8d: at 375 px the timeline's SVG keeps a minimum width of 36rem and scrolls inside its own box (never the page); the milestone list under it is the readable version on a phone.
+- E8d: if a rejoin stalls (ROLE_QUERY_FAILED after the last attempt, the node stays REJOINING), the run stays "recovering" and the page keeps reading status and latest run every 500 ms until the node crashes and recovers again or the cluster is reset. Both reads are cheap and publish nothing.
+- E8d: a 409 busy is hard to provoke from one tab, because the page sends one action at a time; it is covered by the tests and checklist step 13 uses two tabs.
+- E8d: the manual checklist was run by Swanand on 2026-10-16 against the real backend; see the Result column of the checklist.
 
 ---
 
@@ -641,3 +729,5 @@ Ranges taken before E8c: 26100-26199, 26200-26255, 26300-26355, 26360-26395, 264
 - 2026-10-09 E8b done: failover on the shared cluster (`FailoverCluster`, per-node `FaultToleranceNodeService`, role query over the replication READ channel with the `failover.term` term record, lowest-id `FailoverRoleSelector` behind TODO(L1), catch-up before promotion, rejoin with demote/adopt and resync, client updates with the E8a retry policy feeding the ledger, metrics, `udcf.faulttolerance` with a shared worst-case formula); backend 1084 tests (baseline 1040 + 44; new classes 5 sequential runs, full suite 3 sequential runs, all green; 1083 before the review test `promotionWithSeveralSilentAndDeadPeersIsBounded` was added), frontend not run (no frontend change); deviations: lowest-id selector (README), step-down at crash and OBSERVED stamped in `crash()` (Q4), catch-up before promotion and resync on STAY-as-backup (Q6), window formula 11200 ms (default 12500 ms), event names per the addendum.
 - 2026-10-15 E8c done: `FaultToleranceModule` (lab 8) and REST API under `/api/modules/faulttolerance` (start, stream start/stop with a per-session budget, mode, crash primary, recover old primary, runs with milestones, measurements and data loss), DTOs, 8 events, 2 metrics, `udcf.faulttolerance.stream`, 39 live contract fixtures; backend 1826 tests (46 new; new tests 5 runs plus reverse order, replication + election + faulttolerance 492, full suite 3 runs, all 0 failures, 1 skipped), frontend not run (no frontend code change); deviations: Q1 to Q9 as approved, C1 (no `checks` counter; SPLIT_BRAIN_CHECKED at stream stop, restore, recovery and a new violation), C5 (`dataLossNow` and a down node's `rejoin` null), no recommended client timeout, expected-detection text corrected and fixtures recaptured.
 - 2026-10-16 E8c Linux (Docker), run by Swanand: replication, election and faulttolerance packages 492 tests x 5 runs plus 1 reverse-order run at 2 CPUs, 0 failures; the 7 new E8c test classes 46 tests x 10 runs at 1 CPU, 0 failures; full suite 1826 tests, 0 failures, 1 skipped; clean-clone full suite 1826 tests, 0 failures, 1 skipped.
+- 2026-10-16 E8d done: Experiment 8 page (replica rail with the epoch on every node, live SVG failover timeline with the derived detection band, the four measurements plus outage and time to first update, data loss with the Simulated badge, no-two-primaries check, stream, mode, crash and recover controls from the conflict matrix, polling only while something moves, 10 synthetic fixtures); backend not run (no backend change), frontend 1108 tests (baseline 916 + 192; new tests 3 runs and 1 shuffled run, full suite 2 runs, all green); deviations: Q1 to Q4 and C2, C3 as approved, overview-only initial load, runs/latest polled during open runs, 2000 ms fallback poll, timeline linked to events by kind, five extra synthetic fixtures.
+- 2026-10-16 E8d Linux check: clean clone of 8b67a21 on Node 22 in Docker, npm ci, vitest (118 files, 1108 tests), lint and build all exit 0; main chunk 782.67 kB. GitHub CI is still the Linux gate.
