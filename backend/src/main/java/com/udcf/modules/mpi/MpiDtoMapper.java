@@ -17,7 +17,7 @@ import java.util.Objects;
  * what was not measured or does not apply stays null (R7). The vectors are left out (only their
  * checksums travel). Pure and stateless.
  */
-final class MpiDtoMapper {
+public final class MpiDtoMapper {
 
     private MpiDtoMapper() {
     }
@@ -42,7 +42,7 @@ final class MpiDtoMapper {
                 sized ? PayloadSizer.LABEL : null, timed ? RmiCollectiveTransport.LATENCY_BASIS : null);
     }
 
-    static TransferDto transfer(TransferRecord t) {
+    public static TransferDto transfer(TransferRecord t) {
         Objects.requireNonNull(t, "transfer must not be null");
         RemoteFailureDetail f = t.failure();
         return new TransferDto(t.rank(), t.fromNodeId(), t.toNodeId(), t.direction(), t.status(), t.offset(),
