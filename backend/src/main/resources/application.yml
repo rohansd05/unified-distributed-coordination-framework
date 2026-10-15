@@ -193,6 +193,8 @@ udcf:
     compute-timeout-millis: 2000
     # E10b: computed blocks of C each node keeps by run id until the root fetches them; the oldest is dropped.
     result-store-size: 4
+    # E10c: runs the module keeps for the page and the speedup series; at least the number of series sizes.
+    history-size: 20
 
 management:
   endpoints:

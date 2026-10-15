@@ -5,6 +5,7 @@ import com.udcf.core.events.ClusterEventBus;
 import com.udcf.modules.mpi.CollectiveEndpointExport;
 import com.udcf.modules.multithreading.MultithreadingProperties;
 import com.udcf.modules.rmi.RmiExtraExport;
+import com.udcf.modules.rmi.RmiNodeService;
 import com.udcf.modules.rmi.RmiProperties;
 import com.udcf.modules.rmi.RmiSerialFilter;
 import com.udcf.modules.rmi.RmiTransportProperties;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import java.io.ObjectInputFilter;
 import java.rmi.Remote;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
 /**
@@ -66,6 +68,22 @@ public class MatrixEndpointExport implements RmiExtraExport {
                     + ") must be below udcf.rmi.call-timeout-millis (" + rmi.callTimeoutMillis()
                     + "), so a node answers before the caller's read timeout");
         }
+    }
+
+    /**
+     * The node's current {@link MatrixEndpointLogic}, the exported object itself (no stub), to read the run
+     * ids whose blocks it keeps; empty while the node's RMI service is not running (never started, stopped or
+     * crashed) or exports no MatrixEndpoint. Never starts anything (as CollectiveEndpointExport.current).
+     */
+    public static Optional<MatrixEndpointLogic> current(ClusterNode node) {
+        Objects.requireNonNull(node, "node must not be null");
+        return RmiNodeService.find(node).flatMap(service -> {
+            try {
+                return Optional.of((MatrixEndpointLogic) service.localExport(MatrixEndpoint.BOUND_NAME));
+            } catch (IllegalStateException | IllegalArgumentException notThere) {
+                return Optional.empty();
+            }
+        });
     }
 
     @Override

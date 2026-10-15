@@ -40,6 +40,7 @@ public final class MetricNames {
     public static final String REDUCE_TASKS_TOTAL = "distributed_reduce_tasks_total";
     /** Experiment 9: remote transfers per root node, by target node, operation, direction and status (LOCAL excluded). */
     public static final String MPI_MESSAGES_TOTAL = "distributed_mpi_messages_total";
+    /** Experiment 10: measured parallel time of each matrix run that ran (not REFUSED), per root node, by outcome. */
     public static final String MATRIX_EXECUTION_DURATION = "distributed_matrix_execution_duration";
     public static final String EVENTS_PUBLISHED_TOTAL = "distributed_events_published_total";
     public static final String EVENT_NOTIFICATIONS_DROPPED_TOTAL = "distributed_event_notifications_dropped_total";
@@ -75,6 +76,12 @@ public final class MetricNames {
     public static final String MPI_TRANSFER_LATENCY = "distributed_mpi_transfer_latency";
     /** Experiment 9: measured total time of each collective that attempted a remote transfer, per root node, by operation and outcome. */
     public static final String MPI_COLLECTIVE_DURATION = "distributed_mpi_collective_duration";
+    /** Experiment 10: matrix runs per root node, by outcome (COMPLETE, PARTIAL, FAILED, REFUSED). */
+    public static final String MATRIX_RUNS_TOTAL = "distributed_matrix_runs_total";
+    /** Experiment 10: each rank's multiply, measured on the node, per computing node; DONE computes only. */
+    public static final String MATRIX_COMPUTE_DURATION = "distributed_matrix_compute_duration";
+    /** Experiment 10: measured scatter, broadcast and gather times per root node, by phase; known phases only. */
+    public static final String MATRIX_COMMUNICATION_DURATION = "distributed_matrix_communication_duration";
 
     /** Tag key every meter carries. */
     public static final String NODE_ID = "node_id";

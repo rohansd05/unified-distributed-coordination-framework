@@ -54,7 +54,7 @@
 ### Steps
 - [x] E10a — matrix generation, row-block partitioning and the sequential product. Needs: E9d.
 - [x] E10b — the parallel multiply over the collectives and executors. Needs: E10a, E9b, E2b.
-- [ ] E10c — `MatrixModule` (lab 10) and its API; replace `web/TestModuleConfig`'s fake lab-10 module mechanism so tests no longer clash with the real lab 10. Needs: E10b.
+- [x] E10c — `MatrixModule` (lab 10) and its API; replace `web/TestModuleConfig`'s fake lab-10 module mechanism so tests no longer clash with the real lab 10. Needs: E10b.
 - [ ] E10d — page and end-to-end check. Needs: E10c, E2d.
 
 ---
@@ -2111,6 +2111,205 @@ Linux (Docker), run by Jai: mpi, rmi, matrix and multithreading packages 728 tes
 7. Condition 7's statement that a cluster reset stops the requests listener does not hold in the code (see "Experiment 2
    side effect"); recorded as found, nothing changed.
 
+### E10c interfaces for E10d — matrix module and API (`/api/modules/matrix`)
+
+**`MatrixModule`** (`@Component`, `AutoCloseable`, id `matrix`, lab 10, title "Parallel Matrix Multiplication"),
+registered in `ModuleRegistry` like every module (GET /api/modules lists it; `MatrixControllerTest.listedAsLab10`).
+Every cluster node takes part; nothing in the request selects participants.
+- **Root rule:** E9c's `MpiRoleSelector` (now public), REQUESTED > LEADER (read-only `Cluster.leaderId()`) >
+  LOWEST_LIVE_ID, with E9's `RootSource` and its `TODO(L1)`. The leader part is covered by synthetic tests only
+  (`MatrixModuleTest.defaultRoot`; no capture has a leader).
+- **One size per request, synchronous** (decision 1). Before each run: `RmiModule.ensureStarted()`, then the **prepare
+  step** (untimed, never throws): `RequestsNodeService.on(node, ...)` for every live node, so no listener start is
+  timed. `POST /start` does the same and also creates the dispatch pool. A failed prepare becomes
+  `EXECUTOR_UNAVAILABLE`, a reported hole, never an exception.
+- **Concurrency:** the module's own `ModuleActionGuard` (not shared with Experiment 9, decision 2), held by start and
+  run on the request thread; a second request gets 409 plus `ACTION_REJECTED_BUSY`, never queued. GET requests never
+  take it.
+- **Run ids** (decision 3): `MatrixHistory` (MpiHistory's design: generation, reserve/cancel/record/clear), from 1,
+  restarted by `reset()`; an id is given back if the runner throws. An omitted seed is the run id.
+- **Pool** (decision 4): `MatrixDispatchPool(cluster.size())`, created by the first start or run, closed by
+  `close()` (5 s bound, idempotent).
+- **Status:** BUSY while the guard is held; otherwise RUNNING while any node exports MatrixEndpoint; otherwise IDLE.
+- **Reset:** forgets the history only (never throws, no guard, publishes nothing). A run still going is answered but
+  not recorded. A cluster reset stops RMI (`RmiModule.reset`), which drops the nodes' stored inputs and kept blocks;
+  the request listeners keep running (proved by `MatrixControllerTest.resetKeepsListeners`).
+
+**Endpoints.** Every error is a ProblemDetail. Examples are in `frontend/src/test/fixtures/matrix/` (see its README).
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /api/modules/matrix` | | 200 `MatrixOverviewDto`; no remote call, never starts anything |
+| `POST /start` | | 200 overview; idempotent (RMI, pool, request listeners); 409 busy |
+| `POST /runs` | `{size, seed?, rootNode?}` | 200 `MatrixRunDto` for COMPLETE, PARTIAL, FAILED and REFUSED |
+| `GET /runs` | | 200 `MatrixRunDto[]`, newest first (at most `udcf.matrix.history-size`, 20) |
+| `GET /runs/latest` | | 200; 404 "Unknown run" with `runId: null` |
+| `GET /runs/{id}` | | 200; 404 "Unknown run" (`runId`) |
+| `GET /series` | | 200 `MatrixSeriesDto` (also when empty) |
+
+**Status mapping.**
+- 400 "Invalid request parameters", every field at once under `errors`: "size is required", "size must be 2-316, was
+  N" (min-size to the derived maximum; 2-100 in public), "seed must be 0-9007199254740991, was N" (`MpiModule.MAX_SEED`,
+  now public). Spring's default 400 (no `errors`) for an unreadable body or a non-numeric id.
+- 404 "Unknown node" (a `rootNode` that does not exist, checked before the guard); 404 "Unknown run".
+- 409 "Module busy"; 409 "Node down" (requested root crashed); **409 "Node state conflict" with `nodeId: 0` when no
+  root was requested and every node is crashed** (approved: a REFUSED run needs a root id and none exists, so
+  `NO_LIVE_PARTICIPANT` cannot be reached over HTTP; as E9c).
+- 200 REFUSED for `SIZE_BELOW_PARTICIPANTS` (kept, `MATRIX_RUN_REFUSED`, counted) and, in a race, `ROOT_UNAVAILABLE`.
+  `SIZE_ABOVE_MAXIMUM`/`SIZE_BELOW_MINIMUM` are 400s before the runner.
+
+**DTOs** (`matrix/dto`; unknown or inapplicable is null, never 0; no JSON number above 2^53 - 1):
+- `MatrixRunCommand(size, seed, rootNode)`.
+- `MatrixRunDto` (also the history entry): runId, startedAt (display only), size, seed (**the user's only**),
+  rootNodeId, rootSource, rootRank, rankNodeIds, skippedNodeIds, outcome, refusal, deadlineMillis, scatter, broadcast,
+  computes, gather (`TransferDto` reused through `MpiDtoMapper.transfer`, now public), timing, verification,
+  inputsDelivered, speedupBasis, computeRoundTripBasis, gatherLatencyBasis, payloadSizeBasis (each basis set exactly
+  when its figure exists). REFUSED: every run-related field null or `[]`.
+- `MatrixPhaseDto` (scatter of A, broadcast of B): collectiveId, operation, outcome, refusal, inputChecksum,
+  totalNanos, deadlineMillis, transfers, verification (`VerificationDto`), payloadSizeBasis, latencyBasis. **No seed:**
+  the collectives' seeds are derived from the user's (full 64-bit) and are never on the wire, in any response, event
+  or fixture (checked by `MatrixJsonChecks` in every Spring test and on every fixture).
+- `ComputeDto`: E10b's `ComputeRecord` with the failure flattened as in `TransferDto` (the per-node row allocation is
+  rank, nodeId, rowStart, rowCount).
+- `MatrixTimingDto(warmupProducts, measured, derived)`: `Measured(sequentialNanos, payloadGenerationNanos,
+  scatterNanos, broadcastNanos, computePhaseNanos, gatherNanos, parallelTotalNanos)`; `Derived(communicationNanos,
+  otherNanos, communicationShare, speedup, computeBoundSpeedup, speedupCeiling, multiplyAdds, speedupWithheldReason)`.
+  **`speedup` and `computeBoundSpeedup` are null unless the run was COMPLETE and `verification.passed` is true**; then
+  `speedupWithheldReason` says why ("No speedup: the run was partial/failed, ..." or "... did not match the sequential
+  product.").
+- `MatrixVerificationDto` (E10a's MatrixVerification, field for field), `MatrixRefusalDto(reason, message)`.
+- `MatrixOverviewDto`: status, actionInProgress, boundName, limits, participants, defaultRootNodeId/Source,
+  minimumSizeNow, processors (as the JVM reports them), speedupCeiling, speedupBasis (null when nothing is live), every
+  text below, glossary, coHosting (the only Simulated badge), latest.
+- `MatrixLimitsDto`: minSize, maxSize, seriesSizes, historySize, maxSeed, warmupProducts, computeTimeoutMillis,
+  resultStoreSize, runDeadlineMillis, connectTimeoutMillis, callTimeoutMillis, transferWorstMillis, computeWaitMillis,
+  productAllowanceMillis, worstCaseRunMillis (26001), **recommendedMinClientTimeoutMillis = worstCaseRunMillis
+  exactly** (bounds, not measurements; E10d adds 3000 ms, giving 29001).
+- `MatrixNodeDto`: nodeId, nodeStatus, rmiState, registryPort, startFailure, matrixEndpointExported, leader,
+  keptRunIds (`MatrixEndpointExport.current`, added; null while not exported), storedCollectiveIds (null while not
+  exported), requestListenerRunning (`RequestsNodeService.find`, never starts), requestsPort.
+- `MatrixSeriesDto(points, gaps, sizesWithSpeedup, sizesRequired, done, seriesSizes, ranksDiffer, ranksNote, basis,
+  rule)`, `Point(size, sourceRunId, sourceOutcome, ranks, sequentialNanos, parallelTotalNanos, communicationNanos,
+  computePhaseNanos, speedup)`, `Gap(size, newestRunId, newestOutcome)`.
+- `GlossaryEntryDto(id, label, kind, definition)`, kind MEASURED_ON_ROOT, MEASURED_ON_NODE or DERIVED: one entry per
+  timing figure (MatrixTextsTest checks the coverage by reflection).
+
+**Series rule** (`MatrixSeries`, configured sizes only): for each configured size, the newest kept run of that size
+that is COMPLETE with a speedup (so matched); built on E10a's `SpeedupSeries`. A size without one is a `Gap` (never a
+0). `done` = at least 3 sizes with a speedup. The basis is `SpeedupBasis.text(largest rank count among the points,
+warmup-products)` plus the fairness and other-activity notes; null without points.
+
+**Honesty texts** (one source, `MatrixTexts`, ASCII, served in the overview; wording as approved in Stage A):
+speedupBasis (E10a's text + fairness + other activity), fairnessNote, otherActivityNote, phaseTimeLabel,
+payloadGenerationNote, experimentTwoSideEffect, firstRunNote, computeRoundTripBasis, gatherLatencyBasis,
+collectiveIdsNote, algorithmNote, coHosting, seriesRule, ranksNote, the withheld reasons; reused: E9's
+`LATENCY_BASIS` (collectiveLatencyBasis) and `PayloadSizer.LABEL`. The two claims in experimentTwoSideEffect are
+proved: "a cluster reset does not stop the listeners" by `MatrixControllerTest.resetKeepsListeners` (and in code,
+`ClusterResetService.reset` only calls `recoverAll`, a no-op for an UP node, and each module's `reset`;
+`MultithreadingModule.reset` only clears the history); "a listener closes only when its node crashes or the backend
+stops" by `MatrixControllerTest.crashClosesListener` (a crash closes it, a recovery reopens it) and in code (the only
+callers of the requests service's `crash`/`stop` are `ClusterNode.crash` and `ClusterNode.stop`, the latter from
+`Cluster.close` at shutdown). Experiment 2's own batches still work on a listener the matrix started
+(`MatrixControllerTest.experimentTwoStillWorks`: 202, three COMPLETED requests, no "already running").
+
+**Events** (module `matrix`; no event ticks a clock; no seed derived from the user's appears):
+
+| Type | Node | Lamport time | Data |
+|---|---|---|---|
+| `MATRIX_ENDPOINT_EXPORTED` | the node a start exported | its clock | registryPort, boundName |
+| `MATRIX_RUN_STARTED` | root | before the run | runId, size, seed, rootSource, liveNodeIds |
+| `MATRIX_RUN_FINISHED` | root | after the run | runId, size, outcome, computesDone, computesFailed, computesNotAttempted, parallelTotalNanos?, sequentialNanos?, speedup? (only when not withheld), passed? |
+| `MATRIX_RUN_REFUSED` | root | root's clock | runId, size, reason |
+| `ACTION_REJECTED_BUSY` | 0 | the cluster clock | requested, actionInProgress |
+
+No per-rank compute events (approved) and no `latencyMillis` (L5).
+
+**Metrics** (`MatrixMetrics`; no size, run id or seed tag; no gauge):
+
+| Meter | Type | Tags | Recorded |
+|---|---|---|---|
+| `distributed_matrix_runs_total` (new) | counter | node_id (root), outcome | every run, REFUSED included |
+| `distributed_matrix_execution_duration` (existing HANDOFF name) | timer | node_id (root), outcome | parallelTotalNanos, when known |
+| `distributed_matrix_compute_duration` (new) | timer | node_id (the computing node) | computeNanos, DONE only |
+| `distributed_matrix_communication_duration` (new) | timer | node_id (root), phase (SCATTER, BROADCAST, GATHER) | each phase time, when known |
+
+**Properties:** `udcf.matrix.history-size: 20` (new record `MatrixModuleProperties`; public inherits 20); the module
+refuses a history smaller than the number of series sizes at startup.
+
+**`web/TestModuleConfig`** (assigned to E10c, README section 5): the fake lab-10 module is gone; the class is now
+`@TestConfiguration @SpyBean(MatrixModule.class)` (the class-level spy took effect, tried first as approved).
+`ClusterControllerTest` uses `clearInvocations`/`verify(matrixModule).reset()` and
+`doReturn(BUSY).when(matrixModule).status()` (busy `moduleId` is now `matrix`); `ModuleControllerTest` checks
+`matrix` as lab 10, last in the list. Test counts unchanged: ClusterControllerTest 7 before and after,
+ModuleControllerTest 1 before and after.
+
+**Test ports (E10c).** Grep of `backend/src/test` before the first test (and again identical to Stage A): no use of any
+bound port below. Spring tests use `udcf.cluster.size=3`. Numbers-only bases, never bound: election 28610, replication
+28620, mapreduce 28630 in all three Spring classes (checked by `onlyExpectedServicesStart` / the services check), and
+`MatrixModuleTest`'s whole cluster (rmi 28650, clock 28600, election 28610, replication 28620, requests 28640,
+mapreduce 28630).
+
+| Class | Bound ports | Bases (numbers) |
+|---|---|---|
+| `MatrixControllerTest` | TCP 28709-28711 (RMI), TCP 28722-28724 (requests), UDP 28739-28741 (clock) | rmi 28708, requests 28721, clock 28738 |
+| `MatrixEndToEndHttpTest` | TCP 28712-28714 (RMI), TCP 28729-28731 (requests), UDP 28742-28744 (clock), plus one OS ephemeral HTTP port | rmi 28711, requests 28728, clock 28741 |
+| `MatrixUnreachableNodeTest` | TCP 28719-28720 (RMI), TCP 28721 (plain `java.net.Socket` blocker: bound, never listening, no option set, closed in `finally`), TCP 28732-28734 (requests), UDP 28746-28748 (clock) | rmi 28718, requests 28731, clock 28745 |
+| `MatrixModuleTest`, `MatrixHistoryTest`, `MatrixSeriesTest`, `MatrixDtoMapperTest`, `MatrixMetricsTest`, `MatrixTextsTest`, `MatrixModulePropertiesTest` | none | see above |
+
+No port is bound by two classes. The base numbers 28708, 28718, 28728 and 28738 equal ports other E10b classes bind,
+but these classes never bind their bases. The Spring classes stop RMI and the request listeners in `@AfterAll`, wait
+until their TCP ports can be bound, and close their context.
+
+**Fixtures** (`frontend/src/test/fixtures/matrix/`, 33 files plus README; one Python stdlib script with curl, the
+blocker socket and the in-process busy request, as E9c): overview-before-start, overview-after-start,
+overview-node-crashed, start, start-with-failure, run-complete-50/-100/-200/-316, run-partial (node 5's RMI port
+held), run-failed (live nodes 1 and 5, node 5 unreachable: a real FAILED), run-node-crashed-skipped,
+run-requested-root, run-refused, runs-history, run-latest, run-by-id, series-before-runs, series (four sizes, done),
+series-after-more-runs (`ranksDiffer`), error-400-size-above-max/-size-below-min/-seed/-missing-fields/-unreadable/
+-bad-id, error-404-no-run-yet/-unknown-run/-unknown-node, error-409-busy (captured live, first attempt),
+error-409-root-down, error-409-no-live-node, events.json, events-export.txt. Measured on this capture (Windows, 16
+processors reported, five ranks): speedup 0.0049 (50), 0.036 (100), 0.12 (200), 0.22 (316); at 316 communication was
+72% of the parallel time and the compute-bound speedup 4.99.
+
+**States that need labelled synthetic copies in E10d** (cannot be produced for real):
+1. a checksum mismatch (`passed: false`, speedup withheld "did not match");
+2. a hole from an evicted block (`INPUT_MISSING` or `BLOCK_MISSING`);
+3. the two timeouts (node `COMPUTE_TIMED_OUT` vs the root's `TIMED_OUT`);
+4. steps NOT_ATTEMPTED after the run deadline;
+5. a leader as default root (`rootSource: LEADER`).
+
+**Tests:** 67 new tests in 10 classes: `MatrixModuleTest` 19, `MatrixControllerTest` 15, `MatrixDtoMapperTest` 7,
+`MatrixSeriesTest` 6, `MatrixHistoryTest` 5, `MatrixMetricsTest` 5, `MatrixEndToEndHttpTest` 3, `MatrixTextsTest` 3,
+`MatrixModulePropertiesTest` 3, `MatrixUnreachableNodeTest` 1. Test-only helpers: `MatrixTestResults` (real results
+from E10b's runner over `InMemoryMatrixNodes`), `MatrixJsonChecks` (safe numbers, no derived seed). No test asserts a
+speedup threshold (only non-null and `done`). Windows: new tests 5 runs plus 1 reverse-alphabetical run, 67 each, 0
+failures; packages mpi, rmi, matrix, multithreading and web 846 tests, 0 failures; full suite 3 runs, 1893 tests, 0
+failures, 1 skipped each (1826 before). Scans of every new and changed file (42): no non-ASCII character, no
+`\u000a`/`\u000d`, no `setReuseAddress`, no `Thread.sleep`.
+
+**For E10d.**
+1. `POST /runs` waits `limits.recommendedMinClientTimeoutMillis` + 3000 ms (29001 locally); one size per request; loop
+   the configured `seriesSizes` for the chart, then read `GET /series`.
+2. Call `POST /start` on mount and after a `CLUSTER_RESET` (a reset stops RMI). It also starts the request listeners
+   (the Experiment 2 side effect): show `experimentTwoSideEffect`.
+3. The phases are `MatrixPhaseDto`, not `CollectiveDto` (no seed, startedAt or rootSource): E9d's `LatencyChart` and
+   `CollectiveMap` take the same `TransferDto`s; `CollectiveResult` needs a small adapter.
+4. Show the measured speedup only from `timing.derived.speedup`; never compute one on the page. Show the
+   compute-bound speedup labelled as such, the communication share, and `speedupBasis` beside every speedup.
+5. Rows key by run id plus `startedAt` (ids restart after a reset, as in E1d/E9d).
+6. Many runs of one size can push older series points out of the 20-run history; they then show as gaps.
+
+#### E10c deviations from the approved plan
+
+1. `ModuleControllerTest`: only Javadoc line 17 changed (the plan listed lines 17-18; line 18 could stay).
+2. An extra test-only helper, `MatrixJsonChecks`.
+3. 67 tests rather than the plan's estimate of about 73.
+4. Fixture capture: one Python stdlib script that runs curl for every kept request, holds the blocker and makes the
+   busy request in-process (E9c used a curl script plus a separate Python script for the busy capture). A real FAILED
+   run (`run-failed.json`) was added to the fixture list.
+5. `MatrixEndToEndHttpTest` posts `/start` in `@BeforeEach` (after the cluster reset), so the Experiment 2 executor
+   counts are readable before the first run.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -2438,6 +2637,28 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   with the configured value.
 - E10b: `frontend/src/test/fixtures/rmi/registries-*.json` are stale (one name per node; the live backend lists three);
   the README says so; not recaptured until Phase 13.
+- E10c: **first-run costs.** The prepare step keeps every listener start out of the timed parts, but the first run
+  after a start or a reset still pays loading RMI stub classes, opening the first connections, starting the first
+  worker thread of each node's executor, and the first use of the collective and checksum code (in the scatter,
+  broadcast, compute-phase and gather times, never in a node's own compute time). Served as `firstRunNote`; running
+  a size again shows it without them, and the series takes the newest complete run per size.
+- E10c: `recommendedMinClientTimeoutMillis` (= `worstCaseRunMillis`, 26001) is a bound from configured timeouts, not a
+  measurement. It leaves out the prepare step (a listener start has no configured bound), RMI's 5 s listener wait per
+  node when an RMI start fails inside `ensureStarted`, CPU outside the transfers (generation, sizing, checksums,
+  assembly and the bitwise comparison of up to 316 x 316 elements), and the per-read nature of `SO_TIMEOUT`. E10d adds
+  its own margin.
+- E10c: `POST /start` starts every live node's Experiment 2 request listener (approved), so opening the E10d page binds
+  the requests ports (7201-7205). The matrix never stops them; a crash closes one, a recovery reopens it, the backend's
+  shutdown closes all.
+- E10c: the speedup series is built from the kept history (20 runs). Many runs of one size can push an older size's
+  only usable run out; that size then shows as a gap until it is run again.
+- E10c: the Spring tests use three-node clusters (`udcf.cluster.size=3`) to fit Jai's free test ports; the five-node
+  path is exercised by the fixture capture against the real backend only.
+- E10c: measured speedups are far below 1 on this machine (0.0049 to 0.22 for sizes 50 to 316 over five ranks, with 16
+  processors reported): communication dominates (72% of the parallel time at 316) and the scatter and broadcast times
+  include the root's sizing and checksum work. This is reported as measured, never adjusted.
+- E10c: `error-409-busy.json` depends on timing (a size-316 run holds the module for well under a second locally); it
+  was captured on the first attempt from one Python process. The rejection's event is covered by MatrixModuleTest.
 ---
 
 ## Progress log
@@ -2592,3 +2813,4 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   public, MatrixRefusal.ROOT_UNAVAILABLE; 13 new test classes, 76 tests; backend 1780 tests, 1 skipped (3 runs; baseline
   1704), frontend not run (only a fixtures README line changed); deviations: the seven listed under "E10b deviations from
   the approved plan".
+- 2026-10-16 E10c done: MatrixModule (lab 10) and MatrixController under /api/modules/matrix (overview, idempotent start with RMI, pool and an untimed request-listener prepare step, one synchronous run per request with COMPLETE/PARTIAL/FAILED/REFUSED as 200 data, bounded history with run ids from 1, series over the configured sizes from the newest complete run per size), root rule REQUESTED > LEADER > LOWEST_LIVE_ID through the now-public MpiRoleSelector, 409 Node state conflict (node 0) when no node is live, 12 DTO records (no derived seed on the wire, null never 0, speedup only for a matched COMPLETE run), MatrixTexts with the glossary, 4 event types, MatrixMetrics (3 MetricNames constants added, existing MATRIX_EXECUTION_DURATION used), udcf.matrix.history-size, TestModuleConfig now spies the real lab 10, 33 contract fixtures and a README captured from the real backend; backend 1893 tests, frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under "E10c deviations from the approved plan".

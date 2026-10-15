@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Guards GET /api/modules. Shares context D with ClusterControllerTest, so the registry
- * holds the real modules plus the fake one from {@link TestModuleConfig} (lab 10). The
+ * holds the real modules, with lab 10 a Mockito spy from {@link TestModuleConfig}. The
  * assertions find modules by id rather than by position or count, so other tracks' modules
  * can join the registry without breaking this test (E2c).
  */
@@ -46,10 +46,9 @@ class ModuleControllerTest {
                 .andExpect(jsonPath("$[?(@.id == 'mapreduce')].labNumber").value(7))
                 .andExpect(jsonPath("$[?(@.id == 'mapreduce')].title").value("MapReduce"))
                 .andExpect(jsonPath("$[?(@.id == 'mapreduce')].status").value("IDLE"))
-                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].labNumber")
-                        .value(TestModuleConfig.FakeModule.LAB_NUMBER))
-                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].title").value("Test Module"))
-                .andExpect(jsonPath("$[?(@.id == '" + TestModuleConfig.FakeModule.ID + "')].status").value("IDLE"))
-                .andExpect(jsonPath("$[-1:].id").value(TestModuleConfig.FakeModule.ID));
+                .andExpect(jsonPath("$[?(@.id == 'matrix')].labNumber").value(10))
+                .andExpect(jsonPath("$[?(@.id == 'matrix')].title").value("Parallel Matrix Multiplication"))
+                .andExpect(jsonPath("$[?(@.id == 'matrix')].status").value("IDLE"))
+                .andExpect(jsonPath("$[-1:].id").value("matrix"));
     }
 }

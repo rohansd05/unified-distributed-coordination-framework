@@ -5,6 +5,8 @@ import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.NodeService;
 import com.udcf.core.cluster.NodeStatus;
 import com.udcf.core.module.ModuleStatus;
+import com.udcf.modules.matrix.MatrixModule;
+import org.mockito.Mockito;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +21,9 @@ import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -45,7 +50,7 @@ class ClusterControllerTest {
     private Cluster cluster;
 
     @Autowired
-    private TestModuleConfig.FakeModule fakeModule;
+    private MatrixModule matrixModule;
 
     /** Inline fake endpoint; binds nothing. */
     private static final class ProbeService implements NodeService {
@@ -176,7 +181,7 @@ class ClusterControllerTest {
     @Test
     @DisplayName("reset returns 204 and leaves exactly [CLUSTER_RESET] with every node up")
     void resetGivesCleanSlate() throws Exception {
-        int resetsBefore = fakeModule.resetCount();
+        clearInvocations(matrixModule);
         try {
             cluster.crash(3);
 
@@ -193,7 +198,7 @@ class ClusterControllerTest {
             mockMvc.perform(get("/api/cluster"))
                     .andExpect(jsonPath("$.upCount").value(5))
                     .andExpect(jsonPath("$.nodes[*].status", everyItem(is("UP"))));
-            assertThat(fakeModule.resetCount()).isEqualTo(resetsBefore + 1);
+            verify(matrixModule).reset();
         } finally {
             cluster.recover(3);
         }
@@ -202,7 +207,7 @@ class ClusterControllerTest {
     @Test
     @DisplayName("reset while a module is busy returns 409 with moduleId and changes nothing")
     void resetWhileBusy() throws Exception {
-        fakeModule.setStatus(ModuleStatus.BUSY);
+        doReturn(ModuleStatus.BUSY).when(matrixModule).status();
         try {
             cluster.crash(4);
 
@@ -210,12 +215,12 @@ class ClusterControllerTest {
                     .andExpect(status().isConflict())
                     .andExpect(jsonPath("$.status").value(409))
                     .andExpect(jsonPath("$.title").value("Module busy"))
-                    .andExpect(jsonPath("$.moduleId").value(TestModuleConfig.FakeModule.ID))
+                    .andExpect(jsonPath("$.moduleId").value(MatrixModule.ID))
                     .andExpect(jsonPath("$.actionInProgress").value("a long-running action"));
 
             assertThat(cluster.node(4).status()).isEqualTo(NodeStatus.CRASHED);
         } finally {
-            fakeModule.setStatus(ModuleStatus.IDLE);
+            Mockito.reset(matrixModule);
             cluster.recover(4);
         }
     }

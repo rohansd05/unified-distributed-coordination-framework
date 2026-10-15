@@ -84,7 +84,7 @@ public class MpiModule implements ExperimentModule {
     static final String TITLE = "MPI Collectives";
 
     /** The largest seed a JavaScript number holds exactly (2^53 - 1), so the page shows the seed used. */
-    static final long MAX_SEED = (1L << 53) - 1;
+    public static final long MAX_SEED = (1L << 53) - 1;
 
     /** Exchanges in one transfer: the registry lookup, RMI's DGC dirty call inside it, the method call. */
     public static final int EXCHANGES_PER_TRANSFER = 3;
