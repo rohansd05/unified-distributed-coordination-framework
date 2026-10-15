@@ -32,6 +32,10 @@ public final class MetricNames {
     public static final String REPLICATION_EPOCH = "distributed_replication_epoch";
     public static final String FAILURES_TOTAL = "distributed_failures_total";
     public static final String RECOVERY_DURATION = "distributed_recovery_duration";
+    /** Experiment 8: client updates of the update stream, by accepting primary ("0" if given up), model and status. */
+    public static final String FAILOVER_UPDATES_TOTAL = "distributed_failover_updates_total";
+    /** Experiment 8: acknowledged updates the new primary lacked when the service was restored, by new primary and model. */
+    public static final String FAILOVER_LOST_UPDATES_TOTAL = "distributed_failover_lost_updates_total";
     public static final String MAP_TASKS_TOTAL = "distributed_map_tasks_total";
     public static final String REDUCE_TASKS_TOTAL = "distributed_reduce_tasks_total";
     /** Experiment 9: remote transfers per root node, by target node, operation, direction and status (LOCAL excluded). */

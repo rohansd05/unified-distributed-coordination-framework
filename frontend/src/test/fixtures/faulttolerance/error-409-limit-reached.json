@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Not possible now","status":409,"detail":"This session has used its budget of 400 updates. A cluster reset gives a fresh budget.","instance":"/api/modules/faulttolerance/stream/start","moduleId":"faulttolerance","reason":"UPDATE_LIMIT_REACHED"}

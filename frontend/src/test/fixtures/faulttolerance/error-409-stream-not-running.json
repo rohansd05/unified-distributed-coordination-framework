@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Not possible now","status":409,"detail":"No update stream is running.","instance":"/api/modules/faulttolerance/stream/stop","moduleId":"faulttolerance","reason":"STREAM_NOT_RUNNING"}

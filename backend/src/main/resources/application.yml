@@ -157,6 +157,12 @@ udcf:
       # The chosen node's catch-up from the other live peers (in parallel); a peer not done is skipped.
       catch-up-timeout-millis: 1000
     history-limit: 10
+    # E8c update stream: one update at a time. Exp 5 publishes about 10 events per update on 5 nodes,
+    # so max-updates (the budget of one reset session) keeps them inside the 5000-event buffer.
+    stream:
+      default-rate-per-second: 4
+      max-rate-per-second: 10
+      max-updates: 400
 
   # Experiment 9 (lab 9). MPI collectives over the Experiment 1 RMI layer (E9a model; E9b transport).
   mpi:

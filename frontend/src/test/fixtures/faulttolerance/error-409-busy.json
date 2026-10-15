@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Module busy","status":409,"detail":"Module 'faulttolerance' is busy: 'Start of the fault tolerance experiment' is in progress","instance":"/api/modules/faulttolerance/crash-primary","moduleId":"faulttolerance","actionInProgress":"Start of the fault tolerance experiment"}

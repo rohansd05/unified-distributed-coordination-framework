@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Not possible now","status":409,"detail":"A failover is in progress: wait until the new primary serves before crashing it.","instance":"/api/modules/faulttolerance/crash-primary","moduleId":"faulttolerance","reason":"NO_SERVING_PRIMARY"}

@@ -1,0 +1,18 @@
+2026-10-15 18:18:13.157 | node=0 | category=STREAM_STARTED | seq=34 | lamport=2 | module=faulttolerance | msg=Update stream started: synchronous updates, 4 per second
+2026-10-15 18:18:18.085 | node=0 | category=SPLIT_BRAIN_CHECKED | seq=171 | lamport=3 | module=faulttolerance | msg=No two primaries when the service was restored: node 2 is the only primary
+2026-10-15 18:18:18.307 | node=0 | category=SPLIT_BRAIN_CHECKED | seq=249 | lamport=4 | module=faulttolerance | msg=No two primaries when the old primary recovered: node 2 is the only primary
+2026-10-15 18:18:18.450 | node=0 | category=MODE_CHANGED | seq=260 | lamport=5 | module=faulttolerance | msg=Next updates are asynchronous
+2026-10-15 18:18:18.481 | node=0 | category=STREAM_STOPPED | seq=261 | lamport=6 | module=faulttolerance | msg=Update stream stopped on request after 13 updates
+2026-10-15 18:18:18.481 | node=0 | category=SPLIT_BRAIN_CHECKED | seq=262 | lamport=7 | module=faulttolerance | msg=No two primaries when the stream stopped: node 2 is the only primary
+2026-10-15 18:18:12.947 | node=1 | category=PRIMARY_PROMOTED | seq=33 | lamport=20 | module=faulttolerance | msg=Node 1 is the first primary, at epoch 2
+2026-10-15 18:18:17.832 | node=3 | category=FAILURE_DETECTED | seq=144 | lamport=162 | module=faulttolerance | peer=1 | msg=Node 3 detected that primary node 1 failed: no heartbeat for 2809 ms
+2026-10-15 18:18:15.595 | node=1 | category=PRIMARY_CRASHED | seq=135 | lamport=172 | module=faulttolerance | msg=Primary node 1 crashed (crash started by this experiment)
+2026-10-15 18:18:18.277 | node=1 | category=OLD_PRIMARY_RECOVERED | seq=182 | lamport=178 | module=faulttolerance | msg=Node 1, primary at epoch 2 before its crash, is back and asks the cluster for its role
+2026-10-15 18:18:17.846 | node=2 | category=PRIMARY_PROMOTED | seq=158 | lamport=186 | module=faulttolerance | peer=1 | msg=Node 2 took over from node 1 at epoch 3
+2026-10-15 18:18:18.083 | node=2 | category=SERVICE_RESTORED | seq=168 | lamport=201 | module=faulttolerance | peer=1 | msg=Node 2 accepted update 'setting-0011' at epoch 3: service restored
+2026-10-15 18:18:18.084 | node=2 | category=FAILOVER_MEASURED | seq=169 | lamport=202 | module=faulttolerance | peer=1 | msg=Failover from node 1 to node 2 measured: outage 2488.4 ms
+2026-10-15 18:18:18.085 | node=2 | category=DATA_LOSS_MEASURED | seq=170 | lamport=203 | module=faulttolerance | msg=Node 2 lacks 0 of 11 acknowledged updates
+2026-10-15 18:18:18.304 | node=1 | category=ROLE_QUERY | seq=244 | lamport=237 | module=faulttolerance | msg=Node 1 asked 4 nodes who is in charge (4 answered): a newer epoch 3 exists, so it steps down; node 2 is primary
+2026-10-15 18:18:18.304 | node=1 | category=OLD_PRIMARY_DEMOTED | seq=245 | lamport=238 | module=faulttolerance | peer=2 | msg=Node 1 was primary at epoch 2; it saw epoch 3 and stays a backup
+2026-10-15 18:18:18.307 | node=1 | category=RESYNCHRONISED | seq=247 | lamport=244 | module=faulttolerance | peer=2 | msg=Node 1 copied node 2's store: 3 of 13 items applied
+2026-10-15 18:18:18.307 | node=1 | category=RECOVERY_MEASURED | seq=248 | lamport=245 | module=faulttolerance | msg=Node 1 recovered as a backup in 30.1 ms
