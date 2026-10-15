@@ -56,7 +56,13 @@ export const EXPERIMENTS = [
     arrivesIn: 9,
     concept: 'Split one big job across the workers, then combine their partial answers into one exact result.',
   },
-  { lab: 8, id: 'faulttolerance', title: 'Fault Tolerance', arrivesIn: 7 },
+  {
+    lab: 8,
+    id: 'faulttolerance',
+    title: 'Fault Tolerance',
+    arrivesIn: 7,
+    concept: 'When the primary dies a backup takes over: how fast, and did any update the client was told had succeeded go missing?',
+  },
   {
     lab: 9,
     id: 'mpi',

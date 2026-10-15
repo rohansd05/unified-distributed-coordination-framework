@@ -1,0 +1,40 @@
+{
+  "runId": 1,
+  "oldPrimaryId": 1,
+  "oldEpoch": 2,
+  "crashSource": "ACTION",
+  "detectedByNodeId": 3,
+  "newPrimaryId": 2,
+  "newEpoch": 3,
+  "outcome": "INTERRUPTED",
+  "milestones": [
+    {
+      "kind": "CRASHED",
+      "nodeId": 1,
+      "offsetMillis": 0
+    },
+    {
+      "kind": "DETECTED",
+      "nodeId": 3,
+      "offsetMillis": 2238.1059
+    },
+    {
+      "kind": "ELECTED",
+      "nodeId": 2,
+      "offsetMillis": 2238.5038
+    },
+    {
+      "kind": "PROMOTED",
+      "nodeId": 2,
+      "offsetMillis": 2248.9311
+    }
+  ],
+  "measurements": {
+    "detectionMillis": 2238.1059,
+    "failoverMillis": 10.8252,
+    "serviceRestoredMillis": null,
+    "outageMillis": null,
+    "recoveryMillis": null
+  },
+  "dataLoss": null
+}

@@ -1,0 +1,104 @@
+{
+  "status": "RUNNING",
+  "actionInProgress": null,
+  "started": true,
+  "phase": "STEADY",
+  "currentPrimaryId": 1,
+  "primaryEpoch": 2,
+  "highestEpoch": 2,
+  "nodes": [
+    {
+      "nodeId": 1,
+      "nodeStatus": "UP",
+      "role": "PRIMARY",
+      "serving": true,
+      "epoch": 2,
+      "believedPrimaryId": 1,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 2,
+      "nodeStatus": "UP",
+      "role": "PRIMARY",
+      "serving": true,
+      "epoch": 2,
+      "believedPrimaryId": 2,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 3,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 2,
+      "believedPrimaryId": 1,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 4,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 2,
+      "believedPrimaryId": 1,
+      "rejoin": "READY"
+    },
+    {
+      "nodeId": 5,
+      "nodeStatus": "UP",
+      "role": "BACKUP",
+      "serving": false,
+      "epoch": 2,
+      "believedPrimaryId": 1,
+      "rejoin": "READY"
+    }
+  ],
+  "stream": {
+    "state": "RUNNING",
+    "mode": "SYNCHRONOUS",
+    "ratePerSecond": 4,
+    "sent": 10,
+    "acknowledged": 10,
+    "gaveUp": 0,
+    "inFlightSequence": null,
+    "maxUpdates": 400,
+    "remainingUpdates": 390,
+    "startedAt": "2026-10-15T18:18:13.155940500Z",
+    "stoppedAt": null,
+    "stopReason": null
+  },
+  "splitBrain": {
+    "passed": false,
+    "highestEpoch": 2,
+    "livePrimaries": [
+      1,
+      2
+    ],
+    "violations": [
+      {
+        "kind": "DUPLICATE_PRIMARY",
+        "nodeIds": [
+          1,
+          2
+        ],
+        "epoch": 2,
+        "highestEpoch": 2,
+        "message": "Nodes 1 and 2 both act as primary at epoch 2"
+      }
+    ],
+    "violationsSeen": 1
+  },
+  "dataLossNow": {
+    "acknowledged": 10,
+    "lost": 0,
+    "lostKeys": [],
+    "lostSynchronous": 0,
+    "lostAsynchronous": 0,
+    "simulated": false,
+    "simulatedDelayMillis": null,
+    "simulatedReason": null,
+    "notAssessed": null
+  },
+  "acknowledgedUpdates": 10,
+  "rejectedEventCount": 0
+}

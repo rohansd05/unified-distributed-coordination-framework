@@ -1,0 +1,40 @@
+[
+  {
+    "sequence": 9001,
+    "module": "faulttolerance",
+    "nodeId": 1,
+    "type": "ROLE_QUERY_FAILED",
+    "lamportTime": 90,
+    "wallTime": "2026-10-15T18:18:13.157447300Z",
+    "peerId": null,
+    "message": "No node answered node 1's role query (attempt 5 of 5); it stays non-primary",
+    "data": {
+      "attempt": 5,
+      "maxAttempts": 5,
+      "asked": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "ownRole": "BACKUP",
+      "ownEpoch": 2,
+      "retryInMillis": null
+    }
+  },
+  {
+    "sequence": 9002,
+    "module": "faulttolerance",
+    "nodeId": 0,
+    "type": "NO_CANDIDATE",
+    "lamportTime": 91,
+    "wallTime": "2026-10-15T18:18:13.157447300Z",
+    "peerId": null,
+    "message": "No live node is ready to take over as primary",
+    "data": {
+      "excluded": [
+        1
+      ]
+    }
+  }
+]

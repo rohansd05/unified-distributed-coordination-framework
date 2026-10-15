@@ -14,6 +14,8 @@ import { mapReduceApi } from '@/modules/mapreduce/mapReduceApi'
 import mapReduceOverviewIdle from '@/test/fixtures/mapreduce/overview-idle.json'
 import { rmiApi } from '@/modules/rmi/rmiApi'
 import { mpiApi } from '@/modules/mpi/mpiApi'
+import { faultToleranceApi } from '@/modules/faulttolerance/faultToleranceApi'
+import faultToleranceOverviewBefore from '@/test/fixtures/faulttolerance/overview-before-start.json'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -39,6 +41,9 @@ beforeEach(() => {
   vi.spyOn(mpiApi, 'getOverview').mockResolvedValue(null)
   vi.spyOn(mpiApi, 'start').mockResolvedValue(null)
   vi.spyOn(mpiApi, 'getHistory').mockResolvedValue(null)
+  vi.spyOn(faultToleranceApi, 'getOverview').mockResolvedValue(faultToleranceOverviewBefore)
+  vi.spyOn(faultToleranceApi, 'getStatus').mockResolvedValue(faultToleranceOverviewBefore.current)
+  vi.spyOn(faultToleranceApi, 'getLatestRun').mockResolvedValue(null)
 })
 
 afterEach(() => {

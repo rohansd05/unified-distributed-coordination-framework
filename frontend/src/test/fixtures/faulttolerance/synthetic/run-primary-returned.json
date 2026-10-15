@@ -1,0 +1,30 @@
+{
+  "runId": 1,
+  "oldPrimaryId": 1,
+  "oldEpoch": 2,
+  "crashSource": "ACTION",
+  "detectedByNodeId": null,
+  "newPrimaryId": null,
+  "newEpoch": null,
+  "outcome": "PRIMARY_RETURNED",
+  "milestones": [
+    {
+      "kind": "CRASHED",
+      "nodeId": 1,
+      "offsetMillis": 0
+    },
+    {
+      "kind": "OLD_PRIMARY_RECOVERED",
+      "nodeId": 1,
+      "offsetMillis": 1500.25
+    }
+  ],
+  "measurements": {
+    "detectionMillis": null,
+    "failoverMillis": null,
+    "serviceRestoredMillis": null,
+    "outageMillis": null,
+    "recoveryMillis": null
+  },
+  "dataLoss": null
+}
