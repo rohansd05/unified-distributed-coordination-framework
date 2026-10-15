@@ -30,7 +30,7 @@
 
 - [X] E8a — epoch rules, `SystemUpdate`, `UpdateStore` and `FailoverMetrics` as pure classes. Needs: E4d.
 - [X] E8b — failover on the replication service plus the `FailureDetector`, promoting through election. Needs: E5b (Track C), E4b, E4c.
-- [ ] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
+- [x] E8c — `FaultToleranceModule` (lab 8): start and stop an update stream, crash the primary, sync/async toggle, recover the old primary, the four measurements. Needs: E8b.
 - [ ] E8d — page and end-to-end check. Needs: E8c, E2d.
 
 ---
@@ -270,6 +270,140 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 2. The asynchronous delay shown is `DataLossReport.simulatedDelayMillis` / `WriteResult.simulatedDelayMillis` with the Simulated badge, never a typed number.
 3. "Recover old primary" shows ROLE_QUERY then OLD_PRIMARY_DEMOTED and RESYNCHRONISED; with no peer reachable it shows ROLE_QUERY_FAILED and the node stays non-primary.
 
+### E8c interfaces: the Experiment 8 module and REST API (`com.udcf.modules.faulttolerance`), for E8d
+
+**Module.** `FaultToleranceModule` (id `faulttolerance`, lab 8, title "Fault Tolerance"), a Spring `@Component` that `ModuleRegistry` collects; `GET /api/modules` lists `{id: "faulttolerance", labNumber: 8, title: "Fault Tolerance", status}`. It owns one E8b `FailoverCluster`, the `UpdateStream` (thread `udcf-faulttolerance-stream`, one update at a time), the data loss captured per run, the distinct split-brain violations seen, and the `ModuleActionGuard`. Status: BUSY only while the guard is held (start, stream start, crash, recover); RUNNING while Experiment 8 is started or the stream runs; else IDLE.
+
+**Endpoints** (`/api/modules/faulttolerance`; errors are RFC 7807 ProblemDetail)
+
+| Verb, path | Success | Errors |
+| --- | --- | --- |
+| `GET` | 200 overview `{current, latestRun, settings, glossary, notes}`; starts, records and publishes nothing | - |
+| `GET /status` | 200 the live part only (`current` of the overview) | - |
+| `POST /start` | 202 `{outcome: "STARTED", reason: null, status}`; the first primary is appointed asynchronously | 409 busy |
+| (again) | 200 `{outcome: "ALREADY_STARTED", reason, status}` | - |
+| `POST /stream/start` body `{mode, ratePerSecond}` | 202 stream; starts Experiment 8 first if needed (one guard) | 400 fields; 409 busy, `STREAM_RUNNING`, `UPDATE_LIMIT_REACHED` |
+| `POST /stream/stop` | 200 stream, `stopReason: REQUESTED` | 409 `STREAM_NOT_RUNNING` |
+| `PUT /mode` body `{mode}` | 200 stream; applies from the next update, running or not | 400 |
+| `POST /crash-primary` | 202 `{nodeId, epoch, crashSource: "ACTION", status}` | 409 busy, `NO_SERVING_PRIMARY` |
+| `POST /recover` | 202 `{nodeId, previousEpoch, status}`; recovers the latest run's old primary, which rejoins on its own | 409 busy, `NOTHING_TO_RECOVER` |
+| `GET /runs` | 200 kept runs, newest first, `[]` when none | - |
+| `GET /runs/latest` | 200 run | 404 `{title: "Unknown run", runId: null}` |
+| `GET /runs/{runId}` | 200 run | 404 `runId`; 400 non-numeric id |
+
+There is no separate timeline endpoint (Q5): the timeline is `milestones` of a run (`GET /runs/latest`, `GET /runs/{id}`).
+
+**Failure and conflict matrix**
+
+| Request | State | Answer |
+| --- | --- | --- |
+| any guarded action | another guarded action runs | 409 "Module busy", `moduleId`, `actionInProgress` |
+| `POST /stream/start` | `mode` or `ratePerSecond` missing, rate < 1, unknown mode | 400 `errors.mode` / `errors.ratePerSecond`; unknown enum: 400 "Failed to read request" |
+| `POST /stream/start` | rate above `max-rate-per-second` | 400 `errors.ratePerSecond: "must be between 1 and <max>"` |
+| `POST /stream/start` | a stream runs | 409 `STREAM_RUNNING` |
+| `POST /stream/start` | the session budget is used | 409 `UPDATE_LIMIT_REACHED`, "This session has used its budget of N updates. A cluster reset gives a fresh budget." |
+| `POST /stream/stop` | no stream runs | 409 `STREAM_NOT_RUNNING` |
+| `PUT /mode` | `mode` missing | 400 `errors.mode` |
+| `POST /crash-primary` | not started | 409 `NO_SERVING_PRIMARY`, "Experiment 8 has not started yet, ..." |
+| `POST /crash-primary` | a failover is in progress (latest run IN_PROGRESS) | 409 `NO_SERVING_PRIMARY`, "A failover is in progress: wait until the new primary serves before crashing it." |
+| `POST /crash-primary` | started, first primary not serving yet | 409 `NO_SERVING_PRIMARY`, "No primary serves yet: the first primary is still being appointed." |
+| `POST /recover` | no run since the reset | 409 `NOTHING_TO_RECOVER`, "No primary has failed since the last reset, ..." |
+| `POST /recover` | the old primary is already up | 409 `NOTHING_TO_RECOVER`, "Node k, the old primary, is already up." |
+| `POST /start` | already started | 200 `ALREADY_STARTED` with a reason (not a mistake) |
+| `GET /runs/latest` | no run since the reset | 404 `runId: null` |
+| `GET /runs/{id}` | id not kept (evicted or never existed) | 404 `runId` |
+
+**Response shapes** (records in `dto/`; nulls kept on the wire; no nano-clock value is ever sent, so every number stays below 2^53 - 1)
+
+- Status: `{status, actionInProgress, started, phase, currentPrimaryId, primaryEpoch, highestEpoch, nodes[], stream, splitBrain, dataLossNow, acknowledgedUpdates, rejectedEventCount}`. `currentPrimaryId`/`primaryEpoch` null while no primary serves; `dataLossNow` null while no primary store exists (before start, during a failover).
+- Node: `{nodeId, nodeStatus, role, serving, epoch, believedPrimaryId, rejoin}`. `role` (PRIMARY/BACKUP), `epoch`, `believedPrimaryId` and `rejoin` are null while the node is down; `role`/`epoch` also null without a replication service.
+- Stream: `{state RUNNING|STOPPED, mode, ratePerSecond, sent, acknowledged, gaveUp, inFlightSequence, maxUpdates, remainingUpdates, startedAt, stoppedAt, stopReason REQUESTED|LIMIT_REACHED|ERROR}`; counts are the current or last stream's; `maxUpdates`/`remainingUpdates` are always known (the session budget).
+- Split brain: `{passed, highestEpoch, livePrimaries, violations[{kind, nodeIds, epoch, highestEpoch, message}], violationsSeen}`.
+- Data loss: `{acknowledged, lost, lostKeys, lostSynchronous, lostAsynchronous, simulated, simulatedDelayMillis, simulatedReason, notAssessed}`; counts null when not assessed; delay and reason null when no simulated delay applied.
+- Run: `{runId, oldPrimaryId, oldEpoch, crashSource, detectedByNodeId, newPrimaryId, newEpoch, outcome, milestones[{kind, nodeId, offsetMillis}], measurements{detectionMillis, failoverMillis, serviceRestoredMillis, outageMillis, recoveryMillis}, dataLoss}`. Milestone kinds: CRASHED, DETECTED, ELECTED, PROMOTED, SERVICE_RESTORED, OLD_PRIMARY_RECOVERED, DEMOTED, RESYNCHRONISED (recorded ones only, in time order, offsets in ms from the run's first instant on the backend's monotonic clock). `dataLoss` null until the service is restored.
+- Settings: `{defaultRatePerSecond, maxRatePerSecond, maxUpdates, historyLimit, heartbeatIntervalMillis, heartbeatTimeoutMillis, retryWindowMillis, worstCaseFailoverMillis, asyncDelayMillis, asyncDelaySimulated, asyncDelayReason, coHostingSimulated, coHostingReason}`.
+
+**Glossary** (served verbatim in the overview; the measured intervals keep the E8a names, Q3)
+
+| id | label | kind | definition |
+| --- | --- | --- | --- |
+| detection | Detection time | measured | From the crash of the primary to the first moment any live node's failure detector suspected it. |
+| failover | Failover time | measured | From that detection to the moment the new primary started acting as primary, after its catch-up and term record. |
+| serviceRestored | Time to first update | measured | From the promotion to the first client update the new primary accepted. |
+| outage | Outage | measured | From the crash of the primary to the first client update the new primary accepted, measured directly rather than added up. |
+| recovery | Recovery time | measured | From the old primary coming back to the moment it had demoted itself and copied the new primary's store. |
+| dataLoss | Data loss | measured | Updates the client was told had succeeded that the new primary does not hold at that version or newer, checked when the service is restored. |
+| expectedDetection | Expected detection window | derived | Between the heartbeat timeout minus one interval and the timeout plus one interval after the crash: the last heartbeat may arrive up to one interval before the crash, and silence is checked once per interval. From the failure detector's settings; not a measurement. |
+| worstCaseFailover | Worst-case failover | derived | Detection plus two promotion attempts, from the configured timeouts. The client keeps retrying at least this long. |
+
+The four HANDOFF measurements are detection, failover, recovery and data loss; outage (crash to service) and time to first update are shown beside them.
+
+**Notes** (served verbatim; `{d}` is `udcf.replication.async-delay-millis`, never typed, Q2)
+
+1. Every update, heartbeat, role query and copy crosses a real socket on 127.0.0.1. The nodes share one process, so the network between them is the loopback interface.
+2. In asynchronous mode the primary waits {d} ms before pushing each update to the backups. That delay is simulated: it stands in for network latency, and it is the window in which a crash loses updates the client was told had succeeded.
+3. Synchronous mode confirms an update only after every backup push has finished, and the new primary catches up from the other live backups before taking over, so a crash of the primary loses no confirmed update.
+4. Data loss counts only updates the client was told had succeeded. An update still being retried when the primary crashed is not lost; it is sent again to the new primary.
+5. All intervals come from one monotonic clock in the backend. A crash started on the Cluster page is stamped as the node goes down, slightly late, and is marked so.
+6. For now the new primary is the lowest-numbered live node that is ready; from Phase 9A it will be the leader elected by Experiment 4.
+7. Backups refuse any update stamped with an older epoch than the newest they know, so a returning old primary cannot overwrite newer data even if it misbehaves.
+8. Until Phase 9A this experiment and Experiment 5 share each node's replication service, so a write on the Experiment 5 page can move the primary.
+
+Simulated badges: `settings.asyncDelaySimulated` with `asyncDelayReason`, `dataLoss.simulated` with `simulatedReason`, and `settings.coHostingSimulated` with `coHostingReason`. Nothing else is simulated.
+
+**Events** (module `faulttolerance`; node events carry the node's Lamport tick, node 0 the cluster clock, the same convention as `ClusterResetService` and `LoadBalancingModule`; sentence case; nulls kept). E8b's events are unchanged. New in E8c, none per update:
+
+| Type | Node, peer | Data |
+| --- | --- | --- |
+| `STREAM_STARTED` | 0 | mode, ratePerSecond, maxUpdates, remainingUpdates |
+| `STREAM_STOPPED` | 0 | reason, sent, acknowledged, gaveUp, remainingUpdates |
+| `MODE_CHANGED` | 0 | mode, previousMode |
+| `OLD_PRIMARY_RECOVERED` | old primary | runId, previousEpoch |
+| `FAILOVER_MEASURED` | new primary, peer = old | runId, oldPrimaryId, newPrimaryId, newEpoch, the five intervals |
+| `DATA_LOSS_MEASURED` | new primary | runId, oldPrimaryId, newPrimaryId, newEpoch, acknowledged, lost, lostSynchronous, lostAsynchronous, simulated, simulatedDelayMillis, notAssessed |
+| `RECOVERY_MEASURED` | old primary | runId, oldPrimaryId, newPrimaryId, newEpoch, recoveryMillis |
+| `SPLIT_BRAIN_CHECKED` | 0 | checkedWhen, passed, livePrimaries, highestEpoch, violations |
+
+`SPLIT_BRAIN_CHECKED` is published when the stream stops, when the service is restored, when the old primary has recovered, and when a new violation is first seen (the check also runs, unpublished, at every stream outcome). Reads (status, overview, runs) never publish an event and never change a counter (C1). No event on a busy rejection (Q7). Exp 5 publishes about 10 events per update on 5 nodes and about 6 on 3 (measured: 10.15 and 6.15 per update, `FaultToleranceModuleTest.eventVolumePerUpdateFitsTheBuffer`), which is why the stream has a budget.
+
+**Metrics** (R5). Reused unchanged: `distributed_failures_total{node_id}` (failures detected), `distributed_recovery_duration{node_id, interval}` (the intervals; the count of `interval=outage` is the number of restored failovers), Exp 5's `distributed_replication_acks_total{node_id, result="STALE_EPOCH"}` (stale-epoch refusals). New in `MetricNames`: `distributed_failover_updates_total{node_id = accepting primary, or "0" if it gave up; model; status = acknowledged | gave_up}` (at most 24 series) and `distributed_failover_lost_updates_total{node_id = new primary; model}` (grows by the measured counts at each capture, a measured 0 included; at most 10 series). No new gauge; reads use `registry.find` only.
+
+**Configuration** (`udcf.faulttolerance.stream`, `FaultToleranceModuleProperties`; `history-limit` 10 is reused for the kept runs, Q6)
+
+| Key | Local | Public | Meaning |
+| --- | --- | --- | --- |
+| `default-rate-per-second` | 4 | 4 | the rate the page offers first |
+| `max-rate-per-second` | 10 | 5 | highest rate a stream may ask for |
+| `max-updates` | 400 | 200 | budget of one reset session: 400 x 10.15 = 4060 events (buffer 5000); 200 x 6.15 = 1230 (buffer 1500) |
+
+**Link hooks.** L1: `FailoverCluster.tryPromote` -> `FailoverRoleSelector` (lowest live, ready node) -> `EpochAuthority.onLeaderElected(nodeId, at)`, the `// TODO(L1)` seam (Q1: there is no role provider; E8c does not call the election module). L2: E8b's `FailureListener` on the shared `FailureDetector`, registered by `FaultToleranceNodeService.start`; E8c's start starts the election service on every node. Left for Phase 9A.1: feed `onLeaderElected` from `LEADER_CHANGED` / `Cluster.leaderId()` and remove the selector; add PRIMARY/BACKUP to `NodeRole`; resynchronise a planned-handover target first; remove the Exp 5 interference.
+
+**Reset and shutdown.** `reset()` stops the stream without an event (the cluster reset clears the history anyway), restores the update budget, forgets the captured data loss, the published recoveries and the violations, then calls `FailoverCluster.reset()`. Sequence numbers are not reset. A cluster reset (lab order: Exp 4, Exp 5, Exp 8) recovers every node; Exp 5's reset clears every store, so every node is at epoch 1 with no acting primary (role BACKUP where the replication service runs); Exp 8 is not started and has no runs; the next start appoints node 1 at epoch 2. `close()` (Spring, `AutoCloseable`): bus subscription, stream thread, then the engine's client thread; each wait at most 5 s. The cluster reset is refused only while the guard is held.
+
+**Test ports** (Track B block; grep of the whole test tree before and after this step; no class shares a range)
+
+| Class | Range | What binds |
+| --- | --- | --- |
+| `UpdateStreamTest`, `FaultToleranceDtoMapperTest`, `FaultToleranceModulePropertiesTest`, `FaultToleranceUpdateMetricsTest` | none | nothing |
+| `FaultToleranceModuleTest` (`FaultToleranceModuleHarness`, no Spring) | 26460-26495 | election 26473-26477, replication 26479-26483; RMI, clock, requests and MapReduce never start |
+| `FaultToleranceControllerTest` (own context, MockMvc) | 26500-26555 | election 26521-26525, replication 26531-26535; all six bases overridden, the rest lazy and never started |
+| `FaultToleranceEndToEndTest` (own context, random HTTP port) | 26700-26755 | election 26721-26725, replication 26731-26735; HTTP on an ephemeral port |
+
+Ranges taken before E8c: 26100-26199, 26200-26255, 26300-26355, 26360-26395, 26400-26455, 26600-26655, 26801-26856. Still free after E8c: 26456-26459, 26496-26499, 26556-26599, 26656-26699, 26756-26800, 26857-26899. No test binds a plain blocker socket.
+
+**For E8d**
+
+1. Keys do not restart at `setting-0001` after a reset: sequence numbers go on, because an update in flight at a reset may still be accepted later and must not collide with a new key.
+2. The timeline is the run's `milestones`: offsets in ms from the run's first instant on the backend's monotonic clock, not wall times. Line them up with events by kind, not by time; event `wallTime` is display only.
+3. Exp 5 interference until Phase 9A.1 (E8b known issue): an Exp 5 action can move the primary; the page shows note 8.
+4. Stream budget: `stream.maxUpdates` and `stream.remainingUpdates` (status and overview). At 0, `POST /stream/start` answers 409 `UPDATE_LIMIT_REACHED` with "A cluster reset gives a fresh budget."; show that text and offer the cluster reset.
+5. Polling: one status read is in-process only (no socket): it walks the nodes, runs the split-brain check over each node's replication service, and copies the acknowledged ledger and the primary's store for the live data-loss check (both bounded by `max-updates`); it publishes nothing. Refresh on `/topic/modules/faulttolerance` events; while a stream runs or a failover is in progress, polling `GET /status` every 500 ms is affordable. Measured over HTTP during the capture (curl `time_total`): 4 status reads 0.0025 to 0.0037 s; 4 overview reads 0.0018 to 0.0031 s, except the first request after startup (0.036 s).
+6. `POST /crash-primary` blocks while the node's services close. Count from the code (sequential waits, each bounded at 5 s): election 3 (`ElectionNodeService.java:577-585`), faulttolerance 3 (`FaultToleranceNodeService.java:643-649`), replication 5 (`ReplicationNodeService.java:830-837`): 11 waits, worst case 55 s for a node running only Experiment 8's services; with every service on the node also mapreduce 2, requests 1, RMI 1, clock 0: 15 waits, 75 s. Usual duration, measured over HTTP during the capture (curl `time_total`): 0.0087 s (synchronous scenario) and 0.0050 s (asynchronous scenario); 0.0082 s in the discarded first capture. Both worst cases exceed the page's 10000 ms HTTP timeout; a timeout there does not mean the crash failed: refetch the status.
+7. Synthetic fixture states (not producible for real; build as labelled synthetic copies): see the fixture README; at least a split-brain violation (`passed: false`), run outcomes `INTERRUPTED` and `PRIMARY_RETURNED` (the latter is real in `FaultToleranceModuleTest.oldPrimaryReturnsBeforePromotion` but not captured), and `ROLE_QUERY_FAILED` / `NO_CANDIDATE` states.
+8. Recover while a failover is still in progress, C8: if the old primary comes back before anyone was chosen (no live node detected it, or no candidate), the run ends `PRIMARY_RETURNED` with `newPrimaryId: null`, milestones CRASHED and OLD_PRIMARY_RECOVERED, every interval null, `dataLoss` null; the node rejoins through its role query. Tested deterministically with every other node down (`oldPrimaryReturnsBeforePromotion`). If a node was already chosen, the run continues and the old primary demotes as usual.
+9. Recovery time: read `recoveryMillis` from `GET /runs` or `GET /runs/latest`; never wait for the `RECOVERY_MEASURED` event, which can be missing when no stream runs and no later action happens (see the recovery event race in Known issues).
+10. A failover only completes with a running stream: the run ends RESTORED at the new primary's first accepted update, so without a stream it stays IN_PROGRESS (phase PROMOTING) and `dataLoss` stays null. `POST /crash-primary` answers 409 "A failover is in progress" only until the new primary serves (detection plus promotion, about 2.25 s in the capture); from then on the new primary counts as serving (its term record is written, `FaultToleranceNodeService.promote`), so a second crash is accepted (202): the earlier run ends INTERRUPTED and a new run opens (`FailoverStateMachine.open`). The page must start a stream before offering "Crash primary" (or disable the button with a hint), so every run can be restored and measured.
+
 ---
 
 ## Deliberate differences from the legacy code
@@ -405,6 +539,30 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 
 ---
 
+## Requirements Coverage (E8c)
+
+| Requirement | Implementation | Test |
+| --- | --- | --- |
+| Module lab 8, registered; IDLE/RUNNING/BUSY (BUSY only under the guard) | `FaultToleranceModule` | `FaultToleranceModuleTest.statusAndIdempotentStart`, `FaultToleranceControllerTest.listedInModules`, `busyIs409` |
+| Start (idempotent), stream start/stop, mode, crash, recover, runs | `FaultToleranceController` | `FaultToleranceControllerTest` (10), `FaultToleranceModuleTest` |
+| Stream one update at a time, budget per session, sequences go on after a reset | `UpdateStream` | `UpdateStreamTest` (10, scripted submitter) |
+| C4: stream start on a never-started module starts it inside one guard | `startStream` + `startServices` (takes no guard) | `FaultToleranceModuleTest.streamStartStartsTheModule`, `FaultToleranceControllerTest.streamLifecycle` |
+| Synchronous: zero loss (a measured 0); recovered old primary demotes | `captureRestore`, E8b rejoin | `FaultToleranceModuleTest.synchronousFailoverLosesNothingAndOldPrimaryDemotes`, `FaultToleranceEndToEndTest.synchronousCrashFailoverRecover` |
+| Asynchronous: in-flight loss, labelled simulated, deterministic (C2) | `DataLoss` against the ledger; delay 5000 ms in the test | `FaultToleranceModuleTest.asynchronousFailoverShowsInFlightLoss`, `FaultToleranceEndToEndTest.asynchronousCrashShowsInFlightLoss` |
+| No two primaries at any observation | `FailoverCluster.splitBrain` on every status read | `FaultToleranceEndToEndTest` (every status read asserts it) |
+| C1: reads publish nothing and change no counter | GETs record nothing | `FaultToleranceControllerTest.readsPublishNothing` (100 GET /status), `FaultToleranceModuleTest.readsPublishNothing` |
+| C5: null rules (dataLossNow, role, epoch, rejoin) | `currentState`, `FaultToleranceDtoMapper.node` | `FaultToleranceDtoMapperTest.nodeNullRules`, `dataLossNullRules`, `FaultToleranceModuleTest.synchronousFailover...`, `FaultToleranceControllerTest.overviewBeforeStart` |
+| C8: old primary back before anyone is chosen | E8a `PRIMARY_RETURNED` | `FaultToleranceModuleTest.oldPrimaryReturnsBeforePromotion` |
+| No number above 2^53 - 1; nulls kept | offsets instead of nanos | `FaultToleranceDtoMapperTest.fullRunAsOffsets`, `crashedOnlyKeepsNulls` |
+| History bounded by history-limit; evicted run 404 | E8a state machine, `capturedLoss` pruned | `FaultToleranceModuleTest.historyIsBounded` |
+| Budget 409 names the cluster reset; reset gives a fresh budget | `limitReached` | `FaultToleranceModuleTest.budgetAndReset`, `FaultToleranceControllerTest.budgetIs409UntilReset` |
+| Exp 5 events per update fit the buffer in both profiles | `max-updates` 400 / 200 | `FaultToleranceModuleTest.eventVolumePerUpdateFitsTheBuffer` (10.15 and 6.15 per update) |
+| Metrics with node_id; measured 0 recorded; unassessed not | `FaultToleranceMetrics.updateFinished`, `dataLossMeasured` | `FaultToleranceUpdateMetricsTest` (3) |
+| Config from both YAML files | `FaultToleranceModuleProperties` | `FaultToleranceModulePropertiesTest` (4) |
+| Contract fixtures | captured live with curl.exe | `frontend/src/test/fixtures/faulttolerance/README.md` (39 files) |
+
+---
+
 ## Deviations
 
 - L4: heartbeats carry no Lamport stamp and do not advance the clock. Reason: at about 11 ticks per second per node (5 nodes) the Lamport values shown by Experiment 3 would change without any user action. Awaiting Rohan's sign-off at PR review.
@@ -421,6 +579,19 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 - E8b: the client retry window must cover `(heartbeat timeout + interval) + 2 x (catch-up timeout + 2 x replication timeout)` = 11200 ms with the shared timings; the default is 50 x 250 = 12500 ms (Correction 1). The earlier "about 6 s" in E8a note 5 counted one replication timeout only.
 - E8b: event names follow the E8b addendum, not the E8a list: `FAILURE_DETECTED` (E8a: `PRIMARY_SUSPECTED`), `OLD_PRIMARY_DEMOTED` (E8a: `PRIMARY_DEMOTED`); added `CATCH_UP_SKIPPED`, `PROMOTION_FAILED`, `NO_CANDIDATE`, `PRIMARY_RESUMED`, `RESYNC_FAILED`, `STALE_EPOCH_REFUSED`, `SERVICE_START_FAILED`. `PRIMARY_CRASHED` is published by E8b (E8a listed it for E8c).
 - E8b: the role query reads the replicated term record (`failover.term`) over the existing replication READ (Q2), so no protocol change in Track C.
+- E8c (Q1): the new primary still comes from the module-local `FailoverRoleSelector` feeding `EpochAuthority.onLeaderElected` (`// TODO(L1)`). The E8c brief asked for "the election module's role provider", which does not exist; docs/tracks/README.md line 59 rules until Phase 9A (approved).
+- E8c (Q2): the simulated asynchronous delay shown is `udcf.replication.async-delay-millis` (450 ms locally) as configured and as the replication service reports it, not HANDOFF 6.11's 220 ms; no number is typed into code or texts (approved, as E8a).
+- E8c (Q3): the measurements keep the E8a names: failover = detection to promoted; outage = crash to first accepted update (the brief's "crash to new primary serving"). The glossary carries both (approved).
+- E8c (Q4): the module status is BUSY only while the guard is held. This replaces E8b's "Notes for E8c" item 1 sentence "Status: BUSY while an action holds the guard or a run is SUSPECTED/PROMOTING; RUNNING while the stream runs; else IDLE." Reason: PROMOTING lasts until the first write and SUSPECTED with no candidate never ends, so either would block the cluster reset indefinitely (approved).
+- E8c (Q5): no timeline endpoint and no alias; the timeline is a run's `milestones` (approved).
+- E8c (Q6): no new history property; `udcf.faulttolerance.history-limit` (10) bounds the kept runs (approved).
+- E8c (Q7): no event on a busy rejection; the 409 is enough (approved).
+- E8c (Q8): the update budget is per reset session (400 local, 200 public), not per stream (approved with conditions: the 409 text names the cluster reset; status and overview serve `maxUpdates` and `remainingUpdates`).
+- E8c (Q9): the module is tested on real sockets through `FaultToleranceModuleHarness`; only `UpdateStream` has a scripted submitter; `FailoverCluster` unchanged (approved).
+- E8c (C1): `SplitBrainDto` has no `checks` counter (the plan had one): reads must not change counters. "SPLIT_BRAIN_CHECKED at a stream outcome" is implemented as: the check runs (unpublished) at every update outcome and is published when a new violation is first seen; it is published when the stream stops, at restore and at recovery. Publishing it after every update would add one event per update to the ring buffer.
+- E8c (C5): `dataLossNow` is null whenever no primary serves, also when nothing was acknowledged yet (E8a's `DataLoss.measure` reports NOTHING_ACKNOWLEDGED before NO_PRIMARY_STORE). `rejoin` is also null for a node that is down (E8b reports REJOINING for a crashed node; found in the first capture).
+- E8c: no recommended client timeout in the overview. No call waits on the network or a failover; the only blocking is `Cluster.crash`'s thread joins, bounded by the 5 s code constant of each service, not by a property (see "For E8d" item 6).
+- E8c: the derived "expected detection window" text was corrected during Stage C from "between the heartbeat timeout and the timeout plus one interval" to "between the timeout minus one interval and the timeout plus one interval" (1.8 to 3.2 s with the shared timings, as E8a recorded): the first capture measured a detection of 2204.75 ms, below the 2500 ms timeout. The fixtures were recaptured after the fix.
 
 ---
 
@@ -451,6 +622,11 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 - E8b: a sync write is confirmed by Track C even if a backup push FAILED; the catch-up before promotion recovers it from any live peer that holds it. An asynchronous update that never left the old primary is lost (measured, labelled simulated), and stays only in the old primary's store at the old epoch after it rejoins (Track C's "orphan local item").
 - E8b, **SO_REUSEADDR (for Rohan):** `ReplicationNodeService.java:806` calls `socket.setReuseAddress(true)` on the replication server socket unconditionally, with no guard for Windows or any other OS. Not changed (Track C's file). On Windows the JDK binds exclusively by default, so a second bind still fails (seen in `FailoverClusterTest.catchUpWithSilentPeerIsBounded`, where node 5's replication service cannot bind a port held by a test socket).
 - E8b: verified on Windows only (5 sequential runs of the new classes, 3 sequential full runs); Linux line left for the owner.
+- E8c, **recovery event race:** E8b publishes `RESYNCHRONISED` just before it records the instant in the state machine (`FaultToleranceNodeService.java:461-463`). The module publishes `RECOVERY_MEASURED` from that event and again at every stream outcome and module action, whichever first sees the recovery interval recorded. With no stream running and no further action, the event can therefore be missing; `GET /runs` always has `recoveryMillis`. E8b unchanged.
+- E8c, **update in flight at a reset:** the one update the stream may have in flight keeps retrying for up to the retry window (12.5 s locally) after a reset; if a primary is appointed meanwhile it may be accepted and is then genuinely acknowledged in the new session (it is not counted by the new stream). Its key never collides: sequence numbers are not reset.
+- E8c: `POST /crash-primary` can exceed the page's 10000 ms HTTP timeout in the worst case (55 s for a node running only Experiment 8's services, 75 s with every service); see "For E8d" item 6.
+- E8c: the live checks on a status read copy the acknowledged ledger and the primary's store (each at most `max-updates` entries per session) on the HTTP thread; cheap, but not free.
+- E8c: verified on Windows and on Linux (Docker, run by Swanand); see the 2026-10-16 progress-log line.
 
 ---
 
@@ -463,3 +639,5 @@ The upper bound of one promotion is therefore 4000 ms (catch-up 1000 + term reco
 - 2026-10-09 E4d done: Election page (node ring with live message arrows, result panel with honest states, leader changes from the cluster log, per-node figures, crash and recover without confirmation), sentence-case election event messages, per-node `electionsWon`/`roundsTimed`/`meanDurationMillis` in the overview, fixtures recaptured plus `overview-ring-timed-out.json`; backend 897 tests (baseline 893 + 4), frontend 537 tests (baseline 464 + 73); deviations: extra fixture `overview-ring-timed-out.json`; shared edits `registry.test.js` and `ExperimentPage.test.jsx` (election to matrix, both approved), `experiments.js` concept and `routes.test.jsx` spies (add-only).
 - 2026-10-09 E8a done: Experiment 8 pure classes in `com.udcf.modules.faulttolerance` (epoch rules and `EpochAuthority` with the `onLeaderElected` TODO(L1) seam, `FailoverStateMachine` with rejected-event counter and `InstantSource`, `FailoverMeasurements` incl. outage, `AcknowledgedLedger` and `DataLoss` with the simulated marker, bounded `UpdateRetryPolicy`, strict `SplitBrainChecker`), reusing Track C's `DataStore`, `DataItem`, `ConsistencyModel` and `WriteResult`; backend 1040 tests (baseline 960 + 80), frontend not run (no frontend change); deviations: step class names changed (`UpdateStore` not ported, `FailoverMetrics` renamed `FailoverMeasurements`), async delay as reported (450 ms, not 220), shared detector timings, redefined intervals, first promotion epoch 2.
 - 2026-10-09 E8b done: failover on the shared cluster (`FailoverCluster`, per-node `FaultToleranceNodeService`, role query over the replication READ channel with the `failover.term` term record, lowest-id `FailoverRoleSelector` behind TODO(L1), catch-up before promotion, rejoin with demote/adopt and resync, client updates with the E8a retry policy feeding the ledger, metrics, `udcf.faulttolerance` with a shared worst-case formula); backend 1084 tests (baseline 1040 + 44; new classes 5 sequential runs, full suite 3 sequential runs, all green; 1083 before the review test `promotionWithSeveralSilentAndDeadPeersIsBounded` was added), frontend not run (no frontend change); deviations: lowest-id selector (README), step-down at crash and OBSERVED stamped in `crash()` (Q4), catch-up before promotion and resync on STAY-as-backup (Q6), window formula 11200 ms (default 12500 ms), event names per the addendum.
+- 2026-10-15 E8c done: `FaultToleranceModule` (lab 8) and REST API under `/api/modules/faulttolerance` (start, stream start/stop with a per-session budget, mode, crash primary, recover old primary, runs with milestones, measurements and data loss), DTOs, 8 events, 2 metrics, `udcf.faulttolerance.stream`, 39 live contract fixtures; backend 1826 tests (46 new; new tests 5 runs plus reverse order, replication + election + faulttolerance 492, full suite 3 runs, all 0 failures, 1 skipped), frontend not run (no frontend code change); deviations: Q1 to Q9 as approved, C1 (no `checks` counter; SPLIT_BRAIN_CHECKED at stream stop, restore, recovery and a new violation), C5 (`dataLossNow` and a down node's `rejoin` null), no recommended client timeout, expected-detection text corrected and fixtures recaptured.
+- 2026-10-16 E8c Linux (Docker), run by Swanand: replication, election and faulttolerance packages 492 tests x 5 runs plus 1 reverse-order run at 2 CPUs, 0 failures; the 7 new E8c test classes 46 tests x 10 runs at 1 CPU, 0 failures; full suite 1826 tests, 0 failures, 1 skipped; clean-clone full suite 1826 tests, 0 failures, 1 skipped.

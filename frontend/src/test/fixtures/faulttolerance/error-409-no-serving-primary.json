@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Not possible now","status":409,"detail":"Experiment 8 has not started yet, so there is no primary to crash. Start it or start the update stream first.","instance":"/api/modules/faulttolerance/crash-primary","moduleId":"faulttolerance","reason":"NO_SERVING_PRIMARY"}

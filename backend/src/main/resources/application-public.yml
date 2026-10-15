@@ -31,6 +31,11 @@ udcf:
     max-request-bytes: 1048576
     # A quarter of max-request-bytes (the startup check), so every task fits one wire line.
     upload-max-bytes: 262144
+  # 3 nodes: about 6 Exp 5 events per update, so 200 updates stay inside the 1500-event buffer.
+  faulttolerance:
+    stream:
+      max-rate-per-second: 5
+      max-updates: 200
   # Smaller payloads for 512 MB RAM; failure messages as udcf.rmi.
   mpi:
     max-payload-elements: 10000

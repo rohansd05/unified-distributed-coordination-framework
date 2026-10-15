@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Invalid request parameters","status":400,"detail":"Invalid request body: mode, ratePerSecond","instance":"/api/modules/faulttolerance/stream/start","errors":{"mode":"must not be null","ratePerSecond":"must not be null"}}

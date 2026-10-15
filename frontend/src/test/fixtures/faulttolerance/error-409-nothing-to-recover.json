@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"Not possible now","status":409,"detail":"No primary has failed since the last reset, so there is nothing to recover.","instance":"/api/modules/faulttolerance/recover","moduleId":"faulttolerance","reason":"NOTHING_TO_RECOVER"}

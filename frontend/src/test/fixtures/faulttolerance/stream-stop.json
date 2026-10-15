@@ -1,0 +1,1 @@
+{"state":"STOPPED","mode":"ASYNCHRONOUS","ratePerSecond":4,"sent":13,"acknowledged":13,"gaveUp":0,"inFlightSequence":null,"maxUpdates":400,"remainingUpdates":387,"startedAt":"2026-10-15T18:18:13.155940500Z","stoppedAt":"2026-10-15T18:18:18.481072100Z","stopReason":"REQUESTED"}
