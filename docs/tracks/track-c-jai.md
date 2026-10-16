@@ -55,7 +55,7 @@
 - [x] E10a — matrix generation, row-block partitioning and the sequential product. Needs: E9d.
 - [x] E10b — the parallel multiply over the collectives and executors. Needs: E10a, E9b, E2b.
 - [x] E10c — `MatrixModule` (lab 10) and its API; replace `web/TestModuleConfig`'s fake lab-10 module mechanism so tests no longer clash with the real lab 10. Needs: E10b.
-- [ ] E10d — page and end-to-end check. Needs: E10c, E2d.
+- [x] E10d — page and end-to-end check. Needs: E10c, E2d.
 
 ---
 
@@ -2311,6 +2311,138 @@ failures, 1 skipped each (1826 before). Scans of every new and changed file (42)
 5. `MatrixEndToEndHttpTest` posts `/start` in `@BeforeEach` (after the cluster reset), so the Experiment 2 executor
    counts are readable before the first run.
 
+### E10d — matrix page (`/experiments/10-matrix`, `frontend/src/modules/matrix/`)
+
+Nothing another track needs to call. Frontend only; the backend is unchanged since E10c.
+
+**Page.** `index.jsx` exports `{ id: 'matrix', Page: MatrixPage }`. `MatrixPage` passes three How-it-works
+paragraphs (no figures) plus the served `algorithmNote`, `controls`, `visualisation`, `measurements` and
+`whatToNotice` to `ExperimentLayout`, which adds `ModuleEventLog` for `matrix`.
+- **Controls:** module status (MatrixEndpoint exported and request listeners running, "n of m nodes"), start
+  progress, start failure with "Try again", each node's own `startFailure`, the served `experimentTwoSideEffect` with
+  a link to the Experiment 2 page, then `MatrixControls`: size (default the first served series size; checked
+  against `limits.minSize`-`limits.maxSize` in the backend's words; the hint says a size below `minimumSizeNow` is
+  refused and kept), optional root (the default named from `defaultRootNodeId`/`defaultRootSource`; a crashed node
+  stays selectable, marked down), Run, "Run all sizes (served sizes)", "Stop after this run" (never "abort"), and the
+  wait explained from the served bound. No seed input and no crash or recover buttons (approved, h); a link to the
+  Cluster page instead.
+- **Visualisation:** `RowBlocks` (the bold element: C as one band per rank, as tall as its `rowCount`, with rank,
+  node, rows, local or remote, compute status, node compute time; a block that did not arrive is a hatched "Hole"
+  with its served reason; skipped nodes listed; before any run, or for a refused run, the node list) carries the
+  page's only Simulated badge (`coHosting`), shown whenever the section renders. `PhaseViews`: three buttons (Scatter
+  of A, Broadcast of B, Gather of C); scatter and broadcast through E9d's `CollectiveMap` and `LatencyChart`, gather
+  through `LatencyChart` only (it is not an Experiment 9 collective, so it has no id or outcome for the map).
+- **Measurements:** a MetricCard strip (sequential, parallel, communication share, verification), `RunResult` for the
+  shown run (`overview.latest`, else this page's last answer): speedup from `timing.derived.speedup` only, with the
+  run's `speedupBasis` beside it, or `speedupWithheldReason`; compute-bound speedup labelled "(not the measured
+  speedup)"; ceiling ("a bound, not a measurement") and processors ("as the JVM reports them"); every timing figure
+  with the served glossary label, kind and definition, plus `phaseTimeLabel`, `payloadGenerationNote` and
+  `firstRunNote`; the stacked phase bar (ruling 7); verification; the per-node table with holes and their times to
+  failure ("not a latency"), `computeRoundTripBasis` and `gatherLatencyBasis`. Then `SpeedupChart` and
+  `HistoryTable` (keyed by `runId` plus `startedAt`; a chosen row shows that run in `RunResult`, no request).
+- **What to notice:** two static callouts without figures, plus "In this run (run R, size n), communication took
+  X % ..." from the newest COMPLETE run in the history, with its served `communicationShare` (ruling 5).
+
+**States.** Loading, load failed, starting, start failed, a node's start failure, idle with no runs (text built from
+the served sizes), running one size, running all sizes (n of N), stopping, complete, partial, failed (holes and the
+withheld reason), refused (reason and message, no figures), busy elsewhere (banner, Run stays enabled so the real 409
+shows), after a client timeout (locked, banner), every node down (banner, Cluster link; 409 with `nodeId: 0` explained),
+backend unreachable. 400 field errors under the size; 404 and every 409 in a calm warning alert.
+
+**Data flow (`useMatrix`, adapted from `useMpi`).**
+- Reads: `GET /api/modules/matrix`, `GET .../runs`, `GET .../series` together (`Promise.allSettled`), coalesced (one
+  in flight, one queued), on every `/topic/modules/matrix` and `/topic/cluster` message and on a STOMP reconnect.
+- Start (ruling 1): on mount the overview is read first, then `POST /start` with `limits.recommendedMinClientTimeoutMillis`
+  + `RUN_TIMEOUT_MARGIN_MS` (3000); `RUN_TIMEOUT_FALLBACK_MS` (29001) only if that read failed. Later only on the edge
+  "some up node lacks MatrixEndpoint" (a cluster reset); never retried by itself. A generation counter keeps
+  StrictMode's double mount to one start.
+- Runs: `POST /runs` `{size, rootNode?}` with the same timeout. "Run all sizes" sends `limits.seriesSizes` one at a
+  time; a 200 of any outcome goes on, any error stops the loop with a note naming the size; stop lets the run in
+  progress finish.
+- Polling: `BUSY_POLL_INTERVAL_MS` (2000), only while a timed-out start or run may still be running, or the overview
+  is BUSY with no request of this page in flight. After a timeout the page stays locked until a read sent after it
+  shows the module not BUSY (E8d's rule). Nothing else is polled.
+- Every other request keeps the shared 10000 ms.
+
+**Honesty rules as implemented.** Every figure and limit is served; the only page constants are the margin, the
+fallback, the poll interval and the chart's minimum bar height. A null is "Not measured" or "Not available" with its
+reason, never 0 (the shared `MetricCard` shows its own "—" only when given nothing). Other time is shown as served,
+negative included. The speedup is never computed and never shown without its basis (no speedup in the strip, the
+toast or the history table). `rootSource` is shown as served; LEADER is claimed only when served. L6 is never claimed
+as wired; the served `algorithmNote` names it as a link only.
+
+**Chart (`SpeedupChart`).** Linear from 0 to the largest of 1, the served `speedupCeiling` and the largest point (never
+clipped); a bar per configured size with its value printed (three significant digits, full value in the tooltip and
+the screen-reader list); bars below 2 px drawn at 2 px, said in the legend (ruling 3); dashed lines at 1.0 and at the
+ceiling ("with the nodes live now"); a gap is a dashed outline "not run" or "run R: outcome"; "N of `sizesRequired`
+sizes needed have a speedup"; the served `rule`, `ranksNote` (when `ranksDiffer`) and `basis`.
+
+**Fixtures.** The 34 real E10c files, plus `frontend/src/test/fixtures/matrix/synthetic/` (README with source and every
+changed field): `run-checksum-mismatch.json`, `run-evicted-block.json`, `run-timeouts.json`,
+`run-not-attempted-deadline.json`, `overview-leader.json`, written by a Python stdlib script outside the repository.
+`contract.test.js` checks that each synthetic file has exactly the key paths of its real source.
+
+**Files.** Created in `frontend/src/modules/matrix/`: `index.jsx`, `matrixApi.js`, `matrixModel.js`, `useMatrix.js`,
+`MatrixPage.jsx`, `MatrixControls.jsx`, `RowBlocks.jsx`, `PhaseViews.jsx`, `RunResult.jsx`, `SpeedupChart.jsx`,
+`HistoryTable.jsx`, and 10 test files. Changed (approved): `frontend/src/lib/experiments.js` (lab 10 `concept`),
+`frontend/src/routes.test.jsx` (one import, four `matrixApi` spies), `frontend/src/modules/registry.test.js` (the one
+test "has no page for a module that has not been built" became "registers a page for every catalog experiment", built
+from `EXPERIMENTS`), `frontend/src/pages/ExperimentPage.test.jsx` (a file-level `vi.mock` with `importOriginal` that
+leaves out only `matrix`; same tests, same assertions). Reused: `CollectiveMap`, `LatencyChart`, `chartModel`,
+`OutcomeBadge` and labels from mpi; `formatNanos`, `exactNanos`, `clockTime`, `failureKindLabel`, `moduleStatusLabel`
+and `describeProblem` from rmi; `usePoliteAnnouncement` from multithreading.
+
+**Tests.** 133 new tests in 10 files (matrixApi 6, matrixModel 27, useMatrix 13, RowBlocks 5, PhaseViews 4,
+RunResult 14, SpeedupChart 6, HistoryTable 3, MatrixPage 22, contract 33); frontend 1108 -> 1241 tests, 118 -> 128
+files. One page test renders altered served limits (minSize 3, maxSize 40, series [8, 16], bound 7000 ms) and checks
+the default size, hint, empty state, wait, validation and the run-all requests follow them, and that 316, 26001 and
+29001 appear nowhere (ruling 6). Main chunk 783.50 kB -> 833.65 kB (gzip 233.74 -> 245.76 kB). The matrix, routes,
+pages and registry tests passed under 3 `--sequence.shuffle` seeds.
+
+**Manual end-to-end checklist** (to be run by Jai on the real backend, local profile, five nodes; Result column empty):
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 1 | Fresh backend; open `/experiments/10-matrix` with the browser's network tab open | Lab 10 header with the concept; one GET of the overview, then one POST /start; "MatrixEndpoint exported on 5 of 5 nodes; request listeners running on 5 of 5"; the Experiment 2 side-effect text with its link; exactly one Simulated badge, in Live visualisation; the event log shows 5 MATRIX_ENDPOINT_EXPORTED | PASS |
+| 2 | Clear the size and press Run; then 317; then 1 | "size is required", "size must be 2-316, was 317", "... was 1" under the field; no POST sent | PASS |
+| 3 | Run the default size (the first series size) | Complete; sequential and parallel time; speedup with the speedup basis beside it; compute-bound speedup labelled "(not the measured speedup)"; verification Passed with equal checksums; 5 bands whose rows add up to n | PASS |
+| 4 | Press Scatter of A, Broadcast of B, Gather of C | Map with 4 solid arrows and latency bars for the first two; for the gather a chart only, with the explanation | PASS |
+| 5 | Run all sizes | Progress 1 to 4 of 4, one POST at a time; the chart shows 4 bars, each value printed, the 1.0 and ceiling lines; "4 of 3 sizes needed have a speedup: enough for the experiment" | PASS |
+| 6 | Run all sizes, press "Stop after this run" during the first size | That run finishes and is in the history; no further POST; "Stopped after size ..., as asked." | PASS |
+| 7 | Root node 3, Run | Root node 3, rank 2, "chosen as the node you chose" | PASS |
+| 8 | Crash node 3 on the Cluster page; back on the page run size 100 | Node 3 shown down; Complete over 4 bands, node 3 listed as skipped; the series shows the ranks note when its size-100 point now has 4 ranks | PASS |
+| 9 | Root node 3 (down), Run | A calm "Node down" warning; the page stays usable | PASS |
+| 10 | Size 3 with 4 nodes live | The hint says a size below 4 is refused; Refused with the backend's message; kept in the history | PASS |
+| 11 | Crash every node; Run | "Every node is down" banner; default root "none"; a warning explaining no node is live (409, node 0) | PASS |
+| 12 | Recover all nodes | Record whether the recovered nodes re-export MatrixEndpoint on their own (module status 5 of 5 with no POST /start) or the page sends exactly one POST /start; never more than one | PASS (the recovered nodes re-export MatrixEndpoint on their own; no extra POST /start was needed) |
+| 13 | Reset the cluster on the Cluster page; return | One POST /start; history empty; every series size "not run"; run ids restart at 1 | PASS |
+| 14 | Two tabs: "Run all sizes" in tab A; a single Run in tab B while A runs | Tab B shows "Module busy" with the run in progress (or the busy banner); tab A's series is not disturbed | PASS |
+| 15 | Reload tab A during "Run all sizes" | After the reload the busy banner shows while the run holds the module; that run finishes and appears in the history; the loop does not resume and the remaining sizes do not run | PASS |
+| 16 | Follow "Open the Experiment 2 page"; then check keyboard only, 375 px width and reduced motion on the matrix page | Experiment 2's executor statistics show the matrix work (not its request history); every control reachable by keyboard with visible focus; usable at 375 px (tables scroll inside their box); no animation with reduced motion | PASS |
+
+Run by Jai on 2026-10-16 against the real backend; all 16 steps passed; browser console clean.
+
+**For Phase 13.** L6 (Experiment 1 RMI, Experiment 9 collectives, Experiment 10) and L1 (the leader as the MPI root)
+are not wired by this page; the root rule is E10c's module-local `MpiRoleSelector` (TODO(L1)). When Phase 13 makes the
+leader the root: change the root hint in `MatrixControls` ("The leader becomes the root fully in Phase 13"),
+recapture an overview and a run with a leader (only `synthetic/overview-leader.json` covers LEADER now), and add the
+scenario "The leader dies during a matrix multiply" (Phase 13.2).
+
+#### E10d deviations from the approved plan
+
+1. `PhaseViews.jsx` is its own component in the visualisation (the plan had the phase views inside `RunResult`), so
+   the history detail shows figures only; one more test file (10 rather than 9).
+2. No speedup in the MetricCard strip, the toast or the history table, so a speedup is never shown away from its
+   basis; the strip shows the communication share instead.
+3. The chart prints three significant digits (`toPrecision(3)`, so 0.0049 prints as 0.00491) with the full served
+   value in the tooltip and the screen-reader list; the legend says so. Ruling 3 asked for "the printed value is
+   exact"; see the open point in the final report.
+4. A timed-out `POST /start` also locks the page until the module is idle (the start holds the module's guard too).
+5. The problem alert is styled as a warning (calm), not E9d's red error box.
+6. 133 tests rather than about 105.
+7. After the full Stage C run, one comment in `matrixApi.js` was reworded (a repeated 26001 removed, ruling 1); lint
+   and the matrixApi tests were re-run, not the whole suite.
+
 ## Housekeeping H1 (after Experiment 1)
 
 **Found.** `ReplicationNodeService.bind()` (E5b) called `setReuseAddress(true)` unconditionally on an
@@ -2660,6 +2792,15 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   include the root's sizing and checksum work. This is reported as measured, never adjusted.
 - E10c: `error-409-busy.json` depends on timing (a size-316 run holds the module for well under a second locally); it
   was captured on the first attempt from one Python process. The rejection's event is covered by MatrixModuleTest.
+- E10d: the manual checklist was run by Jai on 2026-10-16 against the real backend; see the Result column of the checklist; the recovered nodes re-export MatrixEndpoint on their own.
+- E10d: the five synthetic states (checksum mismatch, evicted block, the two timeouts, deadline, leader root) are
+  covered only by labelled synthetic fixtures, never by a capture.
+- E10d: the chart's ceiling line is the overview's `speedupCeiling` for the nodes live now; series points may come
+  from runs with other rank counts (each bar shows its ranks; `ranksNote` appears when they differ).
+- E10d: like `useMpi`, the start edge rule would start again on every read if `POST /start` answered "exported" while
+  later reads said "not exported"; the real backend never does this (seen only in a test mock, fixed in the test).
+- E10d: main chunk 833.65 kB (gzip 245.76 kB); Vite's existing over-500 kB warning remains.
+- E10d: Verified on Linux (clean clone, Docker node:22) on 2026-10-16; see the progress log.
 ---
 
 ## Progress log
@@ -2816,3 +2957,5 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
   the approved plan".
 - 2026-10-16 E10c done: MatrixModule (lab 10) and MatrixController under /api/modules/matrix (overview, idempotent start with RMI, pool and an untimed request-listener prepare step, one synchronous run per request with COMPLETE/PARTIAL/FAILED/REFUSED as 200 data, bounded history with run ids from 1, series over the configured sizes from the newest complete run per size), root rule REQUESTED > LEADER > LOWEST_LIVE_ID through the now-public MpiRoleSelector, 409 Node state conflict (node 0) when no node is live, 12 DTO records (no derived seed on the wire, null never 0, speedup only for a matched COMPLETE run), MatrixTexts with the glossary, 4 event types, MatrixMetrics (3 MetricNames constants added, existing MATRIX_EXECUTION_DURATION used), udcf.matrix.history-size, TestModuleConfig now spies the real lab 10, 34 contract fixtures and a README captured from the real backend; backend 1893 tests, frontend not run (no frontend code changed; the fixtures are data); deviations: the five listed under "E10c deviations from the approved plan".
 - 2026-10-16 E10c Linux check: clean clone of 7d17c7d on Linux (Docker, maven:3.9-eclipse-temurin-21, --cpus=2), run by Jai: the 10 new test classes x 3 runs, 67 tests, 0 failures each; the full backend suite x 1, 1893 tests, 0 failures, 1 skipped, BUILD SUCCESS. GitHub CI is still the Linux gate.
+- 2026-10-16 E10d done: Experiment 10 page at /experiments/10-matrix (RowBlocks with holes and the one Simulated badge, scatter/broadcast/gather views reusing E9d's CollectiveMap and LatencyChart, RunResult with glossary-labelled figures, withheld reasons, stacked phase bar, verification and per-node table, hand-built SVG speedup chart over the served series sizes, history), useMatrix (overview read then start with the served bound + 3000 ms, edge restart, sequential run-all with stop after the current run, timeout lock and 2000 ms busy polling), five labelled synthetic fixtures; backend not run (no backend change), frontend 1241 tests (baseline 1108); deviations: the seven listed under "E10d deviations from the approved plan".
+- 2026-10-16 E10d Linux verification: clean clone of c1fafcf in Docker node:22 (Linux): npm ci, vitest (128 files, 1241 tests), eslint and vite build all exit 0; main chunk 832.82 kB (gzip 245.57 kB) on Linux against 833.65 kB on Windows; the chunk size stays a Phase 14 item.

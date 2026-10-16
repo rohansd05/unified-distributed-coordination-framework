@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { EXPERIMENTS } from '@/lib/experiments'
 import { modulePages } from './registry'
 import { MultithreadingPage } from './multithreading/MultithreadingPage'
 import { LoadBalancingPage } from './loadbalancing/LoadBalancingPage'
@@ -9,7 +10,7 @@ describe('module registry', () => {
     expect(modulePages.loadbalancing).toBe(LoadBalancingPage)
   })
 
-  it('has no page for a module that has not been built', () => {
-    expect(modulePages.matrix).toBeUndefined()
+  it('registers a page for every catalog experiment', () => {
+    expect(Object.keys(modulePages).sort()).toEqual(EXPERIMENTS.map((experiment) => experiment.id).sort())
   })
 })

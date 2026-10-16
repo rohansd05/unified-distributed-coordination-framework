@@ -14,6 +14,7 @@ import { mapReduceApi } from '@/modules/mapreduce/mapReduceApi'
 import mapReduceOverviewIdle from '@/test/fixtures/mapreduce/overview-idle.json'
 import { rmiApi } from '@/modules/rmi/rmiApi'
 import { mpiApi } from '@/modules/mpi/mpiApi'
+import { matrixApi } from '@/modules/matrix/matrixApi'
 import { faultToleranceApi } from '@/modules/faulttolerance/faultToleranceApi'
 import faultToleranceOverviewBefore from '@/test/fixtures/faulttolerance/overview-before-start.json'
 
@@ -44,6 +45,10 @@ beforeEach(() => {
   vi.spyOn(faultToleranceApi, 'getOverview').mockResolvedValue(faultToleranceOverviewBefore)
   vi.spyOn(faultToleranceApi, 'getStatus').mockResolvedValue(faultToleranceOverviewBefore.current)
   vi.spyOn(faultToleranceApi, 'getLatestRun').mockResolvedValue(null)
+  vi.spyOn(matrixApi, 'getOverview').mockResolvedValue(null)
+  vi.spyOn(matrixApi, 'start').mockResolvedValue(null)
+  vi.spyOn(matrixApi, 'getRuns').mockResolvedValue(null)
+  vi.spyOn(matrixApi, 'getSeries').mockResolvedValue(null)
 })
 
 afterEach(() => {

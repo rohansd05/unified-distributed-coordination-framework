@@ -5,6 +5,12 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useMultithreadingModule from '@/modules/multithreading/useMultithreading'
 import overviewBefore from '@/test/fixtures/multithreading/overview-before.json'
 
+// Every lab has a page now; the placeholder tests below need one without, so lab 10's page is left out here.
+vi.mock('@/modules/registry', async (importOriginal) => {
+  const { matrix, ...modulePages } = (await importOriginal()).modulePages   // eslint-disable-line no-unused-vars
+  return { modulePages }
+})
+
 afterEach(cleanup)
 
 function content() {
