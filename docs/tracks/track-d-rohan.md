@@ -166,6 +166,14 @@
 
 ---
 
+## Phase 9A (R19)
+
+- [x] 9A.0 — docs: R19, the Phase 9A plan (README section 11), CLAUDE.md. Needs: none.
+- [ ] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
+- [ ] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`, refreshed public lite deployment. Needs: 9A.7, 9A.8.
+
+---
+
 ## Progress log
 
 - 2026-10-07 track file created.
@@ -181,5 +189,4 @@
   Linux (Docker, --cpus=2): 113 tests x 5 runs on the new/changed classes, 0 failures; full suite 1162 tests, 0 failures, 1 skipped; clean-clone full suite 1162 tests, 0 failures, 1 skipped; frontend lint, build and 537 tests green.
 - 2026-10-09 E7d done: MapReduce page at /experiments/7-mapreduce on the E2d kit: job and input pickers from the overview, .txt upload checked against the cap and UTF-8 in the browser and sent as JSON/Base64, crash-a-worker control (the stage hit is shown, not chosen), node-graph pipeline with per-stage counts and timings and drawn retries, metric strip, results table and SVG chart with truncation note, every task attempt, run history, event-log download (L5), down-node Recover with a link to the Cluster page, callouts from the real latest run with the proven-only identical-result rule; polling only while RUNNING; 138 new tests in 14 files, contract test on all 31 E7c fixtures; frontend 676 tests in 85 files (3 consecutive runs: 676/676/676, baseline 537), lint exit 0, build green, main chunk 601.68 kB -> 646.27 kB; backend unchanged (1162 tests at E7c, not re-run: no backend file changed); deviations: chart hand-drawn in SVG (Recharts is not installed; approved); results, task table and download inside Measurements (approved); approved shared add-only edits: lab 7 concept line in experiments.js, routes.test.jsx (two imports, three mocks, one test); the cluster-reset 409 is covered by a test that renders ClusterPage with a mocked 409 (ClusterPage not edited); motion.js and actionErrorFrom added beyond the Stage A file list
   Linux (Docker node:22.11, clean clone): lint, build and 676 frontend tests green; Windows: lint, build and 676 tests green; manual walkthrough against the real backend (21 checks: 3 jobs x 3 inputs, crash-and-retry with identical result, event-log crash run without an identical claim, oversize/wrong-type upload refusal, no-live-worker alert, event log download) verified by Rohan.
-
-
+- 2026-10-16 9A.0 done: Phase 13 merged into Phase 9A (R19, HANDOFF v1.4); Phase 9A steps 9A.0–9A.9 in README section 11; CLAUDE.md Current Position updated.
