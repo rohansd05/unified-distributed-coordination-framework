@@ -22,12 +22,14 @@ cluster of nodes; each node owns real sockets on 127.0.0.1. All ten modules shar
 - R10 One shared cluster; crashing a node affects every module on it.
 - R15 Stack fixed (Vite 6.4.x, Vitest 4.x per Step 2.4b). Ask before adding any dependency
      not already listed in docs/HANDOFF.md.
-- R16 Phase 9A (after Phase 9): seven-experiment system demo; links L1–L5, timeline,
-     scenarios, demo polish, demo package. Phase 13 adds L6, the MPI root, and Exps 1, 9, 10.
-- R17 Distinctive, non-template UI (frontend-design guidance); demo polish in 9A.4
+- R16 Phase 9A system demo, revised by R19.
+- R17 Distinctive, non-template UI (frontend-design guidance); demo polish in 9A.8
      before Phase 14.
 - R18 From Phase 3, four parallel tracks (docs/tracks/); one pull request per step into
      protected main; Rohan merges with merge commits; CI checks backend and frontend.
+- R19 Phase 13 merged into Phase 9A (2026-10-16): Phase 9A wires L1–L6 (the leader as MPI root
+     included); timeline, scenarios, integration map, demo polish and demo package cover all ten
+     experiments. Steps 9A.0–9A.9: docs/tracks/README.md Section 11.
 
 ## Hard rules
 1. One phase step at a time. Never generate the whole project at once.
@@ -67,6 +69,10 @@ Phase 3 onwards runs as four parallel tracks (R18). Each track's position and pr
 log is in its own file: docs/tracks/track-a-nidhi.md, track-b-swanand.md, track-c-jai.md,
 track-d-rohan.md. Shared rules: docs/tracks/README.md. Only Rohan edits this file,
 docs/HANDOFF.md and README.md.
+
+Phases 3–12 are complete: all ten experiments, steps a–d, merged by 2026-10-16 (main dc08200,
+PR #47). Current phase: 9A, system integration of all ten experiments (R19); steps, owners and
+dependencies are in docs/tracks/README.md Section 11.
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -109,20 +115,14 @@ docs/HANDOFF.md and README.md.
 - 2.5 Public lite deployment: backend on Render (Docker, public profile, Singapore),
   frontend on Vercel; REST and wss verified end to end, including after a cold start
   (<N> s); Phase 2 complete
+- Phases 3–12 complete: Experiments 1–10, steps a–d, in four tracks (dc08200)
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are
   scheduled there.
 - Stale `cd backend` in the MultithreadingDemo.java Javadoc (legacy and backend copies). The
   legacy copy stays as is (R9); the backend copy is reworked in Phase 3.
-- backend/ still contains the Exp 2 app (com.udcf.threadpool etc.) beside the new core/
-  and web/ packages; Exp 2 reads udcf.node.id: 1 until Phase 3, when it moves to
-  modules/multithreading.
 - docs/HANDOFF.md mentions docs/CLAUDE.md in Sections 1, 4 and 5 as history; left unchanged.
-- Node roles (leader/primary/backup) arrive with election in Phase 5; until then the
-  cluster reports none.
-- web/TestModuleConfig registers a fake module with lab number 10; when the real Matrix
-  module arrives (Phase 12) the test must use a different mechanism or lab number.
 - The root .env may still hold pre-Phase-0 keys (for example VITE_WS_URL=http://...).
   Refresh it from .env.example before Step 2.3.
 - Current npm audit advisories (3 categories, 10 vulnerabilities: 5 moderate, 5 high, 0 critical):
@@ -180,3 +180,4 @@ docs/HANDOFF.md and README.md.
 - Plan amended to HANDOFF v1.1 (2026-10-04): Phase 9A added; Phase 13 reduced to L6, the MPI
   root, and Exps 1, 9, 10 (user decision).
 - Step 2.4b: R15 amended to Vite 6.4 / Vitest 4 (user decision, security)
+- Plan amended to HANDOFF v1.4 (2026-10-16): Phase 13 merged into Phase 9A (R19, user decision).
