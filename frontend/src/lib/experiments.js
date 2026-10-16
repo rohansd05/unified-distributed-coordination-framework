@@ -70,7 +70,13 @@ export const EXPERIMENTS = [
     arrivesIn: 11,
     concept: 'One root and every live node: send everyone the same data, give each node its own share, or collect a share from each.',
   },
-  { lab: 10, id: 'matrix', title: 'Parallel Matrix Multiplication', arrivesIn: 12 },
+  {
+    lab: 10,
+    id: 'matrix',
+    title: 'Parallel Matrix Multiplication',
+    arrivesIn: 12,
+    concept: 'Split one big multiply across the nodes by rows, then check honestly whether it got any faster.',
+  },
 ].map((experiment) => ({ ...experiment, slug: `${experiment.lab}-${experiment.id}` }))
 
 /** The experiment with this slug, or undefined. */
