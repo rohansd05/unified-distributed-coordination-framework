@@ -33,6 +33,72 @@
 
 ---
 
+## Phase 9A (R19) — system integration
+
+### Steps
+- [x] 9A.2 — link audit and real-socket integration tests for L3, L4, L5 and L6 in
+  `backend/src/test/java/com/udcf/integration/`; gaps in other tracks recorded, not fixed. Needs: 9A.0.
+- [ ] 9A.8 — Overview integration map (six links live) and demo polish. Needs: 9A.3, 9A.4, 9A.5.
+
+### 9A.2 (fast mode)
+
+**What changed.** Tests only, no production code: `IntegrationTestSupport` (shared base: five-node
+`@SpringBootTest`, one context per class, closed after the class; clean-slate reset retried while a module
+is BUSY; event queries by bus sequence; every wait is an Awaitility poll with a 30 s deadline, no fixed
+sleeps) and one class per link. Each L4 test first pushes the sender's clock far ahead of every other node,
+so the receiver can only pass that value by merging the timestamp the message carried.
+
+**Ports.** 27100-27455 from the 9A.2 block 27100-27899 (step addendum), one 100-wide sub-block per class,
+bases 10 apart: L3 271xx, L4 272xx, L5 273xx, L6 274xx (RMI +00, clock +10, election +20, replication +30,
+requests +40, MapReduce +50). 27500-27899 spare. A search of the test sources found no port in 27100-27899
+before this step.
+
+**Link audit** (line numbers on main at 48dc245, as read for this step):
+
+| Link | Where it is wired (class:line) | Test that proves it | Status |
+|---|---|---|---|
+| L3 Exp 6 -> Exp 2 executors | `TcpWorkerTransport:108` sends to `ports().requests()` (`LoadBalancingGateway:138`); `RequestsNodeService:406` runs it on the node's executor | `L3LoadBalancingIntoExecutorsIntegrationTest`: per node, REQUEST_COMPLETED events from sender 0 = the run's per-node count, all on `udcf-worker-n<k>-` threads, executor `completedTasks` delta = the same count | WIRED |
+| L4 RMI (Exp 1) | `RmiInvoker:87` tick, `NodeEndpointLogic:145` update, `RmiInvoker:105` merge | `L4…#rmiCallCarriesTheCallersLamportTime` (CALL_SERVED > senderLamportAtSend > pushed clock; CALL_SUCCEEDED > CALL_SERVED) | WIRED |
+| L4 RMI (Exps 9, 10) | `CollectiveExecutor:236/252`, `CollectiveEndpointLogic:67/91`; `ParallelMatrixExecutor:362/448`, `MatrixEndpointLogic:78/112` | `L6…`: every remote scatter, broadcast and fetch has send < reply < after-reply | WIRED |
+| L4 TCP requests (Exps 2, 6) | `RequestsClient:50/61`, `RequestsNodeService:401` | `L4…#tcpRequestCarriesTheSendersLamportTime` | WIRED |
+| L4 TCP replication (Exp 5) | `ReplicationClient:156/172`, `ReplicationNodeService:964` | `L4…#tcpReplicationCarriesThePrimarysLamportTime` (every backup's receiveLamport > pushed primary clock) | WIRED |
+| L4 TCP MapReduce (Exp 7) | `TcpTaskTransport:64/120`, `MapReduceNodeService:384` | `L4…#tcpMapReduceCarriesTheCoordinatorsLamportTime` (every worker's TASK_RECEIVED > pushed coordinator clock) | WIRED |
+| L4 UDP clock (Exp 3) | `ClockNodeService:263` tick, `:547` update | `L4…#udpClockMessageCarriesTheSendersLamportTime` | WIRED |
+| L4 UDP election (Exp 4) | `ElectionNodeService:409` tick, `:491` update | `L4…#udpElectionMessagesCarryTheSendersLamportTime` (every MESSAGE_RECEIVED > causedByTime; node 5's > its pushed clock) | WIRED |
+| L4 not covered | Berkeley POLL/ADJUST (`ClockNodeService:564-616`, same receive switch as LAMPORT), Ring election messages (same `deliver` path as Bully), Exp 8's own traffic (rides the replication service, `ReplicationNodeService:964`), Exp 9's standalone GATHER collective (`CollectiveExecutor:288`) | not covered | WIRED in code, no test |
+| L4 heartbeats | `ElectionNodeService` `sendHeartbeat`: no stamp, by design | — | Documented deviation (Track B), not a gap |
+| L5 bus -> MapReduce | `EventLogExporter:71` `lines`; `RunInputLoader:122`; `MapReduceModule:323` (EVENT_LOG input) | `L5EventExportToMapReduceIntegrationTest`: event-category-count over the live log = the bus's own count per type over the snapshot (first N events by sequence), incl. 7 planted markers and 1 CLUSTER_RESET | WIRED |
+| L6 Exp 10 -> Exp 9 -> Exp 1 | `MatrixModule:135` (`RmiCollectiveTransport.of(rmi)`), `ParallelMatrixExecutor:286` (`new CollectiveExecutor(...)`), `RmiCollectiveTransport:40` (Exp 1 `RemoteEndpointLookup`) | `L6MatrixOverCollectivesOverRmiIntegrationTest`: size 40 on 5 nodes COMPLETE and verified; SCATTER and BROADCAST each with 4 DELIVERED remote transfers; every node's Exp 1 registry lists the Exp 9 and Exp 10 endpoints | WIRED (gather: see note) |
+
+**Interfaces for other tracks.** None new. 9A.8 cites the tests above as the evidence for L3-L6.
+
+**Gaps for owners.** None found: every link and every transport above is wired in code, and each covered
+path passed its test.
+
+**Notes for owners (not gaps).**
+- Jai / Rohan (wording): L6's gather of C is an RMI fetch from each node's `MatrixEndpoint`, not Experiment 9's
+  GATHER collective (decided at the E10a review, track C). HANDOFF 6.4 says "uses scatter and gather"; the 9A.8
+  map will say "scatter and broadcast through Experiment 9, gather by RMI fetch".
+- Swanand (tidy-up, optional): `BullyAlgorithm:25` and `RingAlgorithm:32` still keep a private `lamportTime`
+  counter; the wire never carries it (`ElectionNodeService:409` stamps with the node clock), so it is dead state.
+
+**Known issues.** The tests drive the modules' Java entry points (what the controllers call), not HTTP. L5
+relies on the bus buffer not overflowing between the reset and the run (5000 locally; the test publishes far
+fewer).
+
+**Smoke check** (running app, after a cluster reset):
+1. RMI page: PING from node 1 to node 3 -> the call shows a reply Lamport time greater than the time sent, and
+   the caller's time after the reply greater again.
+2. Load Balancing page: run Round Robin -> Multithreading page, each node's request history shows the
+   balancer's requests on that node's `udcf-worker-n<k>-` threads.
+3. Clock Sync page: send a Lamport message from node 2 to node 4 -> node 4's receive event is past the
+   message's timestamp.
+4. MapReduce page: run "event-category-count" on "Live cluster event log" -> CLUSTER_RESET counts 1 and the
+   RMI and load-balancing event types appear with counts.
+5. Matrix page: run size 40 -> COMPLETE, verification passed, scatter and broadcast delivered to every node.
+
+---
+
 ## Interfaces for other tracks
 
 - **Exp 2 engine (E2a), package `com.udcf.modules.multithreading`.** Plain classes, one set per
@@ -598,3 +664,8 @@
   (approved): 13 classes do not fit ten 100-wide sub-blocks, so the eight Ports(...) classes have
   100 each and the five single-base or fixed-port classes have 20 each (21800-21899); 21900-21999
   is spare.
+- 2026-10-18 9A.2 done: link audit (L3, L4, L5, L6 all WIRED, no gaps; two notes for owners) and 9 tests in
+  4 classes under `com.udcf.integration` (plus `IntegrationTestSupport`), ports 27100-27455; tests only, no
+  production code; backend 1925 -> 1934 tests, 0 failures, 0 errors, 1 skipped (the opt-in probe), the four
+  classes took about 8.8 s of test time in the full run; frontend not run (no frontend change); fast mode: no
+  Docker run; CI is the Linux gate.
