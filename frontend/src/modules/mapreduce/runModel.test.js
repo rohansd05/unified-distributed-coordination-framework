@@ -193,7 +193,8 @@ describe('what to notice', () => {
 
 describe('controls and history', () => {
   it('crash choices: every live worker but the coordinator, and a reason with fewer than two workers', () => {
-    expect(crashChoices(overviewIdle)).toEqual({ candidates: [2, 3, 4, 5], reason: null })
+    expect(crashChoices(overviewIdle)).toEqual({ candidates: [1, 2, 3, 4, 5], reason: null })   // no leader elected yet
+    expect(crashChoices({ ...overviewIdle, coordinatorId: 5 }).candidates).toEqual([1, 2, 3, 4])
     expect(crashChoices({ ...overviewIdle, workerIds: [1] }).reason).toContain('at least two live workers')
   })
 

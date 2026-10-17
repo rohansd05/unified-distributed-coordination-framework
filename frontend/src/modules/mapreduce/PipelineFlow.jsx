@@ -80,7 +80,7 @@ export function PipelineFlow({ run }) {
 
       {run && run.coordinatorId !== null && run.coordinatorId !== undefined && (
         <p className="mb-3 text-xs text-muted-foreground">
-          Coordinator: <span className="font-mono text-foreground">node {run.coordinatorId}</span>
+          Coordinator: <span className="font-mono text-foreground">node {run.coordinatorId}</span>, the elected leader when this run started
           {Array.isArray(run.workerIds) && <> · Workers: <span className="font-mono text-foreground">{run.workerIds.join(', ') || '—'}</span></>}
         </p>
       )}

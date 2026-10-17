@@ -8,7 +8,7 @@ afterEach(cleanup)
 
 describe('RunHistory', () => {
   it('lists the runs newest first with titles, times, keys, retries and the crash node', () => {
-    render(<RunHistory runs={history} jobs={overviewIdle.jobs} selectedRunId="d74d11b8" pinnedRunId={null} onSelect={vi.fn()} />)
+    render(<RunHistory runs={history} jobs={overviewIdle.jobs} selectedRunId="190d38df" pinnedRunId={null} onSelect={vi.fn()} />)
     const items = within(screen.getByTestId('run-history')).getAllByRole('button')
     expect(items).toHaveLength(5)
     expect(items[0].textContent).toContain('Word count')
@@ -30,10 +30,10 @@ describe('RunHistory', () => {
 
   it('picking a row selects it; "Follow the latest run" selects null', () => {
     const onSelect = vi.fn()
-    render(<RunHistory runs={history} jobs={overviewIdle.jobs} selectedRunId={null} pinnedRunId="cb187a2c" onSelect={onSelect} />)
+    render(<RunHistory runs={history} jobs={overviewIdle.jobs} selectedRunId={null} pinnedRunId="6c099fa4" onSelect={onSelect} />)
     fireEvent.click(within(screen.getByTestId('run-history')).getAllByRole('button')[1])
     fireEvent.click(screen.getByRole('button', { name: 'Follow the latest run' }))
-    expect(onSelect.mock.calls).toEqual([['cb187a2c'], [null]])
+    expect(onSelect.mock.calls).toEqual([['6c099fa4'], [null]])
   })
 
   it('with no runs: guidance instead of a list', () => {

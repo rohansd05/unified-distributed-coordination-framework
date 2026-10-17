@@ -10,7 +10,7 @@
 ## Experiment 3 — Clock Synchronization (Phase 4, moduleId: clocksync)
 
 - **Reuse:** `core/clock/LamportClock` (never duplicate it); `legacy-demos/exp03-clock-sync` (`ClockSyncDemo`, `ClockEventLog` causal check); Appendix B Exp 3.
-- **Special rules:** the Berkeley drift is simulated and labelled (R11); the time daemon comes from a module-local selector (TODO(L1)).
+- **Special rules:** the Berkeley drift is simulated and labelled (R11); the time daemon came from a module-local selector (TODO(L1)) until 9A.4, and is the leader elected by Experiment 4 since then (see 9A.4).
 
 ### Steps
 - [x] E3a — the causal-invariant checker, the total order (lamportTime, nodeId), Berkeley averaging with an outlier threshold, and the drift model, as pure classes. Needs: none.
@@ -23,7 +23,7 @@
 ## Experiment 7 — MapReduce (Phase 9, moduleId: mapreduce)
 
 - **Reuse:** `legacy-demos/exp07-mapreduce` (jobs, `JobRegistry`, `LogFields`, the pipeline); Appendix B Exp 7.
-- **Special rules:** the average-latency job carries "sum;count", never an average; the coordinator comes from a module-local selector (TODO(L1)); 15 s task timeout with retry on another worker.
+- **Special rules:** the average-latency job carries "sum;count", never an average; the coordinator came from a module-local selector (TODO(L1)) until 9A.4, and is the leader elected by Experiment 4 since then (see 9A.4); 15 s task timeout with retry on another worker.
 
 ### Steps
 - [x] E7a — the jobs and the split, map, combine, shuffle, partition and reduce pipeline as pure classes. Needs: E3d.
@@ -96,14 +96,14 @@
     - `REQUEST_REFUSED`: data `{"reason": ..., "workerId": ..., "taskId": ..., "taskType": ...}` (protocol rejections: bad sender, out-of-range clock, unknown task type, oversize, busy queue)
     - `TASK_ATTEMPT_FAILED`: data `{"taskId": ..., "taskType": ..., "jobName": ..., "workerId": ..., "reason": ...}` (coordinator-side failed attempts before pipeline retry)
     - `SERVICE_START_FAILED`: published on socket bind failure
-  - **Role Selector:** `MapReduceRoleSelector.selectCoordinator(cluster)` returns lowest live node ID; `MapReduceRoleSelector.selectWorkers(cluster)` returns all live nodes (`// TODO(L1)`).
+  - **Role Selector (removed in 9A.4):** `MapReduceRoleSelector.selectCoordinator(cluster)` returned the lowest live node ID and `selectWorkers(cluster)` all live nodes (`// TODO(L1)`). Since 9A.4 the coordinator is the elected leader; see "9A.4 interfaces".
 
   Linux (Docker, 2 CPUs): the five new test classes (40 tests) passed 5 runs in a row; full backend suite <total> tests, 0 failures, 1 skipped.
 
 ### E7c interfaces (for E7d, the MapReduce page)
 
 - **Module:** `MapReduceModule`, id `mapreduce`, lab 7, title "MapReduce". Registered like every module (a `@Component` picked up by `ModuleRegistry`). Status: BUSY while a run is active; otherwise ERROR if the last run FAILED (cleared by the next completed run or by reset); otherwise RUNNING while any node's mapreduce service listens; otherwise IDLE. Reset clears the latest run and the history and never throws; a run still active at that moment finishes and publishes its events, but its record is dropped (its id then answers 404).
-- **Roles:** coordinator = lowest live node, workers = every live node, R = number of workers (`MapReduceRoleSelector`, `// TODO(L1)`).
+- **Roles:** until 9A.4 coordinator = lowest live node (`MapReduceRoleSelector`, `// TODO(L1)`); since 9A.4 coordinator = the leader elected by Experiment 4 (see "9A.4 interfaces"); workers = every live node, R = number of workers.
 - **Endpoints** (errors are ProblemDetail bodies):
   - `GET /api/modules/mapreduce` -> 200 `MapReduceOverviewDto`.
   - `POST /api/modules/mapreduce/runs` -> 202 `RunDto` (RUNNING). 400 field errors (`jobId`, `inputType`, `upload`, `upload.fileName`, `upload.contentType`, `upload.contentBase64`, `crashWorkerId`); 404 unknown job (`jobId`); 409 module busy (`actionInProgress`); 409 no live worker; 413 body larger than `limits.requestBodyMaxBytes` (`limitBytes`).
@@ -143,6 +143,23 @@
 - **Identical-result rules** (`compareResults` in `runModel.js`; the run DTO has no equality field): a crash run's result is called identical to an earlier run only when all of these hold: same `jobId`; same input type; provably the same input (the bundled sample, or an upload with the same file name and the same `inputBytes`); both runs COMPLETED; neither result list truncated; and every row equal (key, display, count, averageMillis). The baseline is the newest earlier COMPLETED run without a crash plan with the same job, input type and input name, loaded with GET `/runs/{id}`. Never for the live event log (each run adds events) and never without a baseline; in those cases the callout states only what is known: the node hit, the stage, the number of re-executed tasks, and that the run completed.
 - **Chart:** a hand-drawn SVG bar chart (no chart library), `role="img"` with an `aria-label` that states the data; the results table is the full accessible alternative.
 
+### 9A.4 interfaces (link L1): the time daemon and the MapReduce coordinator, for 9A.5 (Jai), 9A.6 (Swanand), 9A.8 (Nidhi), 9A.9
+
+- **Who holds the role:** the Berkeley time daemon (Experiment 3) and the MapReduce coordinator (Experiment 7) are the leader elected by Experiment 4, from `RoleProvider.ensureLeader()` on the action's request thread. There is no fallback to any other node. Workers stay "every live node".
+- **REST changes:**
+  - `GET /api/modules/clocksync`: `timeDaemonNodeId` is `roles.leaderId()` (null: no leader yet; a read never starts an election). New field `abortedRound` {`roundId`, `daemonNodeId`, `reason`, `abortedAt`}: the most recent round when its daemon crashed during it; null once a round finishes or after a reset. `latestRound` keeps the last round that really finished.
+  - `POST /api/modules/clocksync/berkeley-rounds`: 202 as before (asynchronous); 409 `{title: "No leader", moduleId: "clocksync", reason: "NO_LEADER"}` when no leader could be elected within the election bound (about 3.1 s; every node down is answered this way, it was an unhandled 500 before).
+  - `GET /api/modules/mapreduce`: `coordinatorId` is `roles.leaderId()` (null: no leader yet). A run's `coordinatorId` is the leader when it started; a running job keeps it.
+  - `POST /api/modules/mapreduce/runs`: 409 "No live worker" at once when every node is down (unchanged); otherwise 409 `{title: "No leader", moduleId: "mapreduce", reason: "NO_LEADER"}` when no leader could be elected. `crashWorkerId` equal to the leader is refused (400, "is the coordinator of this run").
+- **Side effect:** the first Berkeley round or job with no leader starts Experiment 4's election service and the shared failure detector's heartbeats on every live node (a `REQUESTED` Bully round).
+- **Events** (for the 9A.5 timeline and the 9A.6 leader-crash test). Each change event is published at most once per new leader, only after the module acted since the last reset, never for a vacancy (crash or reset), always after the `LEADER_CHANGED` that elected the new leader and before the next round's or job's STARTED event (bus sequence):
+  - `TIME_DAEMON_CHANGED` (module `clocksync`, node = new daemon, one tick of its clock, peer = previous daemon), data `{nodeId, previousNodeId, cause}` with `cause` `LEADER_CRASHED` (the previous daemon is down) or `ELECTED`. Message: "Node 4 is the time daemon for the next Berkeley round: node 5 crashed and Experiment 4 elected node 4." or "Node 5 is the time daemon for the next Berkeley round: Experiment 4 elected node 5 in place of node 4."
+  - `COORDINATOR_CHANGED` (module `mapreduce`, node = new coordinator, one tick, peer = previous), same data. Message: "Node 4 coordinates the next job: node 5 crashed and Experiment 4 elected node 4. A running job keeps its coordinator." (or "...: Experiment 4 elected node 5 in place of node 4. A running job keeps its coordinator.")
+  - `BERKELEY_ROUND_ABORTED` (module `clocksync`, node = the daemon, its current clock), data `{roundId, reason}` (the service's round id, as in `BERKELEY_ROUND_STARTED`), message "The time daemon, node 5, crashed during the poll stage, so the Berkeley round was aborted." (or "adjustment stage"). No `BERKELEY_ROUND_FINISHED` follows.
+  - `JOB_FAILED` when the coordinator crashed during a run: `error` "The coordinator, node 5, crashed during the run, so the run stopped. The next run asks Experiment 4 for the new leader." No task is sent from a crashed coordinator.
+- **Ordering note for 9A.5:** the change events use the new holder's Lamport clock, `LEADER_CHANGED` uses the cluster clock (node 0). Their `(lamportTime, nodeId)` order is therefore not causal; the "after LEADER_CHANGED" guarantee is the bus sequence.
+- **Test ports (9A.4):** election 24861-24865 (`ClockSyncControllerTest`), 24871-24875 (`MapReduceControllerTest`), 24881-24885 (`ClockSyncLeaderIntegrationTest`), 24891-24895 (`MapReduceLeaderIntegrationTest`); clock 24621-24625; mapreduce 24551-24555, 24571-24573; placeholders 24810-24849 are never bound.
+
 ---
 
 ## Known issues
@@ -157,6 +174,14 @@
 - E7d: the live empty-event-log notice ("No events have been recorded yet; use another page first.") cannot occur on a running backend (see the E7c known issue above); it is covered by `RunInputLoaderTest`. The page shows whatever `notice` the backend sends, word for word.
 - E7d: the page joins the single eager bundle; the main chunk grew from 601.68 kB (182.57 kB gzip) to 646.27 kB (195.79 kB gzip). Vite's 500 kB size advice was already exceeded before this step; the bundle strategy is unchanged.
 - E7d: the page was checked with unit, contract and page tests, and by hand against the real backend from the E7d checklist (21 checks, verified by Rohan).
+- 9A.4, **cluster reset right after a node recovery:** `POST /api/cluster/reset` answers 409 while any module reports BUSY (`ClusterResetService.java:46-47`). Right after a node recovers, Experiment 4 opens a `RECOVERY` election round: the recovered node's Bully emits `RECOVER` (`ElectionModule.java:306`), or `ElectionModule.onClusterEvent` wires a not-yet-wired recovered node and opens the round itself (`ElectionModule.java:352`). Experiment 4 is BUSY while a round is open (`ElectionModule.java:140-141`), for about a second. Scripts and scenarios (9A.6, 9A.9) must wait or retry. The capture transcript said every module was BUSY ("rmi, multithreading, ..., matrix"). That came from the capture script, not the backend: in Windows PowerShell 5.1, `Invoke-RestMethod` passes a JSON array down the pipeline as one object, so `Where-Object { $_.status -eq 'BUSY' } | ForEach-Object { $_.id }` lists every id as soon as any one module is BUSY (reproduced offline with `ConvertFrom-Json`). Wrap the call in parentheses, `(Invoke-RestMethod ...) | Where-Object ...`, to list only the busy module(s). Not confirmed against a live backend which modules were BUSY; by the code above it is Experiment 4.
+- 9A.4, **MapReduce 409 `NO_LEADER` not capturable:** with every node down, the earlier 409 "No live worker" answers first; with any node live, Experiment 4 elects it. The body is pinned by `MapReduceControllerTest.noLeader` (a module without an election module) and kept as the labelled `fixtures/mapreduce/synthetic/error-409-no-leader.json`.
+- 9A.4, **aborted round needs a crash inside the poll window:** with every node replying, a Berkeley round finishes in milliseconds, so `BERKELEY_ROUND_ABORTED` and `abortedRound` are hard to produce by hand (the page notice is checked against the labelled synthetic `fixtures/clocksync/synthetic/overview-aborted-round.json`; the backend paths by `ClockNodeServiceTest.daemonCrashDuringPollAbortsRound` and `ClockSyncModuleTest.abortedRoundShownInOverview`).
+- 9A.4, **crash picker before the first election:** with no leader yet the overview has `coordinatorId: null`, so the Experiment 7 page offers every live worker, including the node that will win the election (node 5). Picking it gets 400 "node 5 is the coordinator of this run; choose another live worker" once the job's election has run. Honest, but one extra step.
+- 9A.4, **`cause` of a change event** is read when the event is published: `LEADER_CRASHED` if the previous holder is down at that moment, otherwise `ELECTED`. A previous holder that crashed and was already recovered before the new leader was announced would read `ELECTED`.
+- 9A.4: the change events use the new holder's Lamport clock and `LEADER_CHANGED` the cluster clock (node 0), so their `(lamportTime, nodeId)` order is not causal; the bus sequence carries the "after LEADER_CHANGED" guarantee (for the 9A.5 timeline).
+- 9A.4: the manual checklist was run by Rohan on 2026-10-18 (see the Result column; step 10 not reachable from the page because the round button is disabled with every node down). The Linux run is recorded in the progress log once done.
+- 9A.4 (observed, predates 9A.4): the 202 roundId of POST /berkeley-rounds and the round number in the BERKELEY_ROUND_* event messages are two different counters (`ClockSyncModule.java:99`, incremented at `:353`, returned at `:367`; and the daemon service's own `ClockNodeService.java:78`, incremented at `:320`, used in the messages at `:327` and `:429`), so the page toast ("round 5") and the event log ("round 2") can name the same round differently; abortedRound.roundId uses the module counter (`ClockSyncModule.java:362`), while the event data `roundId` of BERKELEY_ROUND_STARTED / FINISHED / ABORTED uses the service counter.
 
 ---
 
@@ -169,8 +194,244 @@
 ## Phase 9A (R19)
 
 - [x] 9A.0 — docs: R19, the Phase 9A plan (README section 11), CLAUDE.md. Needs: none.
-- [ ] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
+- [x] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
 - [ ] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`, refreshed public lite deployment. Needs: 9A.7, 9A.8.
+
+### 9A.4: the time daemon and the MapReduce coordinator follow the elected leader (link L1)
+
+**How both modules use `RoleProvider`** (APIs for other tracks: "9A.4 interfaces" under Interfaces for other tracks):
+
+| Call | Where | Thread |
+|---|---|---|
+| `ensureLeader()` | `ClockSyncModule.daemon()` (both round paths) and `MapReduceModule.coordinator()` (`startRun`, after validation and the "No live worker" check) | the HTTP request thread, holding no lock, before the module's action guard; empty: `NoLeaderException`, HTTP 409 `NO_LEADER` |
+| `leaderId()` | both `overview()` methods; the leader listeners (to skip a stale change) | any; never waits, never elects |
+| `addLeaderListener` | both constructors; the registration is closed in `close()` | `udcf-roles-dispatcher`; never blocks, never calls `ensureLeader` |
+
+`ClockSyncRoleSelector` and `MapReduceRoleSelector` (and their tests) are deleted; no `TODO(L1)` is left in either package.
+
+**Publish rule (CAS plus a short lock).** Each module remembers the node that acted as daemon or coordinator since the last reset in an `AtomicReference` (null after a reset and before the first use). Both paths call one `follow(leader, fromAction)`:
+- the leader listener, with `change.leaderId()` only when it is not null and still equals `leaderId()`;
+- the round or job, right after `ensureLeader()` returned the leader and before anything is published or the guard is taken.
+
+Inside a `synchronized` block on the reference: if nothing is remembered, only the action path remembers the leader, silently (the first holder is not a change). If something else is remembered, a compare-and-set to the new leader decides the one winner, which publishes `TIME_DAEMON_CHANGED` or `COORDINATOR_CHANGED`. The block makes the loser wait until the winner's event is on the bus, so the change event always precedes the next STARTED. It follows `LEADER_CHANGED`, because the leader was announced before it could be read. It is never published twice, and never for a vacancy or a reset (`reset()` clears the reference). The block holds no other lock and never waits on anything but the bus publish.
+
+**Leader-crash sequence** (5 nodes, node 5 leader, both modules used since the reset):
+1. HTTP thread: `POST /api/cluster/nodes/5/crash`, `Cluster.crash(5)`. Node 5's services close; `LEADER_CHANGED` (leader none) is published and `LEADER_CRASHED` is queued. Dispatcher: both listeners see no leader and publish nothing.
+2. About 2.5 to 4 s later: Experiment 4's failure detector suspects node 5, Bully elects node 4, and `Cluster.assignLeader(4)` publishes `LEADER_CHANGED` (4) and queues `ELECTED`.
+3. Dispatcher, or the next round or job if it comes first: `TIME_DAEMON_CHANGED` and `COORDINATOR_CHANGED` {nodeId 4, previousNodeId 5, cause `LEADER_CRASHED`}, once each.
+4. The next Berkeley round and the next job get 4 from `ensureLeader()` at once. Between steps 1 and 2 they wait at most the election bound (3.1 s) for the re-election.
+
+**In-flight endings:**
+- **Berkeley round:** if the daemon's clock service stops during the round (its node crashed), `ClockNodeService` checks after the poll stage and again before finishing. It publishes `BERKELEY_ROUND_ABORTED` and throws `BerkeleyRoundAbortedException`, instead of reporting every peer as unresponsive and finishing on a crashed node (before 9A.4). `POST /berkeley-rounds` already answered 202 (asynchronous), so the abort is shown by `GET /api/modules/clocksync` `abortedRound` {roundId (the 202's id), daemonNodeId, reason, abortedAt} and in the event log. `latestRound` keeps the last round that finished. The Experiment 3 page shows `abortedRound` as a calm `role="status"` notice and clears it when the field is null.
+- **MapReduce job:** a running job keeps its coordinator. If that node crashes, `TcpTaskTransport` refuses to send from it (`IOException`), every attempt fails fast, and the run ends FAILED with "The coordinator, node 5, crashed during the run, so the run stopped. The next run asks Experiment 4 for the new leader." plus `JOB_FAILED`. Before 9A.4 such a run could complete, coordinated by a crashed node.
+
+**Served texts and pages.** Experiment 3 adds the note "The time daemon is the leader elected by Experiment 4. With no leader yet, the first Berkeley round asks Experiment 4 for an election, which starts its election service and heartbeats on every live node; if no leader can be elected, the round is refused." Experiment 7's second note says the same for the coordinator and the first job.
+- Experiment 3 page: "Time daemon for the next round: Node 5, the leader elected by Experiment 4" or "No leader yet: the first Berkeley round asks Experiment 4 to elect one".
+- Experiment 7 page: "Coordinator: node 5, the elected leader when this run started".
+- Both pages: the 409 "No leader" is a calm amber warning (keyed on status 409 and title "No leader", because the shared `ApiError` drops `reason`).
+- The new events show in the module logs as "Time daemon changed", "Coordinator changed" and "Berkeley round aborted" with their messages; both pages already refresh on every `/topic/cluster` message (`LEADER_CHANGED`).
+
+**Fixtures.**
+- Recaptured by Rohan on 2026-10-17: the full Experiment 3 sequence (14 files) plus the new `clocksync/error-409-no-leader.json`, and the 15 role-bearing Experiment 7 files. Order and contents are in the two fixture READMEs.
+- Labelled synthetic files: `clocksync/synthetic/overview-aborted-round.json` (needs a daemon crash inside the poll window) and `mapreduce/synthetic/error-409-no-leader.json` (copied from `MapReduceControllerTest.noLeader`).
+- Capture procedure: the block below. Rohan's first run stopped at the third reset with HTTP 409 (see Known issues). The re-run used `Reset-Cluster`, which waits for no BUSY module and retries on 409. Its "Waiting for busy modules" line lists every module in Windows PowerShell 5.1; see Known issues.
+
+<details>
+<summary>The capture block as run on 2026-10-17 (amended with Reset-Cluster)</summary>
+
+```powershell
+# 9A.4 fixture capture: Experiment 3 (full sequence + 409 NO_LEADER) and Experiment 7 (role-bearing set).
+# Amended: Reset-Cluster waits for busy modules (e.g. a recovery election) and retries on 409.
+$ErrorActionPreference = 'Stop'
+$Repo = 'C:\Users\rohan\Desktop\DC\PROGRAM\unified-distributed-coordination-framework'
+$Api = 'http://localhost:8080'
+$Cs = Join-Path $Repo 'frontend\src\test\fixtures\clocksync'
+$Mr = Join-Path $Repo 'frontend\src\test\fixtures\mapreduce'
+$LogFile = Join-Path $Repo 'legacy-demos\exp07-mapreduce\data\framework-events.log'
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$Captured = New-Object System.Collections.Generic.List[string]
+$Problems = New-Object System.Collections.Generic.List[string]
+
+function Save-Get([string]$Path, [string]$File, [string]$Expect = '200') {
+    $code = curl.exe -s -o $File -w '%{http_code}' "$Api$Path"
+    $Captured.Add($File)
+    if ($code -ne $Expect) { $Problems.Add("$(Split-Path $File -Leaf): HTTP $code, expected $Expect") }
+    "GET  $code $(Split-Path $File -Leaf)"
+}
+function Save-Send([string]$Method, [string]$Path, [string]$Body, [string]$File, [string]$Expect) {
+    $code = $Body | curl.exe -s -o $File -w '%{http_code}' -X $Method -H 'Content-Type: application/json' --data-binary '@-' "$Api$Path"
+    $Captured.Add($File)
+    if ($code -ne $Expect) { $Problems.Add("$(Split-Path $File -Leaf): HTTP $code, expected $Expect") }
+    "$Method $code $(Split-Path $File -Leaf)"
+}
+function Invoke-Post([string]$Path, [string]$Body = $null) {
+    if ($Body) { Invoke-RestMethod -Method Post -Uri "$Api$Path" -ContentType 'application/json' -Body $Body }
+    else { Invoke-RestMethod -Method Post -Uri "$Api$Path" }
+}
+function Reset-Cluster {
+    $deadline = (Get-Date).AddSeconds(30)
+    while ($true) {
+        $busy = @(Invoke-RestMethod "$Api/api/modules" | Where-Object { $_.status -eq 'BUSY' } | ForEach-Object { $_.id })
+        if ($busy.Count -eq 0) {
+            $code = curl.exe -s -o NUL -w '%{http_code}' -X POST "$Api/api/cluster/reset"
+            if ($code -eq '204' -or $code -eq '200') { "Cluster reset"; return }
+            "Cluster reset refused (HTTP $code), retrying"
+        } else { "Waiting for busy modules: $($busy -join ', ')" }
+        if ((Get-Date) -gt $deadline) { throw "Cluster reset kept failing" }
+        Start-Sleep -Milliseconds 500
+    }
+}
+function Wait-Until([string]$What, [scriptblock]$Condition, [int]$Seconds = 30) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while (-not (& $Condition)) {
+        if ((Get-Date) -gt $deadline) { throw "Timed out waiting for $What" }
+        Start-Sleep -Milliseconds 200
+    }
+}
+function Wait-ClockIdle { Wait-Until 'Experiment 3 idle' { (Invoke-RestMethod "$Api/api/modules/clocksync").status -ne 'BUSY' } }
+function Wait-Run([string]$RunId) {
+    Wait-Until "run $RunId" { (Invoke-RestMethod "$Api/api/modules/mapreduce/runs/$RunId").state -ne 'RUNNING' } 60
+    Wait-Until 'Experiment 7 idle' { (Invoke-RestMethod "$Api/api/modules/mapreduce").status -ne 'BUSY' } 60
+}
+function Run-And-Save([string]$Body, [string]$File) {
+    $run = Invoke-Post '/api/modules/mapreduce/runs' $Body
+    Wait-Run $run.runId
+    Save-Get "/api/modules/mapreduce/runs/$($run.runId)" $File
+}
+function Upload-Body([string]$JobId, [string]$FileName, [byte[]]$Bytes) {
+    '{"jobId":"' + $JobId + '","inputType":"UPLOAD","upload":{"fileName":"' + $FileName +
+        '","contentType":"text/plain","contentBase64":"' + [Convert]::ToBase64String($Bytes) + '"}}'
+}
+
+# 0. The backend must be up; then start from a clean slate.
+$health = Invoke-RestMethod "$Api/api/system/health"
+"Backend health: $($health | ConvertTo-Json -Compress)"
+Reset-Cluster
+
+# 1. Experiment 3, in the E3c order.
+Save-Get '/api/modules/clocksync' (Join-Path $Cs 'overview-initial.json')
+Save-Send POST '/api/modules/clocksync/nodes/1/local-events' '{"description":"Manual local event on node 1"}' (Join-Path $Cs 'local-event.json') '200'
+Save-Send POST '/api/modules/clocksync/messages' '{"from":1,"to":2,"payload":"Lamport ping to node 2"}' (Join-Path $Cs 'message-live.json') '200'
+Invoke-Post '/api/cluster/nodes/3/crash' | Out-Null
+Save-Send POST '/api/modules/clocksync/messages' '{"from":3,"to":1,"payload":"Ping from crashed node 3"}' (Join-Path $Cs 'error-409-node-down.json') '409'
+Save-Send POST '/api/modules/clocksync/messages' '{"from":1,"to":3,"payload":"Message to crashed node 3"}' (Join-Path $Cs 'message-crashed-receiver.json') '200'
+Invoke-Post '/api/cluster/nodes/3/recover' | Out-Null
+Save-Send POST '/api/modules/clocksync/traffic' '{"seconds":2,"messagesPerSecond":4}' (Join-Path $Cs 'traffic.json') '202'
+Wait-ClockIdle
+Save-Send POST '/api/modules/clocksync/berkeley-rounds' '{"outlierThresholdMillis":400}' (Join-Path $Cs 'berkeley-round.json') '202'
+Wait-ClockIdle
+Wait-Until 'the Berkeley round result' { $null -ne (Invoke-RestMethod "$Api/api/modules/clocksync").latestRound }
+Save-Get '/api/modules/clocksync' (Join-Path $Cs 'overview-after-sync.json')
+Save-Send PUT '/api/modules/clocksync/nodes/2/drift' '{"initialOffsetMillis":95,"driftRateMsPerSec":1.8}' (Join-Path $Cs 'drift-updated.json') '200'
+Save-Get '/api/modules/clocksync/verification' (Join-Path $Cs 'verification.json')
+Save-Get '/api/modules/clocksync/timeline?limit=10' (Join-Path $Cs 'timeline.json')
+Save-Send POST '/api/modules/clocksync/traffic' '{"seconds":50,"messagesPerSecond":2}' (Join-Path $Cs 'error-400-validation.json') '400'
+Save-Send POST '/api/modules/clocksync/nodes/99/local-events' '{"description":"Ghost"}' (Join-Path $Cs 'error-404-unknown-node.json') '404'
+Save-Get '/api/events?module=clocksync&limit=50' (Join-Path $Cs 'events.json')
+1..5 | ForEach-Object { Invoke-Post "/api/cluster/nodes/$_/crash" | Out-Null }
+Save-Send POST '/api/modules/clocksync/berkeley-rounds' '{}' (Join-Path $Cs 'error-409-no-leader.json') '409'
+Reset-Cluster
+
+# 2. Experiment 7, the role-bearing files in the E7c order.
+$terms = [Text.Encoding]::UTF8.GetBytes(((1..300 | ForEach-Object { "term$_" }) -join ' '))
+Save-Get '/api/modules/mapreduce' (Join-Path $Mr 'overview-idle.json')
+Save-Send POST '/api/modules/mapreduce/runs' '{"jobId":"word-count","inputType":"SAMPLE"}' (Join-Path $Mr 'run-accepted.json') '202'
+$accepted = Get-Content -Raw -Encoding UTF8 (Join-Path $Mr 'run-accepted.json') | ConvertFrom-Json
+Wait-Run $accepted.runId
+Save-Get "/api/modules/mapreduce/runs/$($accepted.runId)" (Join-Path $Mr 'run-sample-word-count.json')
+Run-And-Save (Upload-Body 'avg-latency-per-node' 'framework-events.txt' ([IO.File]::ReadAllBytes($LogFile))) (Join-Path $Mr 'run-upload-avg-latency.json')
+Run-And-Save '{"jobId":"event-category-count","inputType":"EVENT_LOG"}' (Join-Path $Mr 'run-event-log-event-category.json')
+Run-And-Save (Upload-Body 'word-count' 'terms.txt' $terms) (Join-Path $Mr 'run-truncated-result.json')
+Run-And-Save '{"jobId":"word-count","inputType":"SAMPLE","crashWorkerId":3}' (Join-Path $Mr 'run-crash-retry.json')
+Save-Get '/api/cluster' (Join-Path $Mr 'cluster-after-crash.json')
+Invoke-Post '/api/cluster/nodes/3/recover' | Out-Null
+Save-Get '/api/modules/mapreduce/runs' (Join-Path $Mr 'runs-history.json')
+Save-Get '/api/modules/mapreduce/runs/latest' (Join-Path $Mr 'run-latest.json')
+Save-Get '/api/modules/mapreduce' (Join-Path $Mr 'overview-after-runs.json')
+Save-Get '/api/events?module=mapreduce&limit=50' (Join-Path $Mr 'events-mapreduce.json')
+Save-Get '/api/events/export?module=mapreduce&limit=25' (Join-Path $Mr 'events-export.txt')
+Save-Send POST '/api/modules/mapreduce/runs' '{"jobId":"word-count","inputType":"SAMPLE","crashWorkerId":5}' (Join-Path $Mr 'error-400-crash-worker.json') '400'
+Reset-Cluster
+Run-And-Save '{"jobId":"avg-latency-per-node","inputType":"EVENT_LOG"}' (Join-Path $Mr 'run-event-log-empty-result.json')
+
+# 3. Per file: name, bytes, BOM, and the checks that prove the 9A.4 state.
+function Read-Json([string]$File) { Get-Content -Raw -Encoding UTF8 $File | ConvertFrom-Json }
+$DaemonNote = 'The time daemon is the leader elected by Experiment 4.'
+$CoordinatorNote = 'The coordinator is the leader elected by Experiment 4'
+$Checks = @{
+    'overview-initial.json'           = { param($j) "timeDaemonNodeId=$(if ($null -eq $j.timeDaemonNodeId) {'null'} else {$j.timeDaemonNodeId}) abortedRound-key=$($j.PSObject.Properties.Name -contains 'abortedRound') daemon-note=$(@($j.notes | Where-Object { $_.StartsWith($DaemonNote) }).Count -eq 1)" }
+    'berkeley-round.json'             = { param($j) "daemonNodeId=$($j.daemonNodeId) status=$($j.status)" }
+    'overview-after-sync.json'        = { param($j) "timeDaemonNodeId=$($j.timeDaemonNodeId) latestRound.daemonNodeId=$($j.latestRound.daemonNodeId) abortedRound-null=$($null -eq $j.abortedRound)" }
+    'events.json'                     = { param($j) "BERKELEY_ROUND_STARTED.daemonId=$((@($j | Where-Object { $_.type -eq 'BERKELEY_ROUND_STARTED' }) | ForEach-Object { $_.data.daemonId }) -join ',')" }
+    'error-409-no-leader.json'        = { param($j) "status=$($j.status) title=$($j.title) reason=$($j.reason) moduleId=$($j.moduleId)" }
+    'overview-idle.json'              = { param($j) "coordinatorId=$(if ($null -eq $j.coordinatorId) {'null'} else {$j.coordinatorId}) workerIds=$($j.workerIds -join ',') coordinator-note=$(@($j.notes | Where-Object { $_.StartsWith($CoordinatorNote) }).Count -eq 1)" }
+    'overview-after-runs.json'        = { param($j) "coordinatorId=$($j.coordinatorId) latestRun.coordinatorId=$($j.latestRun.coordinatorId)" }
+    'cluster-after-crash.json'        = { param($j) "node5.roles=$(($j.nodes | Where-Object { $_.id -eq 5 }).roles -join ',') node3.status=$(($j.nodes | Where-Object { $_.id -eq 3 }).status)" }
+    'runs-history.json'               = { param($j) "runs=$(@($j).Count) states=$((@($j) | ForEach-Object { $_.state }) -join ',')" }
+    'events-mapreduce.json'           = { param($j) "JOB_STARTED.nodeIds=$((@($j | Where-Object { $_.type -eq 'JOB_STARTED' }) | ForEach-Object { $_.nodeId }) -join ',')" }
+    'error-400-crash-worker.json'     = { param($j) "status=$($j.status) crashWorkerId-error='$($j.errors.crashWorkerId)'" }
+}
+""
+"{0,-34} {1,8} {2,-4} {3}" -f 'File', 'Bytes', 'BOM', 'Checks'
+foreach ($file in $Captured) {
+    $name = Split-Path $file -Leaf
+    $bytes = [IO.File]::ReadAllBytes($file)
+    $bom = if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { 'yes' } else { 'no' }
+    if ($name -eq 'events-export.txt') {
+        $text = [Text.Encoding]::UTF8.GetString($bytes)
+        $check = "JOB_STARTED-on-node5-lines=$(([regex]::Matches($text, 'node=5 \| category=JOB_STARTED')).Count)"
+    } elseif ($name -like 'run-*.json') {
+        $j = Read-Json $file
+        $check = "coordinatorId=$($j.coordinatorId) state=$($j.state) resultKeys=$($j.report.resultKeys) crash=$(if ($j.crash) { "$($j.crash.workerId)/$($j.crash.triggered)/$($j.crash.taskType)" } else { 'none' })"
+    } elseif ($Checks.ContainsKey($name)) {
+        $check = & $Checks[$name] (Read-Json $file)
+    } else {
+        $check = '-'
+    }
+    "{0,-34} {1,8} {2,-4} {3}" -f "$(Split-Path (Split-Path $file -Parent) -Leaf)/$name", $bytes.Length, $bom, $check
+}
+""
+if ($Problems.Count -eq 0) { "All HTTP status codes as expected." } else { "STATUS PROBLEMS:"; $Problems }
+```
+
+The check `JOB_STARTED-on-node5-lines=0` for `events-export.txt` is expected: the export holds the last 25 events, the tail of the crash run, and that run's `JOB_STARTED` is older. Every coordinator line in it is `node=5` and every worker line carries `peer=5`.
+
+</details>
+
+**Tests.**
+- New: `ClockSyncLeaderIntegrationTest` (3) and `MapReduceLeaderIntegrationTest` (2). Both run on real sockets with the real `ElectionModule`: reads never elect; the first action elects node 5; after a leader crash, exactly one change event, after `LEADER_CHANGED` and before the next STARTED, and the next round or job on node 4.
+- Added to existing classes: `ClockSyncModuleTest` +6, `ClockNodeServiceTest` +1, `ClockSyncControllerTest` +1, `MapReduceModuleTest` +5, `MapReduceControllerTest` +1.
+- Deleted: the two selector tests (3 + 3).
+- The unit tests use labelled test electors ("test elector, not Bully"): highest live node in `ClockSyncModuleTest`, lowest live node in `MapReduceModuleHarness`.
+- Frontend: +6 (`ClockSyncPage.test` +2, `ClockSyncControls.test` +1, `RunControls.test` +1, one synthetic-fixture test in each `contract.test.js`), and the recaptured values in five test files.
+
+**Manual checklist** (for Rohan, on the real backend; not yet run):
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 1 | Fresh backend and frontend; open `/experiments/3-clocksync` with the browser console open | "No leader yet: the first Berkeley round asks Experiment 4 to elect one"; the Experiment 4 page shows no round; the notes include "The time daemon is the leader elected by Experiment 4. ..." | PASS |
+| 2 | Experiment 3: run a Berkeley round | Experiment 4 page: a finished "Requested" round electing node 5; Experiment 3: "Time daemon for the next round: Node 5, ..."; the round finishes with node 5 as daemon | PASS |
+| 3 | `/experiments/7-mapreduce`: word count on the bundled sample | Completed; "Coordinator: node 5, the elected leader when this run started"; no new election round on the Experiment 4 page | PASS |
+| 4 | Cluster page: crash node 5 | Both pages: the daemon line goes to "No leader yet ...", then within about 4 s to node 4 | PASS |
+| 5 | Experiment 3 and Experiment 7 event logs | "Time daemon changed" (node 4 ... node 5 crashed and Experiment 4 elected node 4.) and "Coordinator changed" (... A running job keeps its coordinator.), each once, after `LEADER_CHANGED` (node 4) in the cluster events | PASS |
+| 6 | Experiment 3: run a Berkeley round | Daemon node 4; node 5 shown as not reached | PASS |
+| 7 | Experiment 7: run a job; then try a crash run on node 4 | The job is coordinated by node 4 (workers 1 to 4); the crash run on node 4 is refused: "node 4 is the coordinator of this run; choose another live worker" | PASS |
+| 8 | Cluster page: recover node 5 (wait a second for its election) | Node 5 wins Bully again; both logs show one change event back to node 5 with "Experiment 4 elected node 5 in place of node 4." | PASS |
+| 9 | Cluster page: reset the cluster (retry if it answers busy right after the recovery) | No change event; Experiment 3 shows "No leader yet ..." | PASS |
+| 10 | Cluster page: crash every node; Experiment 3: run a Berkeley round | After about 3 s a calm amber "No leader" warning with "No leader could be elected, so there is no time daemon: ..."; no red error | Differs, not a defect: with every node down the page disables "Run synchronization round" (existing E3d guard), so the warning is not reachable from the page; the 409 NO_LEADER is covered by the captured fixture clocksync/error-409-no-leader.json and the ClockSyncControls test. |
+| 11 | With every node still down, Experiment 7: run a job; then reset the cluster | The existing red "No live worker" alert with the Cluster page link (at once, no election wait); after the reset both pages work again | PASS |
+| 12 | Throughout; then stop both servers and run `Get-NetTCPConnection -LocalPort 8080,5173 -State Listen` | Browser console clean; nothing listening | PASS |
+
+Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and step 10 differs as noted (not a defect); browser console clean.
+
+**Deviations (9A.4):**
+- Baseline correction: the Stage A baseline of 1915 backend tests was summed from every surefire report in `target/`, including a stale report of `FailoverRoleSelectorTest` (3 tests, deleted in 9A.1); the true baseline is 1912 (as in Track B's 9A.1 log). Then 1912 - 6 + 19 = 1925.
+- Ruling R4: `abortedRound` was added to `ClockSyncOverviewDto`, with two new classes, `BerkeleyRoundAbortedException` and `dto/AbortedRoundDto`, and a calm notice on the Experiment 3 page.
+- Beyond ruling R2: a short `synchronized` block around read, compare-and-set and publish, so the CAS loser cannot run ahead of the winner's bus publish (the change event always precedes the next STARTED).
+- Extra tests beyond the plan: `ClockSyncModuleTest` +6 (plan 5, the R4 abort test) and `MapReduceModuleTest` +5 (plan 4, quiet and crash-cause split).
+- The MapReduce 409 `NO_LEADER` fixture is synthetic (`synthetic/error-409-no-leader.json`, copied from `MapReduceControllerTest.noLeader`); see Known issues.
+- The capture block was amended by Rohan with `Reset-Cluster` (waits for no BUSY module, retries on 409) after the first run stopped at the third reset with 409.
+- Every node down on Experiment 3 now answers 409 `NO_LEADER` after the election bound instead of the old unhandled 500 (approved).
 
 ---
 
@@ -190,3 +451,4 @@
 - 2026-10-09 E7d done: MapReduce page at /experiments/7-mapreduce on the E2d kit: job and input pickers from the overview, .txt upload checked against the cap and UTF-8 in the browser and sent as JSON/Base64, crash-a-worker control (the stage hit is shown, not chosen), node-graph pipeline with per-stage counts and timings and drawn retries, metric strip, results table and SVG chart with truncation note, every task attempt, run history, event-log download (L5), down-node Recover with a link to the Cluster page, callouts from the real latest run with the proven-only identical-result rule; polling only while RUNNING; 138 new tests in 14 files, contract test on all 31 E7c fixtures; frontend 676 tests in 85 files (3 consecutive runs: 676/676/676, baseline 537), lint exit 0, build green, main chunk 601.68 kB -> 646.27 kB; backend unchanged (1162 tests at E7c, not re-run: no backend file changed); deviations: chart hand-drawn in SVG (Recharts is not installed; approved); results, task table and download inside Measurements (approved); approved shared add-only edits: lab 7 concept line in experiments.js, routes.test.jsx (two imports, three mocks, one test); the cluster-reset 409 is covered by a test that renders ClusterPage with a mocked 409 (ClusterPage not edited); motion.js and actionErrorFrom added beyond the Stage A file list
   Linux (Docker node:22.11, clean clone): lint, build and 676 frontend tests green; Windows: lint, build and 676 tests green; manual walkthrough against the real backend (21 checks: 3 jobs x 3 inputs, crash-and-retry with identical result, event-log crash run without an identical claim, oversize/wrong-type upload refusal, no-live-worker alert, event log download) verified by Rohan.
 - 2026-10-16 9A.0 done: Phase 13 merged into Phase 9A (R19, HANDOFF v1.4); Phase 9A steps 9A.0–9A.9 in README section 11; CLAUDE.md Current Position updated.
+- 2026-10-17 9A.4 done: the Berkeley time daemon (Experiment 3) and the MapReduce coordinator (Experiment 7) are the leader elected by Experiment 4 (`RoleProvider.ensureLeader()` on the request thread, 409 `NO_LEADER` when none; reads use `leaderId()` and never elect); both module-local selectors and every `TODO(L1)` removed; `TIME_DAEMON_CHANGED` / `COORDINATOR_CHANGED` published exactly once per new leader (CAS plus a short lock, after `LEADER_CHANGED`, before the next STARTED); daemon crash mid-round ends as `BERKELEY_ROUND_ABORTED` with `abortedRound` on the overview and a calm page notice; coordinator crash mid-run ends FAILED with a plain reason; served notes and page texts name the elected leader; 409 "No leader" shown as a calm warning; 30 fixtures recaptured by Rohan (full Experiment 3 sequence + new 409, 15 role-bearing Experiment 7 files) and two labelled synthetic fixtures; backend 1925 tests (0 failures, 1 skipped; baseline 1912 - 6 + 19; the 10 new and changed clocksync/mapreduce classes 3 runs, 108 tests each, all green; both packages after the recapture 272 tests, all green), frontend 1250 tests in 128 files (baseline 1244 + 6), lint and build exit 0; Windows only, Linux and the manual checklist not yet run; deviations: baseline 1915 corrected to 1912 (stale surefire report), `abortedRound` with `BerkeleyRoundAbortedException` and `AbortedRoundDto` (R4), the lock beyond R2, extra tests (+6 / +5), synthetic MapReduce 409 fixture, capture block amended with Reset-Cluster.

@@ -3,6 +3,7 @@ package com.udcf.modules.clocksync;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.core.cluster.Cluster;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.module.ModuleStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -27,12 +29,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * End-to-end web tests for /api/modules/clocksync endpoints.
  *
- * <p>Uses test-isolated clock ports (24600 base) within the reserved Track D range (24100-24899).</p>
+ * <p>Uses test-isolated clock ports (24600 base) and election ports (24860 base: a Berkeley round asks
+ * Experiment 4 for a leader) within the reserved Track D range (24100-24899). The context is closed after
+ * the class, so no election heartbeats outlive it.</p>
  */
 @SpringBootTest(properties = {
-        "udcf.cluster.ports.clock-base=24600"
+        "udcf.cluster.ports.clock-base=24600",
+        "udcf.cluster.ports.election-base=24860"
 })
 @AutoConfigureMockMvc
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ClockSyncControllerTest {
 
     private static final String BASE = "/api/modules/clocksync";
@@ -48,6 +54,9 @@ class ClockSyncControllerTest {
 
     @Autowired
     private ClockSyncModule module;
+
+    @Autowired
+    private RoleProvider roles;
 
     @AfterEach
     void tearDown() {
@@ -74,7 +83,9 @@ class ClockSyncControllerTest {
 
         assertThat(root.has("status")).isTrue();
         assertThat(root.has("timeDaemonNodeId")).isTrue();
-        assertThat(root.get("timeDaemonNodeId").asInt()).isEqualTo(1);
+        // the elected leader, or null before any election (reading never starts one)
+        assertThat(root.get("timeDaemonNodeId").isNull() ? null : root.get("timeDaemonNodeId").asInt())
+                .isEqualTo(roles.leaderId().orElse(null));
         assertThat(root.get("nodes")).hasSize(5);
 
         JsonNode node1 = root.get("nodes").get(0);
@@ -170,7 +181,7 @@ class ClockSyncControllerTest {
                 .andExpect(status().isAccepted()));
 
         assertThat(res.get("status").asText()).isEqualTo("ACCEPTED");
-        assertThat(res.get("daemonNodeId").asInt()).isEqualTo(1);
+        assertThat(res.get("daemonNodeId").asInt()).isEqualTo(roles.leaderId().orElseThrow());
         assertThat(res.get("outlierThresholdMillis").asLong()).isEqualTo(400L);
         await().atMost(Duration.ofSeconds(5)).until(() -> module.status() == ModuleStatus.IDLE);
     }
@@ -243,5 +254,21 @@ class ClockSyncControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.title").value("Unknown node"))
                 .andExpect(jsonPath("$.nodeId").value(99));
+    }
+
+    @Test
+    @DisplayName("POST /berkeley-rounds with every node down: 409 No leader, reason NO_LEADER, after the election bound")
+    void berkeleyRoundWithoutLeaderReturns409() throws Exception {
+        cluster.nodes().forEach(node -> cluster.crash(node.id()));
+
+        mockMvc.perform(post(BASE + "/berkeley-rounds")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("No leader"))
+                .andExpect(jsonPath("$.reason").value("NO_LEADER"))
+                .andExpect(jsonPath("$.moduleId").value("clocksync"))
+                .andExpect(jsonPath("$.detail").value(new NoLeaderException().getMessage()));
+        assertThat(module.status()).isEqualTo(ModuleStatus.IDLE);
     }
 }

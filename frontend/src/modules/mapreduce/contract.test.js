@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/services/api'
 import exportText from '@/test/fixtures/mapreduce/events-export.txt?raw'
+import noLeaderSynthetic from '@/test/fixtures/mapreduce/synthetic/error-409-no-leader.json'
 import {
   actionErrorFrom,
   chartModel,
@@ -222,5 +223,15 @@ describe('MapReduce contract fixtures (E7c, real backend JSON)', () => {
     const stages = pipelineStages(byName['run-accepted.json'])
     expect(stages.filter((stage) => stage.id !== 'input').map((stage) => stage.value)).toEqual(Array(7).fill('—'))
     expect(stages.find((stage) => stage.id === 'map').lanes.every((lane) => lane.tasks === null)).toBe(true)
+  })
+})
+
+describe('MapReduce synthetic fixtures (9A.4, labelled; see fixtures/mapreduce/synthetic/README.md)', () => {
+  it('synthetic/error-409-no-leader.json: the NO_LEADER 409 the run controls show as a calm warning', () => {
+    const shown = checkProblem(noLeaderSynthetic, 'synthetic/error-409-no-leader')
+    expect(shown.status).toBe(409)
+    expect(shown.title).toBe('No leader')
+    expect(noLeaderSynthetic.reason).toBe('NO_LEADER')
+    expect(noLeaderSynthetic.moduleId).toBe('mapreduce')
   })
 })

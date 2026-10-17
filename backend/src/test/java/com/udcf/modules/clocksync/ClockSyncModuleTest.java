@@ -1,13 +1,19 @@
 package com.udcf.modules.clocksync;
 
 import com.udcf.core.cluster.Cluster;
+import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
 import com.udcf.core.cluster.NodeDownException;
+import com.udcf.core.cluster.RoleProvider;
+import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventProperties;
 import com.udcf.core.module.ModuleActionGuard;
 import com.udcf.core.module.ModuleBusyException;
 import com.udcf.core.module.ModuleStatus;
+import com.udcf.modules.clocksync.dto.BerkeleyRoundAcceptedDto;
+import com.udcf.modules.clocksync.dto.BerkeleyRoundCommand;
 import com.udcf.modules.clocksync.dto.BerkeleyRoundDto;
 import com.udcf.modules.clocksync.dto.CausalVerificationDto;
 import com.udcf.modules.clocksync.dto.ClockSyncOverviewDto;
@@ -25,9 +31,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.udcf.core.cluster.NodeCapacity.FAST;
 import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
@@ -67,13 +77,30 @@ class ClockSyncModuleTest {
     private ClusterEventBus bus;
     private Clock wallClock;
     private ClockSyncModule module;
+    private RoleProvider roles;
+    private final AtomicInteger elections = new AtomicInteger();
 
     @BeforeEach
     void setUp() {
         wallClock = Clock.systemUTC();
         bus = new ClusterEventBus(new EventProperties(2000, 2000), wallClock);
         cluster = new Cluster(CLUSTER_PROPS, bus);
-        module = new ClockSyncModule(cluster, PROPERTIES, bus, wallClock, Executors.newVirtualThreadPerTaskExecutor());
+        // test elector, not Bully: the real leader is proven by the *LeaderIntegrationTest classes.
+        // It makes the highest live node leader at once, as Bully would, and counts the requests.
+        roles = new RoleProvider(cluster, new LeaderElector() {
+            @Override
+            public void requestElection() {
+                elections.incrementAndGet();
+                cluster.assignLeader(cluster.nodes().stream().filter(ClusterNode::isUp)
+                        .map(ClusterNode::id).max(Integer::compare).orElse(null));
+            }
+
+            @Override
+            public long electionBoundMillis() {
+                return 100;
+            }
+        });
+        module = new ClockSyncModule(cluster, PROPERTIES, bus, wallClock, roles, Executors.newVirtualThreadPerTaskExecutor());
     }
 
     @AfterEach
@@ -84,6 +111,7 @@ class ClockSyncModuleTest {
             }
         }
         module.close();
+        roles.close();
         cluster.close();
         bus.close();
     }
@@ -98,22 +126,25 @@ class ClockSyncModuleTest {
     }
 
     @Test
-    @DisplayName("overview reports live nodes, time daemon selection, and simulated drift")
+    @DisplayName("overview reports live nodes, the leader as time daemon (null before any election, never electing one), and simulated drift")
     void overviewState() {
         ClockSyncOverviewDto overview = module.overview();
         assertThat(overview.status()).isEqualTo(ModuleStatus.IDLE);
-        assertThat(overview.timeDaemonNodeId()).isEqualTo(1);
+        assertThat(overview.timeDaemonNodeId()).isNull();
+        assertThat(overview.abortedRound()).isNull();
         assertThat(overview.nodes()).hasSize(3);
         assertThat(overview.limits().maxTrafficSeconds()).isEqualTo(30);
         assertThat(overview.limits().retainedEventsCapacity()).isEqualTo(2000);
-        assertThat(overview.notes()).isNotEmpty();
+        assertThat(overview.notes()).anyMatch(note -> note.startsWith("The time daemon is the leader elected by Experiment 4."));
+        assertThat(elections).hasValue(0);
 
-        // When daemon node 1 crashes, node 2 becomes daemon
-        cluster.node(1).crash();
-        assertThat(module.overview().timeDaemonNodeId()).isEqualTo(2);
+        module.runBerkeleyRoundDirect(400L);
+        assertThat(module.overview().timeDaemonNodeId()).isEqualTo(3);
 
-        cluster.node(1).recover();
-        assertThat(module.overview().timeDaemonNodeId()).isEqualTo(1);
+        // When the leader crashes there is no daemon until the next election; reading asks for none
+        cluster.crash(3);
+        assertThat(module.overview().timeDaemonNodeId()).isNull();
+        assertThat(elections).hasValue(1);
     }
 
     @Test
@@ -201,7 +232,7 @@ class ClockSyncModuleTest {
     @DisplayName("runBerkeleyRoundDirect coordinates round and produces BerkeleyRoundDto")
     void berkeleyRoundExecution() {
         BerkeleyRoundDto round = module.runBerkeleyRoundDirect(400L);
-        assertThat(round.daemonNodeId()).isEqualTo(1);
+        assertThat(round.daemonNodeId()).isEqualTo(3);
         assertThat(round.participatingNodes()).contains(1, 2, 3);
         assertThat(round.adjustments()).hasSize(3);
         assertThat(round.simulated()).isTrue();
@@ -254,5 +285,125 @@ class ClockSyncModuleTest {
                 .isInstanceOf(InvalidParameterException.class);
         assertThatThrownBy(() -> module.timeline(5000))
                 .isInstanceOf(InvalidParameterException.class);
+    }
+
+    // ------------------------------------------------------------------ time daemon = elected leader (9A.4)
+
+    private List<ClusterEvent> events(String eventModule, String type) {
+        return bus.query(eventModule, null, 2000).stream().filter(e -> e.type().equals(type)).toList();
+    }
+
+    /** Waits until the roles dispatcher has delivered every leader change announced so far. */
+    private void awaitDispatcher() throws InterruptedException {
+        CountDownLatch delivered = new CountDownLatch(1);
+        roles.afterPendingChanges(delivered::countDown);
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    @DisplayName("the daemon is the current leader, not the lowest node, and no election is asked for while one leads")
+    void daemonIsTheLeader() {
+        cluster.assignLeader(2);
+
+        BerkeleyRoundDto round = module.runBerkeleyRoundDirect(400L);
+
+        assertThat(round.daemonNodeId()).isEqualTo(2);
+        assertThat(events(ClockSyncModule.ID, "BERKELEY_ROUND_STARTED")).singleElement()
+                .satisfies(e -> assertThat(e.data()).containsEntry("daemonId", 2));
+        assertThat(elections).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("no leader: NoLeaderException (409 NO_LEADER), no round starts and nothing changes")
+    void noLeaderRefusesRound() {
+        cluster.nodes().forEach(node -> cluster.crash(node.id()));
+
+        assertThatThrownBy(() -> module.runBerkeleyRound(null)).isInstanceOf(NoLeaderException.class)
+                .hasMessageStartingWith("No leader could be elected");
+        assertThat(events(ClockSyncModule.ID, "BERKELEY_ROUND_STARTED")).isEmpty();
+        assertThat(module.status()).isEqualTo(ModuleStatus.IDLE);
+        assertThat(module.overview().latestRound()).isNull();
+    }
+
+    @Test
+    @DisplayName("a round right after a re-election: exactly one TIME_DAEMON_CHANGED, after LEADER_CHANGED and before the round starts")
+    void daemonChangeOnceBeforeNextRound() throws Exception {
+        module.runBerkeleyRoundDirect(400L);   // daemon 3
+        cluster.assignLeader(2);
+        module.runBerkeleyRoundDirect(400L);   // races the listener; one of them publishes
+        awaitDispatcher();
+
+        List<ClusterEvent> changes = events(ClockSyncModule.ID, "TIME_DAEMON_CHANGED");
+        assertThat(changes).singleElement().satisfies(e -> {
+            assertThat(e.nodeId()).isEqualTo(2);
+            assertThat(e.peerId()).isEqualTo(3);
+            assertThat(e.data()).containsEntry("nodeId", 2).containsEntry("previousNodeId", 3)
+                    .containsEntry("cause", "ELECTED");
+            assertThat(e.message()).isEqualTo("Node 2 is the time daemon for the next Berkeley round: "
+                    + "Experiment 4 elected node 2 in place of node 3.");
+        });
+        ClusterEvent elected = events("cluster", "LEADER_CHANGED").stream()
+                .filter(e -> Integer.valueOf(2).equals(e.data().get("leaderId"))).findFirst().orElseThrow();
+        ClusterEvent secondRound = events(ClockSyncModule.ID, "BERKELEY_ROUND_STARTED").get(1);
+        assertThat(changes.get(0).sequence()).isGreaterThan(elected.sequence()).isLessThan(secondRound.sequence());
+        assertThat(secondRound.data()).containsEntry("daemonId", 2);
+    }
+
+    @Test
+    @DisplayName("daemon crashed: nothing for the vacancy, then cause LEADER_CRASHED when the next leader is elected")
+    void crashedDaemonCause() throws Exception {
+        module.runBerkeleyRoundDirect(400L);   // daemon 3
+        cluster.crash(3);
+        awaitDispatcher();
+        assertThat(events(ClockSyncModule.ID, "TIME_DAEMON_CHANGED")).isEmpty();
+
+        cluster.assignLeader(2);
+        await().atMost(Duration.ofSeconds(5)).until(() -> !events(ClockSyncModule.ID, "TIME_DAEMON_CHANGED").isEmpty());
+
+        assertThat(events(ClockSyncModule.ID, "TIME_DAEMON_CHANGED")).singleElement().satisfies(e -> {
+            assertThat(e.data()).containsEntry("cause", "LEADER_CRASHED");
+            assertThat(e.message()).isEqualTo("Node 2 is the time daemon for the next Berkeley round: "
+                    + "node 3 crashed and Experiment 4 elected node 2.");
+        });
+    }
+
+    @Test
+    @DisplayName("quiet before the first round, after a reset and after close")
+    void quietWhenNotUsed() throws Exception {
+        cluster.assignLeader(2);   // no round yet
+        awaitDispatcher();
+        module.runBerkeleyRoundDirect(400L);   // daemon 2: the first daemon is not a change
+        module.reset();
+        cluster.assignLeader(1);
+        awaitDispatcher();
+        module.runBerkeleyRoundDirect(400L);   // daemon 1 after the reset
+        module.close();
+        cluster.assignLeader(3);
+        awaitDispatcher();
+
+        assertThat(events(ClockSyncModule.ID, "TIME_DAEMON_CHANGED")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("daemon crashes during an accepted round: the overview shows the abort, latestRound keeps the last real round")
+    void abortedRoundShownInOverview() {
+        BerkeleyRoundDto real = module.runBerkeleyRoundDirect(400L);   // daemon 3
+        // Node 2 stays up but its clock service stops, so it never replies: the poll waits the 500 ms poll timeout
+        ClockNodeService.find(cluster.node(2)).orElseThrow().stop();
+
+        BerkeleyRoundAcceptedDto accepted = module.runBerkeleyRound(new BerkeleyRoundCommand(400L));
+        await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(5))
+                .until(() -> events(ClockSyncModule.ID, "BERKELEY_ROUND_STARTED").size() == 2);
+        cluster.crash(3);
+        await().atMost(Duration.ofSeconds(5)).until(() -> module.status() == ModuleStatus.IDLE
+                && module.overview().abortedRound() != null);
+
+        ClockSyncOverviewDto overview = module.overview();
+        assertThat(overview.abortedRound().roundId()).isEqualTo(accepted.roundId());
+        assertThat(overview.abortedRound().daemonNodeId()).isEqualTo(3);
+        assertThat(overview.abortedRound().reason()).startsWith("The time daemon, node 3, crashed during the ");
+        assertThat(overview.latestRound()).isEqualTo(real);
+        assertThat(events(ClockSyncModule.ID, "BERKELEY_ROUND_ABORTED")).hasSize(1);
+        assertThat(events(ClockSyncModule.ID, "BERKELEY_ROUND_FINISHED")).hasSize(1);
     }
 }

@@ -418,4 +418,29 @@ class ClockNodeServiceTest {
         assertThat(roundResult.participatingNodes()).contains(1, 2, 3);
         assertThat(roundResult.spreadAfterMillis()).isZero();
     }
+
+    @Test
+    @DisplayName("daemon crashed during the poll: BERKELEY_ROUND_ABORTED, no FINISHED, the round throws instead of blaming the peers")
+    void daemonCrashDuringPollAbortsRound() {
+        ClockNodeService s1 = service(1);
+        service(2).stop();   // node 2 stays up but never replies, so the poll waits its full timeout
+
+        CompletableFuture<BerkeleyRoundResult> round = CompletableFuture.supplyAsync(
+                () -> s1.runBerkeleyRound(List.of(1, 2), 500L, Duration.ofSeconds(5)), executor);
+        await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(5))
+                .until(() -> !roundEvents("BERKELEY_ROUND_STARTED").isEmpty());
+        cluster.node(1).crash();
+
+        assertThat(round).failsWithin(Duration.ofSeconds(10))
+                .withThrowableOfType(java.util.concurrent.ExecutionException.class)
+                .withCauseInstanceOf(BerkeleyRoundAbortedException.class)
+                .withMessageContaining("The time daemon, node 1, crashed during the poll stage, so the Berkeley round was aborted.");
+        assertThat(roundEvents("BERKELEY_ROUND_ABORTED")).singleElement()
+                .satisfies(e -> assertThat(e.data()).containsKey("roundId").containsKey("reason"));
+        assertThat(roundEvents("BERKELEY_ROUND_FINISHED")).isEmpty();
+    }
+
+    private List<ClusterEvent> roundEvents(String type) {
+        return bus.query(ClockNodeService.MODULE, null, 5000).stream().filter(e -> e.type().equals(type)).toList();
+    }
 }

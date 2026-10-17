@@ -2,15 +2,18 @@ package com.udcf.modules.clocksync;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderChange;
 import com.udcf.core.cluster.NodeDownException;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
+import com.udcf.core.events.EventDraft;
 import com.udcf.core.module.ExperimentModule;
 import com.udcf.core.module.ModuleActionGuard;
 import com.udcf.core.module.ModuleStatus;
 import com.udcf.modules.clocksync.berkeley.BerkeleyRoundResult;
 import com.udcf.modules.clocksync.berkeley.ClockDriftModel;
-import com.udcf.modules.clocksync.berkeley.ClockSyncRoleSelector;
 import com.udcf.modules.clocksync.berkeley.NodeDriftSnapshot;
+import com.udcf.modules.clocksync.dto.AbortedRoundDto;
 import com.udcf.modules.clocksync.dto.BerkeleyRoundAcceptedDto;
 import com.udcf.modules.clocksync.dto.BerkeleyRoundCommand;
 import com.udcf.modules.clocksync.dto.BerkeleyRoundDto;
@@ -40,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,12 +53,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Experiment 3 (Clock Synchronization) module.
  *
  * <p>Coordinates Lamport logical clock tracking and Berkeley physical clock synchronization
  * across the cluster nodes. Manages per-node drift models and the central event log.</p>
+ *
+ * <p><b>Time daemon (link L1).</b> The daemon of a Berkeley round is the leader elected by
+ * Experiment 4, taken from {@link RoleProvider#ensureLeader()} on the request thread; with no
+ * leader the round is refused (HTTP 409 {@code NO_LEADER}), never given to another node. The
+ * overview only reads {@link RoleProvider#leaderId()} and never starts an election. Once a round
+ * has run since the last reset, a new leader publishes {@code TIME_DAEMON_CHANGED} exactly once,
+ * from whichever comes first: the leader listener or the next round (compare-and-set).</p>
  */
 @Component
 public class ClockSyncModule implements ExperimentModule, AutoCloseable {
@@ -68,7 +80,10 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
             "Lamport logical clocks maintain causal event ordering using happens-before relations across message passing.",
             "Physical clock drift and offsets are simulated mathematically because all nodes execute on a single physical host.",
             "All Berkeley round polling, replies, and clock adjustments use real UDP datagrams on loopback socket bindings.",
-            "UDP transport is connectionless and unacknowledged: messages transmitted to crashed nodes report delivery status UNKNOWN."
+            "UDP transport is connectionless and unacknowledged: messages transmitted to crashed nodes report delivery status UNKNOWN.",
+            "The time daemon is the leader elected by Experiment 4. With no leader yet, the first Berkeley round asks "
+                    + "Experiment 4 for an election, which starts its election service and heartbeats on every live node; "
+                    + "if no leader can be elected, the round is refused."
     );
 
     private final Cluster cluster;
@@ -83,19 +98,25 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
     private final AtomicLong nextMessageId = new AtomicLong();
     private final AtomicLong nextRoundId = new AtomicLong();
     private volatile BerkeleyRoundDto latestRound;
+    private volatile AbortedRoundDto abortedRound;
+    private final RoleProvider roles;
+    private final RoleProvider.Registration leaderChanges;
+    /** The daemon of the rounds so far; null until the first round after a reset. */
+    private final AtomicReference<Integer> actingDaemon = new AtomicReference<>();
 
     @org.springframework.beans.factory.annotation.Autowired
     public ClockSyncModule(Cluster cluster, ClockSyncProperties properties,
-                           ClusterEventBus bus, Clock wallClock) {
-        this(cluster, properties, bus, wallClock, Executors.newVirtualThreadPerTaskExecutor());
+                           ClusterEventBus bus, Clock wallClock, RoleProvider roles) {
+        this(cluster, properties, bus, wallClock, roles, Executors.newVirtualThreadPerTaskExecutor());
     }
 
     public ClockSyncModule(Cluster cluster, ClockSyncProperties properties,
-                           ClusterEventBus bus, Clock wallClock, ExecutorService executor) {
+                           ClusterEventBus bus, Clock wallClock, RoleProvider roles, ExecutorService executor) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
         this.wallClock = Objects.requireNonNull(wallClock, "wallClock must not be null");
+        this.roles = Objects.requireNonNull(roles, "roles must not be null");
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.eventLog = new ClockEventLog(properties.retainedEventsCapacity());
 
@@ -110,6 +131,7 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
                 }
             }
         }
+        this.leaderChanges = roles.addLeaderListener(this::onLeaderChanged);
     }
 
     @Override
@@ -143,6 +165,8 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
             }
         }
         latestRound = null;
+        abortedRound = null;
+        actingDaemon.set(null);
     }
 
     public ClockNodeService ensureService(ClusterNode node) {
@@ -155,9 +179,7 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
     }
 
     public ClockSyncOverviewDto overview() {
-        List<ClusterNode> live = liveNodes();
-        Integer daemonId = live.isEmpty() ? null : ClockSyncRoleSelector.selectTimeDaemon(
-                live.stream().map(ClusterNode::id).toList());
+        Integer daemonId = roles.leaderId().orElse(null);   // never ensureLeader: a read starts no election
 
         List<ClockSyncNodeDto> nodes = cluster.nodes().stream().map(node -> {
             ClockDriftModel model = driftModels.get(node.id());
@@ -199,6 +221,7 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
                 daemonId,
                 nodes,
                 latestRound,
+                abortedRound,
                 limits,
                 OVERVIEW_NOTES
         );
@@ -321,12 +344,8 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
                     "must be >= 0, was " + threshold);
         }
 
-        List<ClusterNode> live = liveNodes();
-        if (live.isEmpty()) {
-            throw new IllegalStateException("No live nodes available to coordinate Berkeley round");
-        }
-        List<Integer> liveIds = live.stream().map(ClusterNode::id).toList();
-        int daemonId = ClockSyncRoleSelector.selectTimeDaemon(liveIds);
+        int daemonId = daemon();
+        List<Integer> liveIds = liveNodes().stream().map(ClusterNode::id).toList();
         ClusterNode daemonNode = cluster.node(daemonId);
         ClockNodeService daemonService = ensureService(daemonNode);
 
@@ -337,8 +356,11 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
             try (ticket) {
                 BerkeleyRoundResult result = daemonService.runBerkeleyRound(liveIds, threshold);
                 this.latestRound = toDto(roundId, result);
+                this.abortedRound = null;
             } catch (Exception e) {
-                log.error("Berkeley round {} coordination failed: {}", roundId, e.getMessage(), e);
+                // The 202 is already sent: the abort is shown by the overview (abortedRound) and the event log.
+                this.abortedRound = new AbortedRoundDto(roundId, daemonId, abortReason(daemonId, e), wallClock.instant());
+                log.warn("Berkeley round {} was aborted: {}", roundId, e.getMessage());
             }
         });
 
@@ -350,12 +372,8 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
             throw new InvalidParameterException("outlierThresholdMillis",
                     "must be >= 0, was " + threshold);
         }
-        List<ClusterNode> live = liveNodes();
-        if (live.isEmpty()) {
-            throw new IllegalStateException("No live nodes available to coordinate Berkeley round");
-        }
-        List<Integer> liveIds = live.stream().map(ClusterNode::id).toList();
-        int daemonId = ClockSyncRoleSelector.selectTimeDaemon(liveIds);
+        int daemonId = daemon();
+        List<Integer> liveIds = liveNodes().stream().map(ClusterNode::id).toList();
         ClusterNode daemonNode = cluster.node(daemonId);
         ClockNodeService daemonService = ensureService(daemonNode);
 
@@ -489,7 +507,70 @@ public class ClockSyncModule implements ExperimentModule, AutoCloseable {
 
     @Override
     public void close() {
+        leaderChanges.close();
         executor.shutdownNow();
+    }
+
+    // ------------------------------------------------------------------ time daemon (link L1)
+
+    /**
+     * The daemon of the next round: the leader elected by Experiment 4, electing one first if
+     * there is none (blocks up to the election bound). Request thread only, holding no lock.
+     *
+     * @throws NoLeaderException if no leader could be elected (HTTP 409)
+     */
+    private int daemon() {
+        int leader = roles.ensureLeader().orElseThrow(NoLeaderException::new);
+        follow(leader, true);
+        return leader;
+    }
+
+    /** On the roles dispatcher: never blocks, never ensureLeader. A vacancy publishes nothing. */
+    private void onLeaderChanged(LeaderChange change) {
+        Integer leader = change.leaderId();
+        if (leader != null && roles.leaderId().filter(leader::equals).isPresent()) {
+            follow(leader, false);
+        }
+    }
+
+    /**
+     * Publishes TIME_DAEMON_CHANGED exactly once: the listener and a round race on one
+     * compare-and-set. The short lock (no wait inside, only the bus publish) makes the loser wait
+     * until the winner's event is on the bus, so it always precedes the next BERKELEY_ROUND_STARTED.
+     * Only a round remembers the first daemon after a reset (that is not a change).
+     */
+    private void follow(int leader, boolean fromRound) {
+        synchronized (actingDaemon) {
+            Integer previous = actingDaemon.get();
+            if (previous == null) {
+                if (fromRound) {
+                    actingDaemon.compareAndSet(null, leader);
+                }
+                return;
+            }
+            if (previous == leader || !actingDaemon.compareAndSet(previous, leader)) {
+                return;
+            }
+            boolean crashed = !cluster.node(previous).isUp();
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("nodeId", leader);
+            data.put("previousNodeId", previous);
+            data.put("cause", crashed ? LeaderChange.Cause.LEADER_CRASHED.name() : LeaderChange.Cause.ELECTED.name());
+            bus.publish(EventDraft.of(ID, leader, "TIME_DAEMON_CHANGED", cluster.node(leader).clock().tick())
+                    .withPeer(previous)
+                    .withMessage("Node " + leader + " is the time daemon for the next Berkeley round: " + (crashed
+                            ? "node " + previous + " crashed and Experiment 4 elected node " + leader + "."
+                            : "Experiment 4 elected node " + leader + " in place of node " + previous + "."))
+                    .withData(data));
+        }
+    }
+
+    private static String abortReason(int daemonId, Exception e) {
+        if (e instanceof BerkeleyRoundAbortedException) {
+            return e.getMessage();
+        }
+        return "The Berkeley round coordinated by node " + daemonId + " was aborted: "
+                + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
 
     private BerkeleyRoundDto toDto(long roundId, BerkeleyRoundResult result) {
