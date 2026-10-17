@@ -57,7 +57,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "udcf.election.round-timeout-millis=10000",
         "udcf.replication.async-delay-millis=400",
         "udcf.replication.timeout-millis=300",
-        "udcf.faulttolerance.client.max-attempts=40",
+        "udcf.faulttolerance.client.max-attempts=50",
         "udcf.faulttolerance.client.retry-delay-millis=100",
         "udcf.faulttolerance.role-query.retry-delay-millis=300",
         "udcf.faulttolerance.role-query.max-attempts=3",
@@ -112,7 +112,7 @@ class FaultToleranceControllerTest {
     }
 
     private void awaitServingPrimary() {
-        await().atMost(WAIT).until(() -> getJson(BASE + "/status").path("currentPrimaryId").asInt() == 1
+        await().atMost(WAIT).until(() -> getJson(BASE + "/status").path("currentPrimaryId").asInt() == 5
                 && module.currentState().nodes().stream().allMatch(n -> "READY".equals(n.rejoin())));
     }
 
@@ -139,8 +139,8 @@ class FaultToleranceControllerTest {
                 .andExpect(jsonPath("$.settings.asyncDelayMillis").value(400))
                 .andExpect(jsonPath("$.settings.asyncDelaySimulated").value(true))
                 .andExpect(jsonPath("$.settings.coHostingSimulated").value(true))
-                .andExpect(jsonPath("$.settings.worstCaseFailoverMillis").value(2400))
-                .andExpect(jsonPath("$.settings.retryWindowMillis").value(4000))
+                .andExpect(jsonPath("$.settings.worstCaseFailoverMillis").value(3450))
+                .andExpect(jsonPath("$.settings.retryWindowMillis").value(5000))
                 .andExpect(jsonPath("$.glossary", hasSize(8)))
                 .andExpect(jsonPath("$.glossary[0].id").value("detection"))
                 .andExpect(jsonPath("$.glossary[6].kind").value("derived"))
@@ -253,11 +253,11 @@ class FaultToleranceControllerTest {
         awaitServingPrimary();
         postJson(BASE + "/stream/start", "{\"mode\":\"SYNCHRONOUS\",\"ratePerSecond\":2}").andExpect(status().isAccepted());
         mockMvc.perform(post(BASE + "/crash-primary")).andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.nodeId").value(1))
+                .andExpect(jsonPath("$.nodeId").value(5))
                 .andExpect(jsonPath("$.epoch").value(2))
                 .andExpect(jsonPath("$.crashSource").value("ACTION"))
                 .andExpect(jsonPath("$.status.dataLossNow").value(nullValue()))
-                .andExpect(jsonPath("$.status.nodes[0].role").value(nullValue()));
+                .andExpect(jsonPath("$.status.nodes[4].role").value(nullValue()));
         await().atMost(WAIT).until(() -> !module.runs().isEmpty() && module.latestRun().dataLoss() != null);
         mockMvc.perform(get(BASE + "/runs/latest")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("RESTORED"))
@@ -267,7 +267,7 @@ class FaultToleranceControllerTest {
         mockMvc.perform(get(BASE + "/runs/1")).andExpect(status().isOk()).andExpect(jsonPath("$.runId").value(1));
         mockMvc.perform(get(BASE + "/runs")).andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)));
         mockMvc.perform(post(BASE + "/recover")).andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.nodeId").value(1))
+                .andExpect(jsonPath("$.nodeId").value(5))
                 .andExpect(jsonPath("$.previousEpoch").value(2));
         mockMvc.perform(post(BASE + "/recover")).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.reason").value("NOTHING_TO_RECOVER"));

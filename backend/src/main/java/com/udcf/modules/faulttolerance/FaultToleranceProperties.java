@@ -21,11 +21,12 @@ import java.util.Objects;
  * <h2>The client retry window must cover the worst failover</h2>
  * <pre>
  * worst = detection                      heartbeat timeout + heartbeat interval
- *       + 2 x promotion attempt          (the chosen node fails, a second candidate is tried)
+ *       + election                       ok timeout + coordinator timeout (one Bully attempt, link L1)
+ *       + promotion attempt              of the elected leader only: there is no second candidate
  * promotion attempt = catch-up bound     promotion.catch-up-timeout-millis (peers in parallel)
  *                   + term-record bound  2 x replication timeout (connect + read; pushes in parallel)
  * </pre>
- * {@link #worstCaseFailoverMillis(long, long, long, long)} is that formula, the only copy;
+ * {@link #worstCaseFailoverMillis(long, long, long, long, long, long)} is that formula, the only copy;
  * {@link #requireWindowCovers} applies it and {@link FailoverCluster} calls that at construction.
  *
  * @param client       the update client's retry policy (E8a {@link UpdateRetryPolicy})
@@ -113,20 +114,24 @@ public record FaultToleranceProperties(
 
     /**
      * The worst-case failover the client must outlast:
-     * {@code (heartbeatTimeout + heartbeatInterval) + 2 x (catchUpTimeout + 2 x replicationTimeout)}.
+     * {@code (heartbeatTimeout + heartbeatInterval) + (okTimeout + coordinatorTimeout)
+     * + (catchUpTimeout + 2 x replicationTimeout)}.
      */
     public static long worstCaseFailoverMillis(long heartbeatIntervalMillis, long heartbeatTimeoutMillis,
+                                               long okTimeoutMillis, long coordinatorTimeoutMillis,
                                                long catchUpTimeoutMillis, long replicationTimeoutMillis) {
         long detection = heartbeatTimeoutMillis + heartbeatIntervalMillis;
-        return detection + 2 * promotionAttemptBoundMillis(catchUpTimeoutMillis, replicationTimeoutMillis);
+        long election = okTimeoutMillis + coordinatorTimeoutMillis;
+        return detection + election + promotionAttemptBoundMillis(catchUpTimeoutMillis, replicationTimeoutMillis);
     }
 
-    /** {@link #worstCaseFailoverMillis(long, long, long, long)} with the configured values. */
+    /** {@link #worstCaseFailoverMillis(long, long, long, long, long, long)} with the configured values. */
     public long worstCaseFailoverMillis(ElectionProperties election, ReplicationProperties replication) {
         Objects.requireNonNull(election, "election must not be null");
         Objects.requireNonNull(replication, "replication must not be null");
         return worstCaseFailoverMillis(election.heartbeatIntervalMillis(), election.heartbeatTimeoutMillis(),
-                promotion.catchUpTimeoutMillis(), replication.timeoutMillis());
+                election.okTimeoutMillis(), election.coordinatorTimeoutMillis(), promotion.catchUpTimeoutMillis(),
+                replication.timeoutMillis());
     }
 
     /**
@@ -140,7 +145,8 @@ public record FaultToleranceProperties(
             throw new IllegalStateException("udcf.faulttolerance.client retries for " + client.maxAttempts() + " x "
                     + client.retryDelayMillis() + " = " + retryWindowMillis() + " ms, less than the worst-case failover "
                     + "of " + worst + " ms = detection (" + election.heartbeatTimeoutMillis() + " + "
-                    + election.heartbeatIntervalMillis() + ") + 2 x (catch-up " + promotion.catchUpTimeoutMillis()
+                    + election.heartbeatIntervalMillis() + ") + election (" + election.okTimeoutMillis() + " + "
+                    + election.coordinatorTimeoutMillis() + ") + promotion (catch-up " + promotion.catchUpTimeoutMillis()
                     + " + term record 2 x " + replication.timeoutMillis() + ")");
         }
     }

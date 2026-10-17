@@ -47,10 +47,18 @@ describe('ReplicaRail', () => {
   })
 
   it('marks the old primary that demoted itself, with both epochs', () => {
-    render(<ReplicaRail status={overviewAfterRuns.current} run={overviewAfterRuns.latestRun} settings={settings} notes={notes} />)
+    render(<ReplicaRail status={statusAfterDemotion} run={runSyncRecovered} settings={settings} notes={notes} />)
     expect(within(tile(1)).getByTestId('demoted').textContent).toBe('Demoted itself: primary at epoch 2, now backup at epoch 3')
     expect(within(tile(2)).getByText('Primary')).toBeTruthy()
     expect(screen.queryAllByTestId('demoted')).toHaveLength(1)
+  })
+
+  it('after the planned handover (9A.1 capture) the old primary is primary again: no demotion mark, one primary', () => {
+    render(<ReplicaRail status={overviewAfterRuns.current} run={overviewAfterRuns.latestRun} settings={settings} notes={notes} />)
+    expect(within(tile(5)).getByText('Primary')).toBeTruthy()
+    expect(within(tile(5)).getByTestId('epoch').textContent).toBe('4')
+    expect(screen.queryAllByTestId('demoted')).toHaveLength(0)
+    expect(screen.getAllByText('Primary')).toHaveLength(1)
   })
 
   it('shows a stalled rejoin (synthetic status-rejoin-stalled) as rejoining at its old epoch, believing no one', () => {

@@ -59,7 +59,7 @@ describe('MeasurementsPanel', () => {
     const derived = screen.getByTestId('derived-figures')
     expect(within(derived).getAllByText('Derived')).toHaveLength(2)
     expect(derived.textContent).toContain('1800 to 3200 ms')
-    expect(derived.textContent).toContain('11200 ms')
+    expect(derived.textContent).toContain('10300 ms')
     expect(screen.getByTestId('detection-comparison').textContent).toBe('The measured detection is inside the expected window.')
     expect(within(screen.getByTestId('four-measurements')).queryByText('Derived')).toBeNull()
     expect(within(screen.getByTestId('four-measurements')).getAllByText('Measured')).toHaveLength(4)

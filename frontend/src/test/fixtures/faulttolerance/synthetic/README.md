@@ -17,3 +17,6 @@ says "synthetic" in its name. The real fixtures in the parent folder are unchang
 | `run-recovering.json` | `run-sync-recovered.json` | milestones DEMOTED and RESYNCHRONISED removed; `recoveryMillis` null (the old primary is back, recovery still open) |
 | `status-restored-old-primary-down.json` | `status-after-demotion.json` | node 1 CRASHED with role, epoch, `believedPrimaryId` and rejoin null (service restored by node 2, old primary not recovered yet) |
 | `events-synthetic.json` | first event of `events.json` | two events: `ROLE_QUERY_FAILED` (node 1, attempt 5 of 5) and `NO_CANDIDATE` (node 0, excluded [1]), messages in the backend's wording |
+
+Since Phase 9A.1 the backend no longer publishes `NO_CANDIDATE` (the elected leader is the only
+candidate); the event stays in `events-synthetic.json` only as a module event that triggers a refresh.

@@ -5,12 +5,17 @@ import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * The one shared cluster every module runs on (R1, R10).
@@ -27,6 +32,10 @@ public class Cluster implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Object leaderLock = new Object();
     private Integer announcedLeader;   // guarded by leaderLock: the leader last announced in LEADER_CHANGED
+    private final List<Consumer<LeaderChange>> leaderObservers = new CopyOnWriteArrayList<>();
+    private final Object primaryLock = new Object();
+    private Integer announcedPrimary;                // guarded by primaryLock
+    private List<Integer> announcedBackups = List.of();   // guarded by primaryLock
 
     public Cluster(ClusterProperties properties, ClusterEventBus bus) {
         Objects.requireNonNull(properties, "properties must not be null");
@@ -65,7 +74,8 @@ public class Cluster implements AutoCloseable {
 
     /**
      * See {@link ClusterNode#crash()}. A crashed node holds no role, so if it was the
-     * announced leader, {@code LEADER_CHANGED} (leader none) is published afterwards.
+     * announced leader, {@code LEADER_CHANGED} (leader none) is published afterwards, and if it
+     * was the announced primary or a backup, {@code REPLICATION_ROLES_CHANGED}.
      *
      * <p>No cluster lock is held while the node crashes: its services join their threads,
      * and an election thread may be inside {@link #assignLeader} at that moment.</p>
@@ -75,7 +85,13 @@ public class Cluster implements AutoCloseable {
         if (crashed) {
             synchronized (leaderLock) {
                 if (Objects.equals(announcedLeader, id)) {
-                    announceLeader(null);
+                    announceLeader(null, LeaderChange.Cause.LEADER_CRASHED);
+                }
+            }
+            synchronized (primaryLock) {
+                if (Objects.equals(announcedPrimary, id) || announcedBackups.contains(id)) {
+                    announceReplicationRoles(Objects.equals(announcedPrimary, id) ? null : announcedPrimary,
+                            announcedBackups.stream().filter(backup -> backup != id).toList());
                 }
             }
         }
@@ -112,13 +128,13 @@ public class Cluster implements AutoCloseable {
                 }
             }
             if (!Objects.equals(leader, announcedLeader)) {
-                announceLeader(leader);
+                announceLeader(leader, leader == null ? LeaderChange.Cause.CLEARED : LeaderChange.Cause.ELECTED);
             }
             return Optional.ofNullable(leader);
         }
     }
 
-    private void announceLeader(Integer leader) {   // caller holds leaderLock
+    private void announceLeader(Integer leader, LeaderChange.Cause cause) {   // caller holds leaderLock
         Integer previous = announcedLeader;
         announcedLeader = leader;
         Map<String, Object> data = new LinkedHashMap<>();
@@ -129,6 +145,92 @@ public class Cluster implements AutoCloseable {
                 .withMessage(leader == null
                         ? "No leader (node " + previous + " is no longer leader)"
                         : "Node " + leader + " is the leader")
+                .withData(data));
+        LeaderChange change = new LeaderChange(leader, previous, cause);
+        leaderObservers.forEach(observer -> observer.accept(change));
+    }
+
+    /**
+     * Registers an observer called with every announced leader change, in order, while the
+     * leader lock is held: it must only hand the change off, never wait. Only
+     * {@link RoleProvider} uses it.
+     *
+     * @return removes the observer
+     */
+    Runnable addLeaderObserver(Consumer<LeaderChange> observer) {
+        Objects.requireNonNull(observer, "observer must not be null");
+        leaderObservers.add(observer);
+        return () -> leaderObservers.remove(observer);
+    }
+
+    /** The node holding {@link NodeRole#PRIMARY}, if any. */
+    public Optional<Integer> primaryId() {
+        return nodes.stream().filter(node -> node.hasRole(NodeRole.PRIMARY)).map(ClusterNode::id).findFirst();
+    }
+
+    /**
+     * Makes {@code primaryId} the only {@link NodeRole#PRIMARY} and every listed live node
+     * (other than the primary) a {@link NodeRole#BACKUP}; every other node loses both roles.
+     * A crashed node is never granted one. Publishes {@code REPLICATION_ROLES_CHANGED} (module
+     * {@code "cluster"}, node 0, cluster clock, peer = primary, data
+     * {@code {primaryId, previousPrimaryId, backupIds}}) when the primary or the backups change.
+     * Called through {@link RoleProvider#publishReplicationRoles}.
+     *
+     * <p>Locks: {@code primaryLock}, then each node's roles lock, then the bus's publish lock;
+     * never held while a thread is joined, never nested with {@code leaderLock}.</p>
+     *
+     * @param primaryId the primary, or null for none
+     * @param backupIds the backups
+     * @return the primary afterwards
+     * @throws UnknownNodeException if an id is outside 1..size
+     */
+    public Optional<Integer> assignReplicationRoles(Integer primaryId, Collection<Integer> backupIds) {
+        Objects.requireNonNull(backupIds, "backupIds must not be null");
+        ClusterNode primary = primaryId == null ? null : node(primaryId);
+        Set<Integer> backups = new TreeSet<>();
+        for (Integer backupId : backupIds) {
+            if (!Objects.equals(node(backupId).id(), primaryId)) {
+                backups.add(backupId);
+            }
+        }
+        synchronized (primaryLock) {
+            for (ClusterNode node : nodes) {   // revoke first, so a direct switch never holds two primaries
+                if (node != primary) {
+                    node.revokeRole(NodeRole.PRIMARY);
+                }
+                if (!backups.contains(node.id())) {
+                    node.revokeRole(NodeRole.BACKUP);
+                }
+            }
+            Integer granted = primary != null && primary.grantRole(NodeRole.PRIMARY) ? primary.id() : null;
+            List<Integer> grantedBackups = new ArrayList<>();
+            for (ClusterNode node : nodes) {
+                if (backups.contains(node.id()) && node.grantRole(NodeRole.BACKUP)) {
+                    grantedBackups.add(node.id());
+                }
+            }
+            if (!Objects.equals(granted, announcedPrimary) || !grantedBackups.equals(announcedBackups)) {
+                announceReplicationRoles(granted, grantedBackups);
+            }
+            return Optional.ofNullable(granted);
+        }
+    }
+
+    private void announceReplicationRoles(Integer primary, List<Integer> backups) {   // caller holds primaryLock
+        Integer previous = announcedPrimary;
+        announcedPrimary = primary;
+        announcedBackups = List.copyOf(backups);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("primaryId", primary);
+        data.put("previousPrimaryId", previous);
+        data.put("backupIds", announcedBackups);
+        String message = primary == null
+                ? "No replication primary" + (previous == null ? "" : " (node " + previous + " is no longer primary)")
+                : "Node " + primary + " is the replication primary";
+        bus.publish(EventDraft.of(ClusterNode.MODULE, 0, "REPLICATION_ROLES_CHANGED", clock.tick())
+                .withPeer(primary)
+                .withMessage(message + (announcedBackups.isEmpty() ? "; no backups" : "; backups "
+                        + String.join(", ", announcedBackups.stream().map(String::valueOf).toList())))
                 .withData(data));
     }
 

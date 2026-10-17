@@ -16,7 +16,7 @@ import { useFaultTolerance } from './useFaultTolerance'
 
 const WHAT_TO_NOTICE = [
   'Synchronous mode loses nothing: after a failover the data loss reads 0 lost. Asynchronous mode can lose the updates still inside the simulated delay when the primary crashes, and the panel names their keys.',
-  'The old primary comes back as a backup: nobody tells it to step down. It asks the others, sees a higher epoch and demotes itself.',
+  'The old primary comes back as a backup: nobody tells it to step down. It asks the others, sees a higher epoch and demotes itself. As the highest node it then wins the election again, copies the store of the primary and takes over at a higher epoch.',
   'Epochs protect the data: backups refuse any update stamped with an older epoch, so the no-two-primaries check stays passed.',
 ]
 

@@ -2,6 +2,7 @@ package com.udcf.modules.faulttolerance;
 
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.modules.election.ElectionNodeService;
+import com.udcf.modules.replication.ConsistencyModel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,63 +62,70 @@ class FaultToleranceNodeServiceTest {
     @DisplayName("start registers with the shared detector: a crash of the primary is detected through it")
     void startRegistersWithTheSharedDetector() {
         fixture = new FailoverFixture(3);
-        fixture.startAndAwaitPrimary(1);
+        fixture.startAndAwaitPrimary(3);
 
-        fixture.cluster.crash(1);
+        fixture.cluster.crash(3);
 
         FailoverFixture.within().until(() -> !fixture.events("FAILURE_DETECTED").isEmpty());
-        assertThat(fixture.events("FAILURE_DETECTED").get(0).nodeId()).isIn(2, 3);
-        assertThat(fixture.events("FAILURE_DETECTED").get(0).peerId()).isEqualTo(1);
+        assertThat(fixture.events("FAILURE_DETECTED").get(0).nodeId()).isIn(1, 2);
+        assertThat(fixture.events("FAILURE_DETECTED").get(0).peerId()).isEqualTo(3);
     }
 
     @Test
     @DisplayName("crash steps the acting primary down, then joins every thread of the service")
     void crashStepsDownAndJoinsThreads() {
         fixture = new FailoverFixture(3);
-        fixture.startAndAwaitPrimary(1);
-        FaultToleranceNodeService service = fixture.service(1);
+        fixture.startAndAwaitPrimary(3);
+        FaultToleranceNodeService service = fixture.service(3);
 
-        fixture.cluster.crash(1);
+        fixture.cluster.crash(3);
 
         assertThat(service.isRunning()).isFalse();
         assertThat(service.threadsTerminated()).isTrue();
-        assertThat(liveThreads("udcf-faulttolerance-n1-")).isEmpty();
-        assertThat(fixture.replication(1).isPrimary()).isFalse();
+        assertThat(liveThreads("udcf-faulttolerance-n3-")).isEmpty();
+        assertThat(fixture.replication(3).isPrimary()).isFalse();
         assertThat(service.wasPrimaryAtCrash()).isTrue();
         assertThat(service.isServing()).isFalse();
         assertThat(service.rejoinState()).isEqualTo(RejoinState.REJOINING);
     }
 
     @Test
-    @DisplayName("recover reopens the service, which rejoins as a backup and never acts as primary meanwhile")
-    void recoverRejoinsAsNonPrimary() {
+    @DisplayName("recover reopens the service, which rejoins as a backup, never acts as primary before it is ready, then takes over as the leader")
+    void recoverRejoinsAsNonPrimary() throws Exception {
         fixture = new FailoverFixture(3);
-        fixture.startAndAwaitPrimary(1);
-        fixture.cluster.crash(1);
+        fixture.startAndAwaitPrimary(3);
+        fixture.cluster.crash(3);
         fixture.awaitPrimary(2);
 
-        fixture.cluster.recover(1);
+        fixture.cluster.recover(3);
 
-        FaultToleranceNodeService service = fixture.service(1);
+        FaultToleranceNodeService service = fixture.service(3);
         assertThat(service.isRunning()).isTrue();
         FailoverFixture.within().until(() -> {
-            assertThat(fixture.replication(1).isPrimary()).isFalse();
-            return service.rejoinState() == RejoinState.READY;
+            boolean primary = fixture.replication(3).isPrimary();   // read before the state: READY always comes first
+            if (service.rejoinState() != RejoinState.READY) {
+                assertThat(primary).isFalse();
+                return false;
+            }
+            return true;
         });
-        assertThat(service.isServing()).isFalse();
-        assertThat(service.believedPrimaryId()).isEqualTo(2);
+        // The failover run ends at the first accepted update; then node 3, the leader again, takes over.
+        assertThat(fixture.failover.submit(SystemUpdate.numbered(1), ConsistencyModel.SYNCHRONOUS)
+                .get(15, java.util.concurrent.TimeUnit.SECONDS).accepted()).isTrue();
+        fixture.awaitPrimary(3);
+        assertThat(service.believedPrimaryId()).isEqualTo(3);
     }
 
     @Test
     @DisplayName("the service follows Cluster.crash and Cluster.recover (R10)")
     void followsTheClusterNode() {
         fixture = new FailoverFixture(3);
-        fixture.startAndAwaitPrimary(1);
-        FaultToleranceNodeService backup = fixture.service(3);
+        fixture.startAndAwaitPrimary(3);
+        FaultToleranceNodeService backup = fixture.service(1);
 
-        fixture.cluster.crash(3);
+        fixture.cluster.crash(1);
         assertThat(backup.isRunning()).isFalse();
-        fixture.cluster.recover(3);
+        fixture.cluster.recover(1);
         assertThat(backup.isRunning()).isTrue();
         FailoverFixture.within().until(() -> backup.rejoinState() == RejoinState.READY);
     }
@@ -126,7 +134,7 @@ class FaultToleranceNodeServiceTest {
     @DisplayName("stop twice is fine, joins the threads, and the service can start again")
     void stopIsIdempotent() {
         fixture = new FailoverFixture(3);
-        fixture.startAndAwaitPrimary(1);
+        fixture.startAndAwaitPrimary(3);
         FaultToleranceNodeService service = fixture.service(2);
 
         service.stop();
@@ -145,19 +153,19 @@ class FaultToleranceNodeServiceTest {
         fixture = new FailoverFixture(3);
         fixture.cluster.crash(2);   // node 2 never binds its replication port; a silent peer takes it
         try (SilentServer silent = new SilentServer(FailoverFixture.replicationPort(2))) {
-            fixture.startAndAwaitPrimary(1);
-            fixture.cluster.crash(3);
-            fixture.cluster.recover(3);   // node 3 rejoins: its role query asks node 1 and the silent node 2
+            fixture.startAndAwaitPrimary(3);
+            fixture.cluster.crash(1);
+            fixture.cluster.recover(1);   // node 1 rejoins: its role query asks node 3 and the silent node 2
             FailoverFixture.within().until(() -> silent.accepted() >= 1);
 
             long start = System.nanoTime();
-            fixture.cluster.crash(3);
+            fixture.cluster.crash(1);
             long crashMillis = (System.nanoTime() - start) / 1_000_000;
 
-            FaultToleranceNodeService service = fixture.service(3);
+            FaultToleranceNodeService service = fixture.service(1);
             assertThat(crashMillis).isLessThan(2000);
             assertThat(service.threadsTerminated()).isTrue();
-            assertThat(liveThreads("udcf-faulttolerance-n3-")).isEmpty();
+            assertThat(liveThreads("udcf-faulttolerance-n1-")).isEmpty();
         }
     }
 }

@@ -375,4 +375,49 @@ class ElectionModuleTest {
         assertThat(registry.getMeters()).isEmpty();
         assertThat(cluster.leaderId()).isEmpty();
     }
+
+    @Test
+    @DisplayName("a requested election (role provider) starts the services and runs Bully from the lowest live node as a REQUESTED round")
+    void requestElectionElectsHighestAsRequestedRound() {
+        cluster.crash(1);
+
+        module.requestElection();
+
+        within().until(() -> electedRoundWith(5));
+        assertThat(events(ElectionModule.ROUND_STARTED)).singleElement().satisfies(e -> assertThat(e.data())
+                .containsEntry("trigger", "REQUESTED").containsEntry("initiatorNodeId", 2));
+        assertThat(module.overview().lastRound().trigger()).isEqualTo("REQUESTED");
+        assertThat(module.overview().servicesStarted()).isTrue();
+        assertThat(module.electionBoundMillis()).isEqualTo(400 + 1500);
+    }
+
+    @Test
+    @DisplayName("a requested election does nothing while there is a leader")
+    void requestElectionDoesNothingWithALeader() {
+        electFiveFromNodeOne();
+
+        module.requestElection();
+        flushBus();
+
+        assertThat(roundsStarted("REQUESTED")).isZero();
+        assertThat(cluster.leaderId()).contains(5);
+    }
+
+    @Test
+    @DisplayName("a recovered node whose election service another module started first is wired and runs Bully")
+    void recoveredNodeStartedByAnotherModuleIsWired() {
+        cluster.crash(5);
+        start(ElectionAlgorithm.BULLY, 1);
+        within().until(() -> electedRoundWith(4));
+
+        // As Experiment 8 does on NODE_RECOVERED: it may start node 5's election service before this module sees the event.
+        CountDownLatch gate = new CountDownLatch(1);
+        dispatcherGate.set(gate);
+        cluster.recover(5);
+        ElectionNodeService.on(cluster.node(5), cluster, PROPERTIES, bus);
+        gate.countDown();
+
+        within().until(() -> electedRoundWith(5));
+        assertThat(roundsStarted("RECOVERY")).isGreaterThanOrEqualTo(1);
+    }
 }

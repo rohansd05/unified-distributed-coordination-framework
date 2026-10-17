@@ -3,9 +3,11 @@ package com.udcf.modules.faulttolerance;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterProperties;
 import com.udcf.core.cluster.NodeCapacity;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventProperties;
+import com.udcf.modules.election.ElectionModule;
 import com.udcf.modules.election.ElectionProperties;
 import com.udcf.modules.replication.ReplicationProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -19,15 +21,16 @@ import java.util.List;
 import static org.awaitility.Awaitility.await;
 
 /**
- * A standalone cluster with real 127.0.0.1 sockets and a {@link FaultToleranceModule} on it,
- * without Spring, with short timings. Test helper, not a test.
+ * A standalone cluster with real 127.0.0.1 sockets, Experiment 4's {@link ElectionModule}, the
+ * shared {@link RoleProvider} and a {@link FaultToleranceModule} on it, without Spring, with
+ * short timings. Test helper, not a test.
  *
  * <p>Test ports (Track B block, own range 26460-26495): cluster bases 26460 to 26490, so node k
  * binds election 26472 + k and replication 26478 + k (26473-26477, 26479-26483). The RMI, clock,
  * requests and MapReduce services never start here.</p>
  *
  * <p>Timings as {@link FailoverFixture}: heartbeat 100 ms, timeout 600 ms; replication timeout
- * 300 ms; catch-up 250 ms; the client retries 40 x 100 ms. The simulated asynchronous delay is a
+ * 300 ms; catch-up 250 ms; the client retries 50 x 100 ms. The simulated asynchronous delay is a
  * parameter (the async-loss test makes it long, so the loss window cannot be missed).</p>
  */
 final class FaultToleranceModuleHarness implements AutoCloseable {
@@ -39,6 +42,8 @@ final class FaultToleranceModuleHarness implements AutoCloseable {
     final ClusterEventBus bus;
     final Cluster cluster;
     final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    final ElectionModule election;
+    final RoleProvider roles;
     final FailoverCluster failover;
     final FaultToleranceModule module;
     final ReplicationProperties replication;
@@ -60,7 +65,9 @@ final class FaultToleranceModuleHarness implements AutoCloseable {
                 FailoverFixture.PROPERTIES.roleQuery(), FailoverFixture.PROPERTIES.promotion(), historyLimit);
         FaultToleranceModuleProperties moduleProperties = new FaultToleranceModuleProperties(
                 new FaultToleranceModuleProperties.Stream(4, MAX_RATE, maxUpdates));
-        failover = new FailoverCluster(cluster, properties, ELECTION, replication, bus, registry, System::nanoTime,
+        election = new ElectionModule(cluster, ELECTION, bus, registry);
+        roles = new RoleProvider(cluster, election);
+        failover = new FailoverCluster(cluster, roles, properties, ELECTION, replication, bus, registry, System::nanoTime,
                 FailoverCluster.NO_PROBE);
         module = new FaultToleranceModule(cluster, bus, properties, moduleProperties, ELECTION, replication, registry,
                 Clock.systemUTC(), failover);
@@ -81,6 +88,8 @@ final class FaultToleranceModuleHarness implements AutoCloseable {
     @Override
     public void close() {
         module.close();
+        roles.close();
+        election.close();
         cluster.close();
         bus.close();
     }

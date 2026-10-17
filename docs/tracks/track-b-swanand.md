@@ -35,7 +35,78 @@
 
 ---
 
+## Phase 9A (R19) — system integration
+
+- **Plan:** [docs/tracks/README.md](README.md) Section 11 (steps, owners, dependencies).
+
+### Steps
+
+- [x] 9A.1 — Shared role provider under `com.udcf.core` (`core/cluster/RoleProvider`): LEADER from the election, PRIMARY and BACKUP join `NodeRole`; Experiment 8 promotes the elected leader (`FailoverRoleSelector` removed, `EpochAuthority.onLeaderElected` fed from leader changes, a planned-handover target resynchronised first); L2 verified: one FailureDetector suspect signal drives the Experiment 4 re-election and the Experiment 8 failover. Needs: 9A.0.
+- [ ] 9A.6 — `com.udcf.scenario`: scenario engine, API and narration; scenarios "The leader dies mid-write", "A slow node under load" and "Split-brain that never happens"; the leader-crash end-to-end test. Needs: 9A.3, 9A.4.
+
+---
+
 ## Interfaces for other tracks
+
+### 9A.1 APIs: the shared role provider (link L1), for 9A.3 (Jai) and 9A.4 (Rohan)
+
+**`com.udcf.core.cluster.RoleProvider`** (Spring `@Component`; inject it through your constructor). The single source of truth for cluster roles. Only Experiment 4's election decides the leader; nothing falls back to "the lowest live node".
+
+| Method | What it does | Threads |
+|---|---|---|
+| `Optional<Integer> leaderId()` | the node holding LEADER; never a crashed node; empty before the first election and from a leader crash until the re-election agrees (about 2.5 to 4 s with the local timings) | any; never waits |
+| `Optional<Integer> ensureLeader()` | the leader; if there is none, asks Experiment 4 for one election and waits at most `ok-timeout + coordinator-timeout` (900 + 2200 = 3100 ms locally and in the public profile); empty if nobody was elected in time, or if the context has no election module (then at once) | **blocks**: call it on a request thread only (see the rules below) |
+| `Registration addLeaderListener(LeaderListener)` | every later leader change, in announcement order, as `LeaderChange(Integer leaderId, Integer previousLeaderId, Cause cause)` with `Cause` `ELECTED`, `LEADER_CRASHED` or `CLEARED`; `Registration.close()` removes it | delivered only on `udcf-roles-dispatcher` |
+| `void afterPendingChanges(Runnable)` | runs the task on the dispatcher after every change announced before the call (follow-up work stays in order with the changes) | never waits |
+| `Optional<Integer> primaryId()` | the node holding PRIMARY | any |
+| `Optional<Integer> publishReplicationRoles(Integer primaryId, Collection<Integer> backupIds)` | the replication owner only: `primaryId` the only PRIMARY (null: none), the listed live nodes BACKUP, every other node neither; a crashed node is never granted a role; returns the primary afterwards | any; never waits |
+
+**Side effect of `ensureLeader()` when there is no leader:** Experiment 4 starts its election service, and with it the heartbeats of the shared FailureDetector, on every live node, and runs Bully from the lowest live node as a round with trigger `REQUESTED` (shown on the Experiment 4 page as "Requested"; it elects the highest live node).
+
+**Threading rules**
+
+1. `ensureLeader()` only on a request thread (an HTTP handler, a module action). Never on `udcf-roles-dispatcher` (it throws `IllegalStateException`), never on a socket listener thread, never on an election worker (the election it waits for runs there), and never while holding a lock the election path can need: a node's lifecycle lock, a service's monitor, or a lock your own leader listener takes.
+2. A `LeaderListener` runs on the one shared dispatcher: it must not block, must not call `ensureLeader()`, and should hand blocking work to its own executor.
+3. A `LeaderChange` is a hint: re-read `leaderId()` when you act, so late or repeated notifications are harmless.
+4. Locks inside: `Cluster.leaderLock` (announcement) only notifies; `primaryLock`, then each node's roles lock, then the bus publish lock; the two are never nested, and none is held while a thread is joined.
+
+**The no-leader rule.** Empty means "no leader could be elected": answer it honestly, as an HTTP 409 with your module's conflict reason (Experiment 8 uses `reason: NO_LEADER`, "No leader could be elected, so Experiment 8 has no primary: no live node won an election in time. Recover a node or reset the cluster, then try again."). Never substitute another node.
+
+**Recipe (copy-ready)**
+
+```java
+// 1. Constructor injection (com.udcf.core.cluster.RoleProvider).
+public MyModule(..., RoleProvider roles) { this.roles = roles; ... }
+
+// 2. On the request thread of an action that needs the leader (Berkeley daemon, MapReduce coordinator,
+//    MPI root, matrix root, replication primary):
+int leader = roles.ensureLeader().orElseThrow(() -> new MyConflictException(Reason.NO_LEADER,
+        "No leader could be elected: no live node won an election in time. Recover a node or reset the cluster."));
+
+// 3. Optional: follow changes (for example to re-point a long-running role). Close it in @PreDestroy.
+RoleProvider.Registration leaderChanges = roles.addLeaderListener(change -> {
+    Optional<Integer> now = roles.leaderId();   // re-read; never block here, never ensureLeader()
+    myExecutor.execute(() -> reconcile(now));
+});
+
+// 4. Jai only (Experiment 5, 9A.3): after appointing the replication primary,
+roles.publishReplicationRoles(leader, liveBackupIds);
+```
+
+**Roles and events (served JSON)**
+
+- `NodeRole`: `LEADER`, `PRIMARY`, `BACKUP`. `NodeDto.roles` lists them in that order, for example `["LEADER","PRIMARY"]` on node 5 and `["BACKUP"]` on nodes 1 to 4 while Experiment 8 runs; the Cluster and Overview pages show `roles.join(', ')`; `isLeader` ignores the new roles.
+- `LEADER_CHANGED` (unchanged since E4c): module `cluster`, node 0, cluster clock, peer = new leader, data `{leaderId, previousLeaderId}`.
+- **`REPLICATION_ROLES_CHANGED`** (new; for the 9A.5 timeline): module `cluster`, node 0, Lamport = cluster clock, `peerId` = the primary (null if none), data `{primaryId, previousPrimaryId, backupIds}` (`backupIds` ascending, `[]` if none), message `"Node 5 is the replication primary; backups 1, 2, 3, 4"` or `"No replication primary (node 5 is no longer primary); backups 1, 2, 3, 4"` (`"; no backups"` when empty). Published only when the primary or the backups change, including when `Cluster.crash` takes the primary or a backup down. Goes to `/topic/events` and `/topic/cluster` (the `ClusterProvider` refetches).
+- A node holds no role while crashed, and recovery restores none; the owner publishes again.
+
+**For Jai (9A.3), the Experiment 5 fix this step needs** (see Known issues, "Experiment 5 regression"): `ReplicaSet.selectedPrimaryId()` returns `roles.ensureLeader()` instead of `ReplicationRoleSelector` (empty: the Experiment 5 action answers 409, no fallback); when the leader already acts as primary (Experiment 8 made it primary at a higher epoch), `primary()` changes nothing (no step-down of it, no takeover); after appointing, Experiment 5 calls `publishReplicationRoles(leader, backups)`. Both experiments then follow the same leader and never move the primary away from each other.
+
+**For Rohan (9A.4):** the Berkeley time daemon and the MapReduce coordinator are `ensureLeader()` on the action's request thread (empty: 409); a leader crash during a run is the run's own failure handling (the next run asks again), or follow `addLeaderListener` if the page must show the new daemon or coordinator live.
+
+**Experiment 8 changes other tracks may see:** `FailoverCluster(Cluster, RoleProvider, ...)` and `FaultToleranceModule(Cluster, RoleProvider, ...)` take the provider; `FailoverCluster.start()` returns `false` when no leader could be elected; `POST /api/modules/faulttolerance/start` and `/stream/start` answer 409 `reason: NO_LEADER` then; new event `HANDOVER_STARTED` (module `faulttolerance`, node = the old primary, peer = the leader, data `{epoch, leaderId}`); `NO_CANDIDATE` is no longer published.
+
+Covered by `RoleProviderTest` (12), `ElectionModuleTest` (3 added), `LeaderFailoverIntegrationTest` (5), `FailoverClusterTest`, `FaultToleranceModuleTest`.
 
 ### E4b APIs: election transport and the shared FailureDetector (link L2)
 
@@ -476,6 +547,58 @@ Playwright: not installed (not in `package.json`, no specs or config); adding it
 
 ---
 
+## 9A.1: the shared role provider, Experiment 8 on the elected leader, and L2
+
+**Leader crash with the update stream running** (5 nodes; node 5 is leader and primary at epoch 2):
+
+1. HTTP thread: `POST .../crash-primary` stamps the crash (ACTION) and calls `Cluster.crash(5)`: node 5's services close, its roles clear; `LEADER_CHANGED` (leader none) and `REPLICATION_ROLES_CHANGED` (primary none) are published; the provider queues a `LEADER_CRASHED` change. Experiment 8's leader listener (dispatcher) finds no leader and waits.
+2. About 1.8 to 3.2 s later, on the election worker of the first node k whose detector passes the timeout: `PEER_SUSPECTED` is published, then the detector's listeners run in registration order: Experiment 8's (registered first, at its start) records DETECTED (`FAILURE_DETECTED`) and only queues a follow-up on the dispatcher; Experiment 4's opens the `LEADER_FAILURE` round (once) and queues Bully on node k. Neither waits. One suspect event, one detector, one timeout (L2).
+3. Election workers: node 4, the highest live node, elects itself after its ok-timeout; every live node accepts it; the leader rule calls `Cluster.assignLeader(4)`: `LEADER_CHANGED` (4), and the provider queues `ELECTED`.
+4. Dispatcher (`udcf-roles-dispatcher`): `FailoverCluster.followLeader()` sees leader 4, ready: `EpochAuthority.onLeaderElected(4)` issues epoch 3 (milestone ELECTED), the state machine applies the choice, and the promotion goes to node 4's worker.
+5. `udcf-faulttolerance-n4-worker`: catch-up from the ready peers except node 5, `becomePrimary(3)` (PROMOTED), the term record, serving, `PRIMARY_PROMOTED`, then PRIMARY on 4 and BACKUP on 1 to 3 (`REPLICATION_ROLES_CHANGED`).
+6. Client thread: the next retry finds node 4; the accepted update restores the service (SERVICE_RESTORED).
+
+**Planned handover** (the recovered node 5 wins Bully again): node 5 rejoins as a backup (role query, demote, resynchronise); once it is READY, and once any open failover run has ended (its first accepted update), the dispatcher issues epoch e + 1 for node 5 (recorded as a pending handover; no run opens); on the client thread (so no update is in flight) the old primary stops serving and steps down (`HANDOVER_STARTED`, PRIMARY cleared); node 5's worker catches up from every ready peer including the fenced old primary, calls `becomePrimary(e + 1)`, writes the term record and serves.
+
+**Milestones:** CRASHED, DETECTED, PROMOTED, SERVICE_RESTORED and the recovery milestones are unchanged. ELECTED is the instant Experiment 8 receives the leader elected by Experiment 4 (on the dispatcher, stamped with Experiment 8's nano clock); it always follows the election's `LEADER_CHANGED` and the detection.
+
+**Worst-case failover** = detection (heartbeat timeout + interval) + election (ok + coordinator timeout) + one promotion (catch-up + 2 x replication timeout) = 3200 + 3100 + 4000 = 10300 ms, locally and in the public profile (it overrides none of these timings); the retry window 50 x 250 = 12500 ms is 21.4 % above it (`FaultTolerancePropertiesTest.yamlWindowCoversWorstCaseWithMargin` checks the 10 % margin in both profiles).
+
+**`TODO(L1)` seams after 9A.1** (grep of `backend/src`; Experiment 8's are gone):
+
+| Owner | Step | Files (lines) |
+|---|---|---|
+| Jai | 9A.3 | `replication/ReplicaSet.java` (24, 86), `replication/ReplicationRoleSelector.java` (18, 27), `mpi/MpiRoleSelector.java` (30), `matrix/MatrixModule.java` (67) |
+| Rohan | 9A.4 | `clocksync/berkeley/ClockSyncRoleSelector.java` (15, 26), `mapreduce/MapReduceRoleSelector.java` (23, 41), `mapreduce/MapReduceModule.java` (51, 402), `mapreduce/dto/MapReduceOverviewDto.java` (13), `mapreduce/dto/RunDto.java` (18) |
+
+**Files.** New: `core/cluster/RoleProvider.java`, `LeaderChange.java`, `LeaderListener.java`, `LeaderElector.java`; tests `RoleProviderTest`, `LeaderFailoverIntegrationTest`. Deleted: `FailoverRoleSelector.java`, `FailoverRoleSelectorTest.java`. Changed: `NodeRole`, `Cluster`, `ClusterNode` (Javadoc), `ElectionModule`, `RoundTrigger`, `FailoverCluster`, `FaultToleranceNodeService`, `FaultToleranceModule`, `FaultToleranceProperties`, `FaultToleranceConflictException`, `EpochAuthority`, `application.yml` (comment); tests `ElectionModuleTest`, `FailoverFixture`, `FaultToleranceModuleHarness`, `FailoverClusterTest`, `FaultToleranceNodeServiceTest`, `FaultToleranceModuleTest`, `FaultToleranceControllerTest`, `FaultToleranceEndToEndTest`, `FaultTolerancePropertiesTest`; frontend `faultToleranceModel.js`, `FaultTolerancePage.jsx`, tests `faultToleranceModel.test.js`, `ReplicaRail.test.jsx`, `MeasurementsPanel.test.jsx`; fixtures `overview-before-start.json`, `overview-after-start.json`, `overview-after-runs.json`, `overview-after-reset.json` (recaptured by Swanand on 2026-10-17) and the fixture READMEs.
+
+**Test ports:** `LeaderFailoverIntegrationTest` 26560-26595 (election 26573-26577, replication 26579-26583); `RoleProviderTest` names bases 26760-26790 and binds nothing. Still free in the Track B block: 26456-26459, 26496-26499, 26556-26559, 26596-26599, 26656-26699, 26756-26759, 26791-26800, 26857-26899.
+
+**Frontend (R5).** The page reads roles from the status, so it shows the elected leader as primary without change. Three fixes: the "demoted" state now applies only while the old primary is not primary again (`faultToleranceModel.js:106`); with no serving primary after a primary was ever appointed, the text is "No primary serves right now: Experiment 8 waits for the elected leader to take over." (`faultToleranceModel.js:117-130`, and the crash hint at line 162); the second "what to notice" item adds that the old primary then wins the election again and takes over at a higher epoch. `HANDOVER_STARTED` shows in the module event log as "Handover started"; a handover opens no run, so it has no timeline row.
+
+**Manual checklist** (run by Swanand on the real backend; Result left empty):
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 1 | `cd backend; .\mvnw.cmd spring-boot:run` (fresh) and `cd frontend; npm run dev`; open `http://localhost:5173/experiments/8-faulttolerance` with the browser console open | "Experiment 8 has not started ..."; the Cluster page shows no role on any node | PASS |
+| 2 | "Start experiment 8" | node 5 Primary at epoch 2, nodes 1 to 4 Backup at epoch 2; Experiment 4 page: a finished round "Requested" started from node 1, leader node 5; Cluster page: node 5 "LEADER, PRIMARY", nodes 1 to 4 "BACKUP"; top bar leader node 5 | PASS |
+| 3 | Synchronous, rate 4, "Start stream" | sent and acknowledged rise; "No two primaries: check passed" | PASS |
+| 4 | "Crash primary" | node 5 Down; timeline CRASHED, DETECTED, ELECTED, PROMOTED, SERVICE_RESTORED; Experiment 4 page: a round "After the leader failed" elected node 4; node 4 Primary at epoch 3; Cluster page node 4 "LEADER, PRIMARY"; data loss "0 lost" | PASS |
+| 5 | With the stream still running, "Recover old primary" | node 5 demotes itself and resynchronises (event log: role query, old primary demoted, resynchronised), wins the election (Experiment 4 page: round "After a recovery", leader node 5), then "Handover started" in the log and node 5 Primary at epoch 4, node 4 Backup at epoch 4; never two nodes shown Primary on the rail or the Cluster page; data loss still 0 | PASS |
+| 6 | "Stop stream"; on the Cluster page crash node 5; back on Experiment 8 | node 4 elected (Experiment 4 page) and promoted at epoch 5; the page shows "The new primary only starts serving when the next update arrives. Start the update stream to finish the failover." | PASS |
+| 7 | "Recover old primary" (no stream) | node 5 demotes and resynchronises and is leader again (Cluster page: node 5 "LEADER", node 4 "PRIMARY"): Known issue (a), the failover run waits for an update | PASS (node 5 LEADER while node 4 stayed PRIMARY at epoch 5 until the stream restarted: Known issue (a)) |
+| 8 | "Start stream" | the run ends SERVICE_RESTORED, then the handover completes: node 5 Primary at epoch 6, node 4 Backup; never two primaries | PASS |
+| 9 | "Stop stream"; Cluster page: reset the cluster | no role on any node; Experiment 8 not started, no run | PASS |
+| 10 | Cluster page: crash every node; Experiment 8: "Start experiment 8" | after about 3 s a calm error with "No leader could be elected, so Experiment 8 has no primary: no live node won an election in time. Recover a node or reset the cluster, then try again."; no broken page; then reset the cluster | PASS |
+| 11 | Experiment 8 page, under the replica rail | note 8 still shown ("Until Phase 9A this experiment and Experiment 5 share each node's replication service, ...") | PASS |
+| 12 | Experiment 8 "What to notice" | the second item ends "As the highest node it then wins the election again, copies the store of the primary and takes over at a higher epoch." | PASS |
+| 13 | Throughout; then stop both servers and run `Get-NetTCPConnection -LocalPort 8080,5173 -State Listen` | browser console clean; nothing listening | PASS |
+
+Run by Swanand on 2026-10-17 against the real backend; all 13 steps passed; browser console clean.
+
+---
+
 ## Deliberate differences from the legacy code
 
 - **Legacy deviation (Lower-ID Coordinator Acceptance):** When a Bully node receives a `COORDINATOR` announcement, it unconditionally accepts it, even if the announcing node has a lower ID than itself. This faithfully ports a quirk from the legacy `exp04-election` demo.
@@ -675,6 +798,18 @@ Playwright: not installed (not in `package.json`, no specs or config); adding it
 - E8d: five synthetic fixtures beyond the README's list (`run-in-progress`, `run-recovering`, `status-restored-old-primary-down`, `status-failover-stream-stopped`, `status-rejoin-stalled`), because those states were not captured.
 - E8d: `GET /runs` and `GET /runs/{id}` are not used (no run history on the page).
 
+- 9A.1: `ElectionModule`'s `NODE_RECOVERED` handler also wires a recovered node whose election service another module (Experiment 8) started first; before, it returned as soon as a service was registered, so such a node never ran Bully and a recovered highest node could not reclaim leadership (`ElectionModuleTest.recoveredNodeStartedByAnotherModuleIsWired`).
+- 9A.1: `RoleProvider.afterPendingChanges(Runnable)` was added (not in the Stage A API) so that every promotion starts on the dispatcher (R4): the suspect callback and `nodeReady` only queue a follow-up.
+- 9A.1: a planned handover waits while a failover run whose new primary is already chosen is still open (it ends at the first accepted update, which looks at the leader again), so the run is measured and the epoch authority never issues an epoch the state machine ignores.
+- 9A.1: the old-primary-crash double failure (the old primary crashes during a planned handover and opens a run) is handled, not left as a known issue: the leader's promotion in force is chosen again at the same epoch (`FailoverCluster.followLeader`, "renewed choice"). No test drives it (it needs a crash inside the handover window).
+- 9A.1: `Cluster.assignReplicationRoles` revokes in a first pass and grants in a second, so a direct switch never holds two PRIMARY roles.
+- 9A.1: `NO_CANDIDATE` is no longer published: the elected leader is the only candidate; Experiment 8 waits for the next leader change or for the leader to become ready.
+- 9A.1: the client window in `FaultToleranceControllerTest` and `FaultToleranceEndToEndTest` properties is 50 x 100 ms (was 40 x 100), as in `FailoverFixture` (approved): the worst case with their timings is 3450 ms.
+- 9A.1: `LeaderFailoverIntegrationTest`'s update stream pauses 50 ms between updates: unpaced, Experiment 5's about 10 events per update overflowed the fixture's 5000-event buffer and evicted the events the test checks.
+- 9A.1: `RoleProviderTest` has 12 tests, not the planned 13: the concurrent "never two primaries" sampler was dropped, because a reader that reads node roles one node after another cannot see an atomic snapshot (Known issues (c)); the revoke-before-grant rule and a direct switch are checked instead.
+- 9A.1: the worst-case failover is detection + election + one promotion = 10300 ms, locally and in the public profile (approved, R7); before, detection + 2 x promotion = 11200 ms.
+- 9A.1: in the frontend tests, the "demoted" state is now taken from the E8c captures `status-after-demotion.json` and `run-sync-recovered.json` (with the stream stopped, built inline and labelled synthetic), because the 9A.1 capture `overview-after-runs.json` shows the state after the handover (node 5 primary again at epoch 4).
+
 ---
 
 ## Known issues
@@ -715,6 +850,11 @@ Playwright: not installed (not in `package.json`, no specs or config); adding it
 - E8d: if a rejoin stalls (ROLE_QUERY_FAILED after the last attempt, the node stays REJOINING), the run stays "recovering" and the page keeps reading status and latest run every 500 ms until the node crashes and recovers again or the cluster is reset. Both reads are cheap and publish nothing.
 - E8d: a 409 busy is hard to provoke from one tab, because the page sends one action at a time; it is covered by the tests and checklist step 13 uses two tabs.
 - E8d: the manual checklist was run by Swanand on 2026-10-16 against the real backend; see the Result column of the checklist.
+- 9A.1 (a), **without an update stream:** a new leader can lead while the old primary stays primary until the next accepted update. The failover run, and any planned handover waiting behind it, only complete on an accepted update; until then the Cluster page shows LEADER and PRIMARY on different nodes, honestly.
+- 9A.1 (b), **double failure during a handover:** if the handover target crashes mid-handover and the old primary is elected again, Experiment 8 has no serving primary until the next leader change or a cluster reset. It is shown honestly: `currentPrimaryId` and `primaryEpoch` are null (`FailoverCluster.java:267-270`, `FaultToleranceModule.java:215-218`); the fenced old primary acts as a backup (`FaultToleranceNodeService.java:310-312`; node roles come from the acting replication role, `FailoverCluster.java:279-281`); no PRIMARY role is published (`FailoverCluster.java:622-623`); the page says "No primary serves right now." (`ReplicaRail.jsx:118`) and "No primary serves right now: Experiment 8 waits for the elected leader to take over." (`faultToleranceModel.js:118`). No test drives it.
+- 9A.1 (c), **non-atomic role reads:** `GET /api/cluster` reads each node's roles one node after another, so a reader can see a role switch non-atomically. Experiment 8 never switches the primary directly (a crash or the handover fence clears PRIMARY first, a separate publish), and `assignReplicationRoles` revokes before it grants; `Cluster.assignLeader` (E4c, unchanged) grants and revokes LEADER in one pass.
+- 9A.1 (d), **Experiment 5 regression until 9A.3 (for Jai):** Experiment 8's primary is now the elected leader, the highest live node (node 5), while every Experiment 5 action still runs `ReplicaSet.primary()`, which steps down every other live acting primary (`ReplicaSet.java:140-141`) and makes the lowest live node (node 1) primary at its current epoch. So the first Experiment 5 write while Experiment 8 runs moves the replication primary from node 5 to node 1 at the same epoch: Experiment 8's updates get "not primary" and retry until they give up, and `/api/cluster` names node 5 PRIMARY while node 1 acts. Before 9A.1 both picked the lowest node, so this only happened after a failover. Fix (9A.3, Jai's package): `ReplicaSet.selectedPrimaryId()` returns `RoleProvider.ensureLeader()` (empty: 409, no fallback); `primary()` changes nothing when the leader already acts as primary; after appointing, Experiment 5 calls `RoleProvider.publishReplicationRoles(leader, backups)` (see "9A.1 APIs" under Interfaces for other tracks). Note 8 on the Experiment 8 page still warns about it.
+- 9A.1: the manual checklist was run by Swanand on 2026-10-17 against the real backend (all 13 steps passed; see the Result column); the Linux run is recorded in the progress log once done.
 
 ---
 
@@ -731,3 +871,4 @@ Playwright: not installed (not in `package.json`, no specs or config); adding it
 - 2026-10-16 E8c Linux (Docker), run by Swanand: replication, election and faulttolerance packages 492 tests x 5 runs plus 1 reverse-order run at 2 CPUs, 0 failures; the 7 new E8c test classes 46 tests x 10 runs at 1 CPU, 0 failures; full suite 1826 tests, 0 failures, 1 skipped; clean-clone full suite 1826 tests, 0 failures, 1 skipped.
 - 2026-10-16 E8d done: Experiment 8 page (replica rail with the epoch on every node, live SVG failover timeline with the derived detection band, the four measurements plus outage and time to first update, data loss with the Simulated badge, no-two-primaries check, stream, mode, crash and recover controls from the conflict matrix, polling only while something moves, 10 synthetic fixtures); backend not run (no backend change), frontend 1108 tests (baseline 916 + 192; new tests 3 runs and 1 shuffled run, full suite 2 runs, all green); deviations: Q1 to Q4 and C2, C3 as approved, overview-only initial load, runs/latest polled during open runs, 2000 ms fallback poll, timeline linked to events by kind, five extra synthetic fixtures.
 - 2026-10-16 E8d Linux check: clean clone of 8b67a21 on Node 22 in Docker, npm ci, vitest (118 files, 1108 tests), lint and build all exit 0; main chunk 782.67 kB. GitHub CI is still the Linux gate.
+- 2026-10-17 9A.1 done: shared `RoleProvider` in `core/cluster` (LEADER from Experiment 4 only; PRIMARY and BACKUP; ordered leader listeners on `udcf-roles-dispatcher`; `ensureLeader` with a REQUESTED Bully round, 409 `NO_LEADER` when none; `REPLICATION_ROLES_CHANGED`), Experiment 8 promotes the elected leader (selector removed) and hands over to a recovered leader after its resync, L2 verified on real sockets, worst case 10300 ms, four overview fixtures recaptured by Swanand; backend 1912 tests (baseline 1893 - 3 + 22; 0 failures, 1 skipped; `RoleProviderTest`, `ElectionModuleTest`, `FailoverClusterTest`, `LeaderFailoverIntegrationTest`, `FaultToleranceEndToEndTest` 3 runs, 54 tests each, all green), frontend 1244 tests (lint and build exit 0); Windows only, Linux and the manual checklist not yet run; deviations: see the 9A.1 entries under Deviations.
