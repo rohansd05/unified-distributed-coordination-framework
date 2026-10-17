@@ -250,12 +250,15 @@ public class FaultToleranceNodeService implements NodeService {
 
     /**
      * Takes over as primary at {@code promotion.epoch()}: catches up from every other live, ready
-     * peer except the old primary (in parallel, bounded by the catch-up timeout; a peer not done by
-     * then is skipped with an event), acts as primary at the new epoch, records it, and writes the
-     * term record synchronously to every backup (each push bounded by the replication timeouts).
-     * Only then does it serve client updates. The first appointment skips the catch-up.
+     * peer except the failed old primary (in parallel, bounded by the catch-up timeout; a peer not
+     * done by then is skipped with an event), acts as primary at the new epoch, records it, and
+     * writes the term record synchronously to every backup (each push bounded by the replication
+     * timeouts). Only then does it serve client updates. The first appointment skips the catch-up.
+     *
+     * @param handover a planned handover: the old primary has not failed and was fenced first, so
+     *                 it is a catch-up source too (the target is resynchronised before it takes over)
      */
-    void promote(Promotion promotion) {
+    void promote(Promotion promotion, boolean handover) {
         int id = node.id();
         long epoch = promotion.epoch();
         owner.probe().beforePromotion(id);
@@ -266,7 +269,7 @@ public class FaultToleranceNodeService implements NodeService {
         }
         List<Integer> caughtUp = new ArrayList<>();
         List<Integer> skipped = new ArrayList<>();
-        if (promotion.previousPrimaryId() != null && !catchUp(replication, promotion, caughtUp, skipped)) {
+        if (promotion.previousPrimaryId() != null && !catchUp(replication, promotion, handover, caughtUp, skipped)) {
             return;   // interrupted: the node is going down, and its crash reports the failed promotion
         }
         try {
@@ -282,6 +285,7 @@ public class FaultToleranceNodeService implements NodeService {
         } catch (NodeDownException e) {
             return;   // crashed while announcing: its crash starts the next failover
         } catch (NotPrimaryException e) {
+            owner.promotionEnded(id);
             publish("PROMOTION_FAILED", null, "Node " + id + " could not announce epoch " + epoch
                     + ": it already learned a newer epoch", data("epoch", epoch, "reason", e.getMessage()));
             return;
@@ -295,14 +299,28 @@ public class FaultToleranceNodeService implements NodeService {
         publish("PRIMARY_PROMOTED", promotion.previousPrimaryId(), promotion.previousPrimaryId() == null
                 ? "Node " + id + " is the first primary, at epoch " + epoch
                 : "Node " + id + " took over from node " + promotion.previousPrimaryId() + " at epoch " + epoch, data);
+        owner.primaryServing(id);
+    }
+
+    /**
+     * Client thread (so no client update is in flight): a planned handover to the elected leader
+     * starts. This node, the primary that has not failed, stops serving and steps down, so the
+     * leader can copy its final store and take over at {@code promotion.epoch()}.
+     */
+    void fenceForHandover(Promotion promotion) {
+        serving = false;
+        owner.replicationOf(node.id()).ifPresent(ReplicationNodeService::stepDown);
+        publish("HANDOVER_STARTED", promotion.nodeId(), "Node " + node.id() + " stopped serving so node "
+                + promotion.nodeId() + ", the elected leader, can copy its store and take over at epoch "
+                + promotion.epoch(), data("epoch", promotion.epoch(), "leaderId", promotion.nodeId()));
     }
 
     /** @return false if interrupted (the node is going down) */
-    private boolean catchUp(ReplicationNodeService replication, Promotion promotion, List<Integer> caughtUp,
-                            List<Integer> skipped) {
+    private boolean catchUp(ReplicationNodeService replication, Promotion promotion, boolean handover,
+                            List<Integer> caughtUp, List<Integer> skipped) {
         long timeout = owner.properties().promotion().catchUpTimeoutMillis();
         Map<Integer, CompletableFuture<CatchUpReport>> futures = new LinkedHashMap<>();
-        for (int peer : owner.catchUpSources(node.id(), promotion.previousPrimaryId())) {
+        for (int peer : owner.catchUpSources(node.id(), handover ? null : promotion.previousPrimaryId())) {
             try {
                 futures.put(peer, CompletableFuture.supplyAsync(() -> replication.catchUpFrom(peer), queries));
             } catch (RejectedExecutionException e) {
@@ -433,6 +451,7 @@ public class FaultToleranceNodeService implements NodeService {
         serving = true;
         publish("PRIMARY_RESUMED", null, "Node " + id + " is still primary at epoch " + epoch
                 + ": no node knows a newer epoch", data("epoch", epoch, "ownEpoch", ownEpoch));
+        owner.primaryServing(id);
         return true;
     }
 

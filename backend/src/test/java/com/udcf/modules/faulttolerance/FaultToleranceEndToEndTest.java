@@ -54,7 +54,7 @@ import static org.awaitility.Awaitility.await;
         "udcf.election.round-timeout-millis=10000",
         "udcf.replication.async-delay-millis=5000",
         "udcf.replication.timeout-millis=300",
-        "udcf.faulttolerance.client.max-attempts=40",
+        "udcf.faulttolerance.client.max-attempts=50",
         "udcf.faulttolerance.client.retry-delay-millis=100",
         "udcf.faulttolerance.role-query.retry-delay-millis=300",
         "udcf.faulttolerance.role-query.max-attempts=3",
@@ -141,16 +141,17 @@ class FaultToleranceEndToEndTest {
     }
 
     @Test
-    @DisplayName("synchronous: crash, failover, zero loss; the recovered old primary demotes itself; never two primaries")
+    @DisplayName("synchronous: crash, failover to the new leader, zero loss; the recovered old primary demotes itself, "
+            + "then takes over again as the leader; never two primaries")
     void synchronousCrashFailoverRecover() throws Exception {
         json("POST", BASE + "/stream/start", "{\"mode\":\"SYNCHRONOUS\",\"ratePerSecond\":20}", 202);
         await().atMost(WAIT).pollInterval(Duration.ofMillis(20)).until(() -> {
             JsonNode s = status();
-            return s.path("stream").path("acknowledged").asInt() >= 5 && s.path("currentPrimaryId").asInt() == 1;
+            return s.path("stream").path("acknowledged").asInt() >= 5 && s.path("currentPrimaryId").asInt() == 5;
         });
 
         JsonNode crash = json("POST", BASE + "/crash-primary", null, 202);
-        assertThat(crash.path("nodeId").asInt()).isEqualTo(1);
+        assertThat(crash.path("nodeId").asInt()).isEqualTo(5);
         JsonNode restored = awaitRun(run -> !run.path("dataLoss").isNull());
         assertThat(restored.path("outcome").asText()).isEqualTo("RESTORED");
         assertThat(restored.path("dataLoss").path("lost").asInt()).isZero();
@@ -158,14 +159,17 @@ class FaultToleranceEndToEndTest {
         assertThat(restored.path("dataLoss").path("acknowledged").asInt()).isGreaterThanOrEqualTo(5);
         long newEpoch = restored.path("newEpoch").asLong();
         assertThat(newEpoch).isGreaterThan(2);
+        assertThat(restored.path("newPrimaryId").asInt()).isEqualTo(4);
 
         json("POST", BASE + "/recover", null, 202);
         JsonNode recovered = awaitRun(run -> !run.path("measurements").path("recoveryMillis").isNull());
         assertThat(recovered.path("milestones").toString()).contains("DEMOTED").contains("RESYNCHRONISED");
+        // Node 5 won Bully again: once resynchronised it takes over at a higher epoch (planned handover).
+        await().atMost(WAIT).pollInterval(Duration.ofMillis(20)).until(() -> status().path("currentPrimaryId").asInt() == 5);
         JsonNode end = status();
-        assertThat(node(end, 1).path("role").asText()).isEqualTo("BACKUP");
-        assertThat(node(end, 1).path("epoch").asLong()).isEqualTo(newEpoch);
-        assertThat(end.path("currentPrimaryId").asInt()).isEqualTo(restored.path("newPrimaryId").asInt());
+        assertThat(node(end, 5).path("role").asText()).isEqualTo("PRIMARY");
+        assertThat(node(end, 5).path("epoch").asLong()).isEqualTo(newEpoch + 1);
+        assertThat(node(end, 4).path("role").asText()).isEqualTo("BACKUP");
         json("POST", BASE + "/stream/stop", null, 200);
         assertThat(observations.get()).as("status observations, each checked for two primaries").isGreaterThan(10);
     }

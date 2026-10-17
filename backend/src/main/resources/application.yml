@@ -143,8 +143,9 @@ udcf:
 
   # Experiment 8 (lab 8). Failover on the replication service (TCP 710k) and the shared failure
   # detector (link L2: timings are udcf.election.heartbeat-*). The client must outlast the worst
-  # failover: detection (2500 + 700) + 2 x promotion attempt (catch-up 1000 + term record 2 x 1500)
-  # = 3200 + 2 x 4000 = 11200 ms. Retry window 50 x 250 = 12500 ms, 11.6 % above it.
+  # failover: detection (2500 + 700) + election (ok 900 + coordinator 2200) + one promotion attempt
+  # (catch-up 1000 + term record 2 x 1500) = 3200 + 3100 + 4000 = 10300 ms. Retry window
+  # 50 x 250 = 12500 ms, 21.4 % above it.
   faulttolerance:
     client:
       max-attempts: 50

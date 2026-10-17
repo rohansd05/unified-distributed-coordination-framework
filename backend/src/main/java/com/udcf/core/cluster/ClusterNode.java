@@ -114,7 +114,7 @@ public class ClusterNode {
     }
 
     /**
-     * Grants {@code role} unless the node is crashed. Only {@link Cluster#assignLeader} calls it.
+     * Grants {@code role} unless the node is crashed. Only {@link Cluster} calls it.
      *
      * @return whether the node holds the role afterwards
      */

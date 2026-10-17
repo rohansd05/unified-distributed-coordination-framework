@@ -16,7 +16,9 @@ import statusFailoverStopped from '@/test/fixtures/faulttolerance/synthetic/stat
 import statusRejoinStalled from '@/test/fixtures/faulttolerance/synthetic/status-rejoin-stalled.json'
 import statusRestoredDown from '@/test/fixtures/faulttolerance/synthetic/status-restored-old-primary-down.json'
 import {
+  APPOINTING_FIRST,
   WAITING_BUDGET_USED,
+  WAITING_FOR_LEADER,
   WAITING_FOR_UPDATE,
   axisTicks,
   budgetUsedText,
@@ -36,6 +38,10 @@ import {
 const settings = overviewBefore.settings
 const glossary = overviewBefore.glossary
 const copy = (value) => JSON.parse(JSON.stringify(value))
+// Synthetic: the E8c capture status-after-demotion (node 1 back as a backup at epoch 3) with the stream stopped.
+// Since 9A.1 a recovered old primary that wins the election takes over again, so the 9A.1 capture
+// overview-after-runs shows the state after that handover instead.
+const demotedStopped = { ...copy(statusAfterDemotion), stream: { ...statusAfterDemotion.stream, state: 'STOPPED' } }
 
 describe('uiState (requirement 11 and C3)', () => {
   it.each([
@@ -47,7 +53,7 @@ describe('uiState (requirement 11 and C3)', () => {
     ['failover-waiting (synthetic status and run)', statusFailoverStopped, runInProgress],
     ['restored (synthetic old primary down)', statusRestoredDown, runSyncRestored],
     ['recovering (synthetic run and status)', statusRejoinStalled, runRecovering],
-    ['demoted', overviewAfterRuns.current, overviewAfterRuns.latestRun],
+    ['demoted (synthetic: status-after-demotion, stream stopped)', demotedStopped, runSyncRecovered],
     ['streaming', statusAfterDemotion, runSyncRecovered],
   ])('%s', (name, status, run) => {
     expect(uiState(status, run)).toBe(name.split(' ')[0])
@@ -82,8 +88,28 @@ describe('situationText', () => {
   })
 
   it('names the demoted old primary and its new epoch', () => {
-    expect(situationText('demoted', overviewAfterRuns.current, overviewAfterRuns.latestRun))
+    expect(situationText('demoted', demotedStopped, runSyncRecovered))
       .toBe('Node 1 came back and demoted itself to backup at epoch 3.')
+  })
+
+  it('after the planned handover (9A.1 capture overview-after-runs) the old primary serves again: no longer "demoted"', () => {
+    const run = overviewAfterRuns.latestRun
+    expect(run.oldPrimaryId).toBe(5)
+    expect(run.milestones.map((m) => m.kind)).toContain('DEMOTED')
+    expect(overviewAfterRuns.current.currentPrimaryId).toBe(5)
+    expect(uiState(overviewAfterRuns.current, run)).toBe('no-stream')
+    expect(situationText('no-stream', overviewAfterRuns.current, run))
+      .toBe('Node 5 is the primary at epoch 4. Start the update stream, then crash the primary.')
+  })
+
+  it('no primary after a failover (a handover under way, or none possible): waits for the elected leader, not "the first primary"', () => {
+    const none = { ...statusRunning, currentPrimaryId: null, primaryEpoch: null }
+    expect(situationText('appointing', none, runSyncRestored)).toBe(WAITING_FOR_LEADER)
+    expect(situationText('appointing', none, null)).toBe(APPOINTING_FIRST)   // highestEpoch 2 in the capture
+    expect(situationText('appointing', { ...none, highestEpoch: 2 }, null)).toBe(APPOINTING_FIRST)
+    expect(situationText('appointing', { ...none, highestEpoch: 3 }, null)).toBe(WAITING_FOR_LEADER)   // a handover was issued
+    expect(controlsModel(none, runSyncRestored).crash).toEqual({ enabled: false, hint: WAITING_FOR_LEADER })
+    expect(WAITING_FOR_LEADER).toBe('No primary serves right now: Experiment 8 waits for the elected leader to take over.')
   })
 })
 
@@ -148,8 +174,10 @@ describe('controlsModel', () => {
   })
 
   it('demoted: recover disabled, the old primary is up', () => {
-    expect(controlsModel(overviewAfterRuns.current, overviewAfterRuns.latestRun).recover)
+    expect(controlsModel(demotedStopped, runSyncRecovered).recover)
       .toEqual({ enabled: false, hint: 'Node 1, the old primary, is already up.' })
+    expect(controlsModel(overviewAfterRuns.current, overviewAfterRuns.latestRun).recover)
+      .toEqual({ enabled: false, hint: 'Node 5, the old primary, is already up.' })
   })
 
   it('locked (pending request or C2): every control disabled', () => {

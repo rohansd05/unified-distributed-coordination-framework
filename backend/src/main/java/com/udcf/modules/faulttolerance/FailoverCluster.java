@@ -3,6 +3,7 @@ package com.udcf.modules.faulttolerance;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.NodeDownException;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
@@ -18,7 +19,6 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
 /**
@@ -41,15 +42,22 @@ import java.util.function.LongSupplier;
  * <ol>
  *   <li>{@link #start()} starts, on every live node, the election service (its failure detector
  *       is the shared one; E8b never halts or stops it: the node and the election module own it),
- *       the faulttolerance service and the replication service, then appoints the first primary
- *       (epoch 2) with the module-local {@link FailoverRoleSelector} ({@code // TODO(L1)}).</li>
+ *       the faulttolerance service and the replication service, asks the shared {@link RoleProvider}
+ *       for a leader (electing one if there is none) and appoints that leader as the first primary
+ *       (epoch 2).</li>
  *   <li>A crash of the primary is stamped: ACTION by {@link #crashPrimary()}, otherwise OBSERVED
  *       inside the faulttolerance service's {@code crash()}.</li>
  *   <li>The first node whose detector suspects the primary records the detection; later
- *       suspicions are ignored, so a failure promotes once. The selector chooses, the
- *       {@link EpochAuthority} issues the epoch, and the chosen node promotes itself on its own
- *       worker (catch-up, {@code becomePrimary}, term record; see
- *       {@link FaultToleranceNodeService#promote}). If it fails, the next candidate is tried.</li>
+ *       suspicions are ignored, so a failure promotes once. The same suspicion makes Experiment 4
+ *       elect a new leader (link L2). Experiment 8 promotes only the elected leader (link L1): on
+ *       the role provider's dispatcher thread, the {@link EpochAuthority} issues the epoch and the
+ *       leader promotes itself on its own worker (catch-up, {@code becomePrimary}, term record;
+ *       see {@link FaultToleranceNodeService#promote}). There is no second candidate: if it fails,
+ *       Experiment 8 waits for the next leader.</li>
+ *   <li>A leader change while the primary is up (a recovered higher node wins Bully again) is a
+ *       planned handover: once the leader is ready, the old primary is fenced on the client thread
+ *       (so no update is in flight), the leader catches up from every ready peer including the old
+ *       primary, then takes over at a higher epoch.</li>
  *   <li>The first client update the new primary accepts restores the service.</li>
  *   <li>A recovered node rejoins: role query, then demote or adopt, then resynchronise.</li>
  * </ol>
@@ -60,8 +68,9 @@ import java.util.function.LongSupplier;
  *
  * <p><b>Threads and locks.</b> The detector listener (election worker), the crash and recover
  * hooks (under a node's lifecycle lock) and the {@code NODE_RECOVERED} handler (event
- * dispatcher) only stamp, call leaf-locked E8a objects, publish and hand work to a node's worker:
- * none of them waits. Services are looked up in this object's own maps, never through another
+ * dispatcher) only stamp, call leaf-locked E8a objects, publish and hand work to a node's worker
+ * or to the role provider's dispatcher: none of them waits. Every promotion is chosen on the
+ * dispatcher ({@link #followLeader()}). Services are looked up in this object's own maps, never through another
  * node's lifecycle lock. {@code startLock} serialises start, reset and the recovery handler;
  * {@code promotionLock} serialises the choice of a primary; neither is held while a thread is
  * joined. Client updates run on one thread, {@value #CLIENT_THREAD}; retry delays are scheduled,
@@ -87,6 +96,7 @@ public class FailoverCluster implements AutoCloseable {
     };
 
     private final Cluster cluster;
+    private final RoleProvider roles;
     private final FaultToleranceProperties properties;
     private final ElectionProperties electionProperties;
     private final ReplicationProperties replicationProperties;
@@ -105,6 +115,8 @@ public class FailoverCluster implements AutoCloseable {
     private final ClusterEventBus.Subscription subscription;
     private final Object startLock = new Object();
     private final Object promotionLock = new Object();
+    private final AtomicReference<Promotion> inFlight = new AtomicReference<>();   // handed to a node, not ended
+    private final RoleProvider.Registration leaderRegistration;
 
     private volatile boolean started;                 // written under startLock
     private volatile long ignoreRecoveriesUpTo;       // written under startLock: bus sequence at the last reset
@@ -113,16 +125,19 @@ public class FailoverCluster implements AutoCloseable {
      * @throws IllegalStateException if the client retry window is shorter than the worst-case
      *                               failover ({@link FaultToleranceProperties#requireWindowCovers})
      */
-    public FailoverCluster(Cluster cluster, FaultToleranceProperties properties, ElectionProperties electionProperties,
-                           ReplicationProperties replicationProperties, ClusterEventBus bus, MeterRegistry registry) {
-        this(cluster, properties, electionProperties, replicationProperties, bus, registry, System::nanoTime, NO_PROBE);
+    public FailoverCluster(Cluster cluster, RoleProvider roles, FaultToleranceProperties properties,
+                           ElectionProperties electionProperties, ReplicationProperties replicationProperties,
+                           ClusterEventBus bus, MeterRegistry registry) {
+        this(cluster, roles, properties, electionProperties, replicationProperties, bus, registry, System::nanoTime,
+                NO_PROBE);
     }
 
     /** For tests: an injected nano clock and promotion probe. */
-    FailoverCluster(Cluster cluster, FaultToleranceProperties properties, ElectionProperties electionProperties,
-                    ReplicationProperties replicationProperties, ClusterEventBus bus, MeterRegistry registry,
-                    LongSupplier nanoClock, PromotionProbe probe) {
+    FailoverCluster(Cluster cluster, RoleProvider roles, FaultToleranceProperties properties,
+                    ElectionProperties electionProperties, ReplicationProperties replicationProperties,
+                    ClusterEventBus bus, MeterRegistry registry, LongSupplier nanoClock, PromotionProbe probe) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
+        this.roles = Objects.requireNonNull(roles, "roles must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.electionProperties = Objects.requireNonNull(electionProperties, "electionProperties must not be null");
         this.replicationProperties = Objects.requireNonNull(replicationProperties,
@@ -141,18 +156,23 @@ public class FailoverCluster implements AutoCloseable {
         });
         this.client.setRemoveOnCancelPolicy(true);
         this.subscription = bus.subscribe(this::onClusterEvent);
+        this.leaderRegistration = roles.addLeaderListener(change -> followLeader());
     }
 
     // ------------------------------------------------------------------ actions (E8c)
 
     /**
      * Starts every service Experiment 8 needs on every live node (election, then faulttolerance,
-     * then replication), learns their epochs, and appoints the first primary if there is none.
-     * The appointment completes asynchronously on the chosen node ({@code PRIMARY_PROMOTED}).
-     * Idempotent. A node whose service cannot start is reported ({@code SERVICE_START_FAILED})
-     * and left out.
+     * then replication), learns their epochs, makes sure there is a leader
+     * ({@link RoleProvider#ensureLeader()}, which may run a {@code REQUESTED} election and waits
+     * for it, never under this object's locks) and appoints that leader as the first primary if
+     * there is none. The appointment completes asynchronously on the leader
+     * ({@code PRIMARY_PROMOTED}). Idempotent. A node whose service cannot start is reported
+     * ({@code SERVICE_START_FAILED}) and left out.
+     *
+     * @return false if no leader could be elected: nobody is appointed until a leader appears
      */
-    public void start() {
+    public boolean start() {
         synchronized (startLock) {
             started = true;
             for (ClusterNode node : cluster.nodes()) {
@@ -161,10 +181,10 @@ public class FailoverCluster implements AutoCloseable {
                 }
             }
             observeLiveEpochs();
-            if (authority.current().isEmpty()) {
-                tryPromote(Set.of());
-            }
         }
+        boolean leader = roles.ensureLeader().isPresent();
+        roles.afterPendingChanges(this::followLeader);
+        return leader;
     }
 
     /**
@@ -220,6 +240,8 @@ public class FailoverCluster implements AutoCloseable {
                 authority.reset();
                 ledger.clear();
                 recoveryRecorded.clear();
+                inFlight.set(null);
+                roles.publishReplicationRoles(null, List.of());
             }
         }
     }
@@ -228,6 +250,7 @@ public class FailoverCluster implements AutoCloseable {
     @Override
     public void close() {
         subscription.close();
+        leaderRegistration.close();
         client.shutdownNow();
         try {
             if (!client.awaitTermination(EXIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
@@ -313,7 +336,12 @@ public class FailoverCluster implements AutoCloseable {
 
     // ------------------------------------------------------------------ hooks from the node services
 
-    /** Election worker of {@code observerId}: its detector suspects {@code peerId}. Stamps and hands off only. */
+    /**
+     * Election worker of {@code observerId}: its detector suspects {@code peerId}. Records the
+     * detection and returns at once: it never waits and never promotes (link L2: the same callback
+     * lets Experiment 4 start its re-election). The promotion follows the elected leader on the
+     * role provider's dispatcher.
+     */
     void onSuspected(int observerId, int peerId, long silentMillis) {
         if (!machine.primaryId().equals(Optional.of(peerId))) {
             return;
@@ -330,7 +358,7 @@ public class FailoverCluster implements AutoCloseable {
         data.put("epoch", machine.primaryEpoch().isPresent() ? machine.primaryEpoch().getAsLong() : null);
         publish(observerId, "FAILURE_DETECTED", peerId, "Node " + observerId + " detected that primary node " + peerId
                 + " failed: no heartbeat for " + silentMillis + " ms", data);
-        tryPromote(Set.of(peerId));
+        roles.afterPendingChanges(this::followLeader);   // the leader may already be another, ready node
     }
 
     /** Election worker of {@code observerId}: a suspected peer answers heartbeats again. */
@@ -356,32 +384,42 @@ public class FailoverCluster implements AutoCloseable {
         apply("recovery of node " + nodeId, machine.onOldPrimaryRecovered(nodeId, now()));
     }
 
-    /** The node chosen to take over could not; tries the next candidate. Does nothing unless it was the chosen one. */
+    /**
+     * The node chosen to take over could not. Does nothing unless it was the chosen one. There is
+     * no second candidate (only the election decides): Experiment 8 waits for the next leader
+     * change, or for the leader to become ready.
+     */
     void promotionFailed(int nodeId, String reason) {
+        promotionEnded(nodeId);
         if (machine.onPromotionFailed(nodeId, now()) != FailoverStateMachine.EventResult.APPLIED) {
             return;
         }
         publish(nodeId, "PROMOTION_FAILED", null, "Node " + nodeId + " could not take over as primary: " + reason,
                 Map.of("reason", reason));
-        Set<Integer> excluded = new HashSet<>();
-        excluded.add(nodeId);
-        machine.latestRun().filter(run -> run.outcome() == FailoverRun.Outcome.IN_PROGRESS)
-                .ifPresent(run -> excluded.add(run.oldPrimaryId()));
-        tryPromote(excluded);
     }
 
-    /** A node finished rejoining: if a failure is waiting for a primary, or none was ever appointed, choose now. */
+    /** The promotion handed to {@code nodeId} ended, whatever its outcome. */
+    void promotionEnded(int nodeId) {
+        inFlight.updateAndGet(promotion -> promotion != null && promotion.nodeId() == nodeId ? null : promotion);
+    }
+
+    /**
+     * Worker of {@code nodeId}: it serves as primary (promoted or resumed). Publishes the roles,
+     * then looks at the leader again: it may have changed meanwhile.
+     */
+    void primaryServing(int nodeId) {
+        promotionEnded(nodeId);
+        publishRoles();
+        roles.afterPendingChanges(this::followLeader);
+    }
+
+    /** A node finished rejoining: it becomes a backup, and the leader is looked at again (it may be this node). */
     void nodeReady(int nodeId) {
         if (!started) {
             return;
         }
-        if (machine.phase() == FailoverPhase.SUSPECTED) {
-            Set<Integer> excluded = new HashSet<>();
-            machine.latestRun().ifPresent(run -> excluded.add(run.oldPrimaryId()));
-            tryPromote(excluded);
-        } else if (authority.current().isEmpty()) {
-            tryPromote(Set.of());
-        }
+        publishRoles();
+        roles.afterPendingChanges(this::followLeader);
     }
 
     /** The old primary of the latest run finished resynchronising: records its recovery interval once. */
@@ -469,39 +507,123 @@ public class FailoverCluster implements AutoCloseable {
 
     // ------------------------------------------------------------------ internals
 
-    /** Chooses a primary (TODO(L1) selector), issues its epoch and hands the promotion to its worker. */
-    private void tryPromote(Set<Integer> excluded) {
+    /**
+     * The one place a primary is chosen: the elected leader, on the role provider's dispatcher
+     * thread (leader changes, and follow-ups queued behind them). Never waits.
+     *
+     * <ul>
+     *   <li>Nothing while a promotion is in flight, while there is no leader (an election is under
+     *       way), while the leader already serves as primary, while it is not ready (a later
+     *       {@link #nodeReady} looks again), or while a failover run whose new primary is already
+     *       chosen is still open (it ends at the first accepted update, which looks again).</li>
+     *   <li>A failure in progress, or no primary yet: the leader is promoted at a new epoch.</li>
+     *   <li>A primary that has not failed: a planned handover ({@link #handover}).</li>
+     *   <li>Only a choice the state machine applied is acted on, so the status never shows a
+     *       primary or an epoch the machine does not know.</li>
+     * </ul>
+     */
+    void followLeader() {
+        if (!started) {
+            return;
+        }
         synchronized (promotionLock) {
-            Optional<Integer> chosen = FailoverRoleSelector.select(candidates(), excluded);
-            if (chosen.isEmpty()) {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("excluded", excluded.stream().sorted().toList());
-                publish(0, "NO_CANDIDATE", null, "No live node is ready to take over as primary", data);
+            Optional<Integer> leader = roles.leaderId();
+            if (inFlight.get() != null || leader.isEmpty()) {
+                return;
+            }
+            int target = leader.get();
+            Optional<Integer> primary = machine.primaryId();
+            if ((primary.equals(leader) && servingPrimary(target)) || !eligible(target)) {
+                return;
+            }
+            Optional<FailoverRun> open = machine.latestRun().filter(run -> run.outcome() == FailoverRun.Outcome.IN_PROGRESS);
+            if (open.isPresent() && open.get().newPrimaryId() != null) {
+                return;   // the failover's own promotion runs to the end of its run, so it is measured
+            }
+            Optional<Promotion> inForce = authority.current();
+            if (inForce.isPresent() && inForce.get().nodeId() == target) {
+                // The leader's promotion is in force but the machine lost it (the old primary crashed during
+                // a planned handover and opened a run): choose it again, at the same epoch.
+                if (open.isPresent() && open.get().newPrimaryId() == null) {
+                    Promotion again = new Promotion(target, inForce.get().epoch(), inForce.get().previousPrimaryId(), now());
+                    if (apply("renewed choice of node " + target, machine.onPromotionChosen(again))
+                            == FailoverStateMachine.EventResult.APPLIED) {
+                        promoteOn(target, again, false);
+                    }
+                }
                 return;
             }
             observeLiveEpochs();
-            Optional<Promotion> promotion = authority.onLeaderElected(chosen.get(), now());
-            if (promotion.isEmpty()) {
+            Optional<Promotion> promotion = authority.onLeaderElected(target, now());
+            if (promotion.isEmpty() || apply("choice of node " + target, machine.onPromotionChosen(promotion.get()))
+                    != FailoverStateMachine.EventResult.APPLIED) {
                 return;
             }
-            apply("choice of node " + chosen.get(), machine.onPromotionChosen(promotion.get()));
-            FaultToleranceNodeService target = services.get(chosen.get());
-            if (target == null || !target.execute("promotion", () -> target.promote(promotion.get()))) {
-                promotionFailed(chosen.get(), "node " + chosen.get() + " is down");
+            if (open.isEmpty() && primary.isPresent()) {
+                handover(primary.get(), promotion.get());
+            } else {
+                promoteOn(target, promotion.get(), false);
             }
         }
     }
 
-    private List<FailoverRoleSelector.Candidate> candidates() {
-        List<FailoverRoleSelector.Candidate> candidates = new ArrayList<>();
-        for (ClusterNode node : cluster.nodes()) {
-            FaultToleranceNodeService service = services.get(node.id());
-            ReplicationNodeService replication = replications.get(node.id());
-            boolean eligible = node.isUp() && service != null && service.isRunning()
-                    && service.rejoinState() == RejoinState.READY && replication != null && replication.isRunning();
-            candidates.add(new FailoverRoleSelector.Candidate(node.id(), eligible));
+    /** Under promotionLock: hands the promotion to the target's worker. */
+    private void promoteOn(int target, Promotion promotion, boolean handover) {
+        inFlight.set(promotion);
+        FaultToleranceNodeService service = services.get(target);
+        if (service == null || !service.execute("promotion", () -> service.promote(promotion, handover))) {
+            promotionFailed(target, "node " + target + " is down");
         }
-        return candidates;
+    }
+
+    /**
+     * Under promotionLock: a planned handover from {@code oldPrimary}, which has not failed, to the
+     * elected leader. On the client thread, so no client update is in flight: the old primary stops
+     * serving and steps down, then the leader's worker catches up from every ready peer, the fenced
+     * old primary included, and takes over at the new epoch. Never waits.
+     */
+    private void handover(int oldPrimary, Promotion promotion) {
+        inFlight.set(promotion);
+        int target = promotion.nodeId();
+        try {
+            client.execute(() -> {
+                FaultToleranceNodeService old = services.get(oldPrimary);
+                if (old != null) {
+                    old.fenceForHandover(promotion);
+                }
+                publishRoles();
+                FaultToleranceNodeService service = services.get(target);
+                if (service == null || !service.execute("handover", () -> service.promote(promotion, true))) {
+                    promotionFailed(target, "node " + target + " is down");
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            inFlight.set(null);   // closed
+        }
+    }
+
+    /** Up, with a running faulttolerance service that finished its rejoin, and a running replication service. */
+    private boolean eligible(int nodeId) {
+        FaultToleranceNodeService service = services.get(nodeId);
+        ReplicationNodeService replication = replications.get(nodeId);
+        return cluster.node(nodeId).isUp() && service != null && service.isRunning()
+                && service.rejoinState() == RejoinState.READY && replication != null && replication.isRunning();
+    }
+
+    private boolean servingPrimary(int nodeId) {
+        FaultToleranceNodeService service = services.get(nodeId);
+        return service != null && service.isRunning() && service.isServing();
+    }
+
+    /**
+     * Publishes the replication roles through the role provider: the serving primary (or none)
+     * and every other ready node as a backup.
+     */
+    private void publishRoles() {
+        Integer primary = currentPrimary().orElse(null);
+        List<Integer> backups = cluster.nodes().stream().map(ClusterNode::id)
+                .filter(id -> !id.equals(primary) && eligible(id)).toList();
+        roles.publishReplicationRoles(primary, backups);
     }
 
     private void observeLiveEpochs() {
@@ -627,6 +749,7 @@ public class FailoverCluster implements AutoCloseable {
         data.put("outageMillis", run.measurements().outageMillis());
         publish(nodeId, "SERVICE_RESTORED", run.oldPrimaryId(), "Node " + nodeId + " accepted update '" + update.key()
                 + "' at epoch " + epoch + ": service restored", data);
+        roles.afterPendingChanges(this::followLeader);   // a leader change waiting for this run to end
     }
 
     private void later(long delayMillis, Runnable task) {

@@ -2,6 +2,7 @@ package com.udcf.modules.election;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderElector;
 import com.udcf.core.cluster.NodeDownException;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
@@ -56,6 +57,11 @@ import java.util.function.LongSupplier;
  * agrees on one live coordinator, it becomes the cluster leader ({@link Cluster#assignLeader}).
  * Otherwise the leader is left as it is; the core removes it when the leader's node crashes.</p>
  *
+ * <p><b>Requested elections (link L1).</b> As the {@link LeaderElector} of the shared
+ * {@code RoleProvider}, {@link #requestElection()} starts the services like a first election
+ * and runs Bully from the lowest live node as a {@code REQUESTED} round, when there is no leader
+ * and no round is open.</p>
+ *
  * <p><b>Threads and locks.</b> Election and detector listeners run on each node's election
  * worker. They only open rounds, enqueue Bully, assign the leader and publish; they never crash,
  * stop or recover anything and never take {@code activationLock}. {@code activationLock}
@@ -65,7 +71,7 @@ import java.util.function.LongSupplier;
  * while a thread is joined.</p>
  */
 @Component
-public class ElectionModule implements ExperimentModule {
+public class ElectionModule implements ExperimentModule, LeaderElector {
 
     public static final String ID = ElectionNodeService.MODULE;
     public static final String ROUND_STARTED = "ELECTION_ROUND_STARTED";
@@ -223,6 +229,47 @@ public class ElectionModule implements ExperimentModule {
         }
     }
 
+    /**
+     * {@link LeaderElector}: if there is no leader and no round is open, starts the election
+     * services on every live node (as the first election does) and runs Bully from the lowest
+     * live node as a {@link RoundTrigger#REQUESTED} round. Returns at once; the leader follows
+     * through the leader rule. Takes no action guard, so a manual start meanwhile is not refused.
+     */
+    @Override
+    public void requestElection() {
+        synchronized (activationLock) {
+            expireOverdue();
+            ensureServices();
+            if (cluster.leaderId().isPresent() || rounds.current().isPresent()) {
+                return;
+            }
+            for (ClusterNode node : cluster.nodes()) {
+                ElectionNodeService service = wired.get(node.id());
+                if (!node.isUp() || service == null || !service.isRunning()) {
+                    continue;
+                }
+                Optional<ElectionRound> round = rounds.open(ElectionAlgorithm.BULLY, RoundTrigger.REQUESTED, node.id());
+                if (round.isEmpty()) {
+                    return;
+                }
+                publishRoundStarted(round.get());
+                try {
+                    service.startBully();
+                } catch (NodeDownException e) {
+                    rounds.cancel(round.get().roundId());
+                    log.debug("Node {} went down before its requested election started", node.id());
+                }
+                return;
+            }
+        }
+    }
+
+    /** {@link LeaderElector}: one Bully attempt as its initiator sees it, ok-timeout plus coordinator-timeout. */
+    @Override
+    public long electionBoundMillis() {
+        return properties.okTimeoutMillis() + properties.coordinatorTimeoutMillis();
+    }
+
     // ------------------------------------------------------------------ reads (never start a service)
 
     public ElectionOverviewDto overview() {
@@ -295,10 +342,12 @@ public class ElectionModule implements ExperimentModule {
                     return;
                 }
                 ClusterNode node = cluster.node(event.nodeId());
-                if (!node.isUp() || ElectionNodeService.find(node).isPresent()) {
-                    return;   // a registered service is recovered by the node itself, and its Bully starts (E4a)
+                if (!node.isUp() || (ElectionNodeService.find(node).isPresent() && wired.containsKey(node.id()))) {
+                    return;   // a wired service is recovered by the node itself, and its Bully starts (E4a)
                 }
-                // Crashed when the services first started: join now, and run Bully as a recovered node does.
+                // Crashed when the services first started (its service may just have been started by another
+                // module, such as Experiment 8, without this module's listeners): join now, and run Bully as a
+                // recovered node does.
                 ElectionNodeService service = wire(ElectionNodeService.on(node, cluster, properties, bus));
                 openAutomatic(RoundTrigger.RECOVERY, node.id());
                 service.startBully();
@@ -428,6 +477,7 @@ public class ElectionModule implements ExperimentModule {
             case MANUAL -> "started by hand";
             case LEADER_FAILURE -> "after the leader failed";
             case RECOVERY -> "after a recovery";
+            case REQUESTED -> "requested by another experiment";
         };
         return describe(round.algorithm()) + " election round " + round.roundId() + " from node "
                 + round.initiatorNodeId() + " (" + cause + ")";

@@ -90,7 +90,9 @@ export function isOldPrimaryDown(status, run) {
  * The experiment's state for the page (E8d requirement 11 plus C3), most specific first:
  * not-started, failover-waiting (C3: a failover cannot finish without updates), failover,
  * appointing (started, nobody serves), recovering, restored (old primary still down),
- * streaming, demoted (the old primary came back as a backup), no-stream.
+ * streaming, demoted (the old primary came back as a backup and is not primary again), no-stream.
+ * Since Phase 9A.1 a recovered old primary that wins the election again takes over after its
+ * resync (a planned handover), so "demoted" ends once it serves as primary.
  */
 export function uiState(status, run) {
   if (!status) return 'loading'
@@ -101,7 +103,7 @@ export function uiState(status, run) {
   if (isRecovering(run)) return 'recovering'
   if (run?.outcome === 'RESTORED' && isOldPrimaryDown(status, run)) return 'restored'
   if (streaming) return 'streaming'
-  if (milestone(run, 'DEMOTED')) return 'demoted'
+  if (milestone(run, 'DEMOTED') && status.currentPrimaryId !== run.oldPrimaryId) return 'demoted'
   return 'no-stream'
 }
 
@@ -112,6 +114,11 @@ export function budgetUsedText(stream) {
 
 export const WAITING_FOR_UPDATE = 'The new primary only starts serving when the next update arrives. Start the update stream to finish the failover.'
 export const WAITING_BUDGET_USED = 'The budget is used. Reset the cluster on the Cluster page.'
+export const APPOINTING_FIRST = 'No primary serves yet: the first primary is being appointed.'
+export const WAITING_FOR_LEADER = 'No primary serves right now: Experiment 8 waits for the elected leader to take over.'
+
+/** Nobody serves and no primary was ever appointed: the first appointment (epoch 2) is the only one issued, and no run exists. */
+const noPrimaryText = (status, run) => (!run && !(status?.highestEpoch > 2) ? APPOINTING_FIRST : WAITING_FOR_LEADER)
 
 /** One sentence describing the state, for the page and the polite announcement. */
 export function situationText(state, status, run) {
@@ -120,7 +127,7 @@ export function situationText(state, status, run) {
   switch (state) {
     case 'loading': return 'Loading Experiment 8...'
     case 'not-started': return 'Experiment 8 has not started. Start it, or start the update stream, which starts it too.'
-    case 'appointing': return 'No primary serves yet: the first primary is being appointed.'
+    case 'appointing': return noPrimaryText(status, run)
     case 'failover': return `Failover in progress: node ${run?.oldPrimaryId ?? '?'} crashed and a backup is taking over.`
     case 'failover-waiting': return status?.stream?.remainingUpdates === 0 ? `${WAITING_FOR_UPDATE} ${WAITING_BUDGET_USED}` : WAITING_FOR_UPDATE
     case 'recovering': return `Node ${run.oldPrimaryId} is back and is asking the others who the primary is.`
@@ -152,7 +159,7 @@ export function controlsModel(status, run, { locked = false } = {}) {
   let crashHint = null
   if (failover) crashHint = 'A failover is in progress: wait until the service is restored.'
   else if (!running) crashHint = 'Start the update stream first: a failover is only measured once the new primary accepts an update.'
-  else if (!serving) crashHint = 'No primary serves yet: the first primary is being appointed.'
+  else if (!serving) crashHint = noPrimaryText(status, run)
 
   let recoverHint = null
   const oldNode = run ? nodeOf(status, run.oldPrimaryId) : null

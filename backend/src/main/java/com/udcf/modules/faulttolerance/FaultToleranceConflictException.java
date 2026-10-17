@@ -16,7 +16,8 @@ public class FaultToleranceConflictException extends RuntimeException {
         NOTHING_TO_RECOVER,
         STREAM_RUNNING,
         STREAM_NOT_RUNNING,
-        UPDATE_LIMIT_REACHED
+        UPDATE_LIMIT_REACHED,
+        NO_LEADER
     }
 
     private final Reason reason;

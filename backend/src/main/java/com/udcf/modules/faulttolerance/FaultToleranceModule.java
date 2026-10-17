@@ -1,6 +1,7 @@
 package com.udcf.modules.faulttolerance;
 
 import com.udcf.core.cluster.Cluster;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.module.ExperimentModule;
@@ -46,7 +47,7 @@ import java.util.stream.Collectors;
  * replication primary, a crash of that primary, the failover E8b runs on the shared failure
  * detector (link L2), the recovery of the old primary, and the four measurements (detection,
  * failover, recovery, data loss). The engine is E8b's {@link FailoverCluster}; the new primary
- * comes from its {@link FailoverRoleSelector} ({@code // TODO(L1)}).
+ * is the leader elected by Experiment 4, from the shared {@link RoleProvider} (link L1).
  *
  * <p><b>Guard.</b> Start, stream start, crash and recover hold the {@link ModuleActionGuard} for
  * their synchronous part only; every check runs before the guard is taken, so a refused request
@@ -112,8 +113,8 @@ public class FaultToleranceModule implements ExperimentModule, AutoCloseable {
                             + "crash: the last heartbeat may arrive up to one interval before the crash, and silence is "
                             + "checked once per interval. From the failure detector's settings; not a measurement."),
             new GlossaryEntryDto("worstCaseFailover", "Worst-case failover", "derived",
-                    "Detection plus two promotion attempts, from the configured timeouts. The client keeps retrying "
-                            + "at least this long."));
+                    "Detection, one election and one promotion of the elected leader, from the configured "
+                            + "timeouts. The client keeps retrying at least this long."));
 
     private static final Logger log = LoggerFactory.getLogger(FaultToleranceModule.class);
 
@@ -137,11 +138,13 @@ public class FaultToleranceModule implements ExperimentModule, AutoCloseable {
     private final Set<String> violationsSeen = new HashSet<>();
 
     @Autowired
-    public FaultToleranceModule(Cluster cluster, ClusterEventBus bus, FaultToleranceProperties properties,
-                                FaultToleranceModuleProperties moduleProperties, ElectionProperties electionProperties,
-                                ReplicationProperties replicationProperties, MeterRegistry registry, Clock clock) {
+    public FaultToleranceModule(Cluster cluster, RoleProvider roles, ClusterEventBus bus,
+                                FaultToleranceProperties properties, FaultToleranceModuleProperties moduleProperties,
+                                ElectionProperties electionProperties, ReplicationProperties replicationProperties,
+                                MeterRegistry registry, Clock clock) {
         this(cluster, bus, properties, moduleProperties, electionProperties, replicationProperties, registry, clock,
-                new FailoverCluster(cluster, properties, electionProperties, replicationProperties, bus, registry));
+                new FailoverCluster(cluster, roles, properties, electionProperties, replicationProperties, bus,
+                        registry));
     }
 
     /** For tests: a {@link FailoverCluster} built by the test (FaultToleranceModuleHarness). */
@@ -559,10 +562,18 @@ public class FaultToleranceModule implements ExperimentModule, AutoCloseable {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Starts Experiment 8 if it is not started. Takes no guard: callers hold it. True if it started now. */
+    /**
+     * Starts Experiment 8 if it is not started. Takes no guard: callers hold it. True if it started now.
+     *
+     * @throws FaultToleranceConflictException no leader could be elected, so there is no primary (409)
+     */
     private boolean startServices() {
         boolean before = failover.snapshot().started();
-        failover.start();
+        if (!failover.start()) {
+            throw new FaultToleranceConflictException(FaultToleranceConflictException.Reason.NO_LEADER,
+                    "No leader could be elected, so Experiment 8 has no primary: no live node won an election in "
+                            + "time. Recover a node or reset the cluster, then try again.");
+        }
         return !before;
     }
 
@@ -598,8 +609,9 @@ public class FaultToleranceModule implements ExperimentModule, AutoCloseable {
                         + "when the primary crashed is not lost; it is sent again to the new primary.",
                 "All intervals come from one monotonic clock in the backend. A crash started on the Cluster page "
                         + "is stamped as the node goes down, slightly late, and is marked so.",
-                "For now the new primary is the lowest-numbered live node that is ready; from Phase 9A it will be "
-                        + "the leader elected by Experiment 4.",
+                "The primary is the leader elected by Experiment 4 (Bully: the highest-numbered live node). When "
+                        + "the leader changes while the primary is still up, the new leader first copies the primary's "
+                        + "store, then takes over at a higher epoch.",
                 "Backups refuse any update stamped with an older epoch than the newest they know, so a returning "
                         + "old primary cannot overwrite newer data even if it misbehaves.",
                 "Until Phase 9A this experiment and Experiment 5 share each node's replication service, so a "

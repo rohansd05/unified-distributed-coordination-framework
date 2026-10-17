@@ -85,12 +85,12 @@ class FaultToleranceModuleTest {
         StartDto second = h.module.start();
         assertThat(second.outcome()).isEqualTo(FaultToleranceModule.ALREADY_STARTED);
         assertThat(second.reason()).contains("already running");
-        h.awaitPrimary(1);
+        h.awaitPrimary(3);
         assertThat(h.module.status()).isEqualTo(ModuleStatus.RUNNING);
         FaultToleranceStatusDto state = h.module.currentState();
-        assertThat(state.currentPrimaryId()).isEqualTo(1);
+        assertThat(state.currentPrimaryId()).isEqualTo(3);
         assertThat(state.primaryEpoch()).isEqualTo(2L);
-        assertThat(node(state, 1).role()).isEqualTo("PRIMARY");
+        assertThat(node(state, 3).role()).isEqualTo("PRIMARY");
         assertThat(node(state, 2).role()).isEqualTo("BACKUP");
         assertThat(node(state, 2).epoch()).isEqualTo(2L);
 
@@ -134,6 +134,29 @@ class FaultToleranceModuleTest {
     }
 
     @Test
+    @DisplayName("with every node down no leader can be elected: start answers 409 NO_LEADER after the election bound, never a fallback")
+    void startWithoutLeaderIs409() {
+        harness(2);
+        h.cluster.crash(1);
+        h.cluster.crash(2);
+        long bound = FaultToleranceModuleHarness.ELECTION.okTimeoutMillis()
+                + FaultToleranceModuleHarness.ELECTION.coordinatorTimeoutMillis();
+
+        long start = System.nanoTime();
+        assertThatThrownBy(h.module::start).isInstanceOfSatisfying(FaultToleranceConflictException.class, e -> {
+            assertThat(e.reason()).isEqualTo(FaultToleranceConflictException.Reason.NO_LEADER);
+            assertThat(e.getMessage()).startsWith("No leader could be elected");
+        });
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(elapsedMillis).isGreaterThanOrEqualTo(bound - 20).isLessThan(bound + 2000);
+        assertThat(h.module.guard().isBusy()).isFalse();
+        assertThat(h.failover.currentPrimary()).isEmpty();
+        assertThat(h.roles.leaderId()).isEmpty();
+        assertThat(h.events("PRIMARY_PROMOTED")).isEmpty();
+    }
+
+    @Test
     @DisplayName("stream start on a never-started module starts it inside one guard, and updates are acknowledged")
     void streamStartStartsTheModule() {
         harness(3);
@@ -164,22 +187,23 @@ class FaultToleranceModuleTest {
     }
 
     @Test
-    @DisplayName("synchronous: crash, failover, zero loss (a real 0); recovery demotes the old primary; nulls while unknown")
+    @DisplayName("synchronous: crash, failover to the new leader, zero loss (a real 0); recovery demotes the old primary, "
+            + "which then takes over again as the leader; nulls while unknown")
     void synchronousFailoverLosesNothingAndOldPrimaryDemotes() {
         harness(3);
         streamUntilAcknowledged(ConsistencyModel.SYNCHRONOUS, 5);
-        h.awaitPrimary(1);
+        h.awaitPrimary(3);
 
         CrashDto crash = h.module.crashPrimary();
-        assertThat(crash.nodeId()).isEqualTo(1);
+        assertThat(crash.nodeId()).isEqualTo(3);
         assertThat(crash.epoch()).isEqualTo(2L);
         assertThat(crash.crashSource()).isEqualTo("ACTION");
         FaultToleranceStatusDto during = crash.status();
         assertThat(during.dataLossNow()).as("no primary store during a failover").isNull();
         assertThat(during.currentPrimaryId()).isNull();
         assertThat(during.primaryEpoch()).isNull();
-        assertThat(node(during, 1).role()).isNull();
-        assertThat(node(during, 1).epoch()).isNull();
+        assertThat(node(during, 3).role()).isNull();
+        assertThat(node(during, 3).epoch()).isNull();
         assertThatThrownBy(h.module::crashPrimary).isInstanceOfSatisfying(FaultToleranceConflictException.class,
                 e -> assertThat(e.getMessage()).contains("failover is in progress"));
 
@@ -204,7 +228,7 @@ class FaultToleranceModuleTest {
         assertThat(after.dataLossNow().lost()).isZero();
         assertThat(h.events("FAILOVER_MEASURED")).singleElement().satisfies(e -> {
             assertThat(e.nodeId()).isEqualTo(2);
-            assertThat(e.peerId()).isEqualTo(1);
+            assertThat(e.peerId()).isEqualTo(3);
             assertThat(e.data()).containsEntry("recoveryMillis", null).containsKey("outageMillis");
         });
         assertThat(h.events("DATA_LOSS_MEASURED")).singleElement()
@@ -214,20 +238,27 @@ class FaultToleranceModuleTest {
                 .satisfies(c -> assertThat(c.count()).isZero());
 
         RecoverDto recovered = h.module.recoverOldPrimary();
-        assertThat(recovered.nodeId()).isEqualTo(1);
+        assertThat(recovered.nodeId()).isEqualTo(3);
         assertThat(recovered.previousEpoch()).isEqualTo(2L);
         FaultToleranceModuleHarness.within().until(() -> !h.events("RECOVERY_MEASURED").isEmpty());
         RunDto done = h.module.latestRun();
         assertThat(done.measurements().recoveryMillis()).isNotNull();
         assertThat(kinds(done)).contains("OLD_PRIMARY_RECOVERED", "DEMOTED", "RESYNCHRONISED");
+        h.awaitPrimary(3);   // node 3 won Bully again: the planned handover follows its resync
         FaultToleranceStatusDto end = h.module.currentState();
-        assertThat(node(end, 1).role()).isEqualTo("BACKUP");
-        assertThat(node(end, 1).epoch()).isEqualTo(3L);
-        assertThat(end.currentPrimaryId()).isEqualTo(2);
+        assertThat(node(end, 3).role()).isEqualTo("PRIMARY");
+        assertThat(node(end, 3).epoch()).isEqualTo(4L);
+        assertThat(node(end, 2).role()).isEqualTo("BACKUP");
+        assertThat(end.currentPrimaryId()).isEqualTo(3);
+        assertThat(end.primaryEpoch()).isEqualTo(4L);
         assertThat(end.splitBrain().passed()).isTrue();
         assertThat(end.splitBrain().violationsSeen()).isZero();
         assertThat(h.events("OLD_PRIMARY_RECOVERED")).singleElement()
-                .satisfies(e -> assertThat(e.nodeId()).isEqualTo(1));
+                .satisfies(e -> assertThat(e.nodeId()).isEqualTo(3));
+        assertThat(h.events("HANDOVER_STARTED")).singleElement().satisfies(e -> {
+            assertThat(e.nodeId()).isEqualTo(2);
+            assertThat(e.peerId()).isEqualTo(3);
+        });
         assertThatThrownBy(h.module::recoverOldPrimary).isInstanceOfSatisfying(FaultToleranceConflictException.class,
                 e -> assertThat(e.getMessage()).contains("already up"));
         h.module.stopStream();
@@ -239,7 +270,7 @@ class FaultToleranceModuleTest {
     void asynchronousFailoverShowsInFlightLoss() {
         h = new FaultToleranceModuleHarness(3, 10, 400, 5000);
         h.module.start();
-        h.awaitPrimary(1);
+        h.awaitPrimary(3);
         streamUntilAcknowledged(ConsistencyModel.ASYNCHRONOUS, 1);
         h.module.crashPrimary();
         FaultToleranceModuleHarness.within().until(() -> h.module.latestRun().dataLoss() != null);
@@ -263,8 +294,8 @@ class FaultToleranceModuleTest {
     void oldPrimaryReturnsBeforePromotion() {
         harness(2);
         h.module.start();
-        h.awaitPrimary(1);
-        h.cluster.crash(2);   // nobody is left to detect node 1's crash, so no one can be chosen
+        h.awaitPrimary(2);
+        h.cluster.crash(1);   // nobody is left to detect node 2's crash, so no one can be chosen
         h.module.crashPrimary();
         h.module.recoverOldPrimary();
         RunDto run = h.module.latestRun();
@@ -281,12 +312,12 @@ class FaultToleranceModuleTest {
     void historyIsBounded() {
         h = new FaultToleranceModuleHarness(3, 1, 400, FailoverFixture.REPLICATION.asyncDelayMillis());
         streamUntilAcknowledged(ConsistencyModel.SYNCHRONOUS, 3);
-        h.awaitPrimary(1);
+        h.awaitPrimary(3);
         h.module.crashPrimary();
         FaultToleranceModuleHarness.within().until(() -> h.module.latestRun().dataLoss() != null);
         h.module.recoverOldPrimary();
         FaultToleranceModuleHarness.within().until(() -> h.module.latestRun().measurements().recoveryMillis() != null);
-        h.awaitPrimary(2);
+        h.awaitPrimary(3);   // the planned handover back to node 3, the leader again
         h.module.crashPrimary();
         FaultToleranceModuleHarness.within().until(() -> h.module.latestRun().runId() == 2
                 && h.module.latestRun().dataLoss() != null);
@@ -362,7 +393,7 @@ class FaultToleranceModuleTest {
         }
         h = new FaultToleranceModuleHarness(size, 10, 20, FailoverFixture.REPLICATION.asyncDelayMillis());
         h.module.start();
-        h.awaitPrimary(1);
+        h.awaitPrimary(size);
         FaultToleranceModuleHarness.within().until(() -> h.module.currentState().nodes().stream()
                 .allMatch(n -> Objects.equals(n.rejoin(), "READY")));
         long before = h.bus.publishedCount();

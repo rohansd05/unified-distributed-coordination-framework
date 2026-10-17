@@ -23,9 +23,9 @@ import java.util.Optional;
  *       changes nothing.</li>
  *   <li>A stale result changes nothing: one observed before the promotion now in force.</li>
  *   <li>A leader change with no primary failure (a planned handover, for example a recovered
- *       highest node winning Bully again) is still a promotion, epoch + 1. Before Phase 9A
- *       Experiment 8 does not feed such changes in: a recovered old primary demotes and stays a
- *       backup.</li>
+ *       highest node winning Bully again) is still a promotion, epoch + 1. Since Phase 9A.1
+ *       Experiment 8 feeds every leader change in ({@code FailoverCluster.followLeader}), and
+ *       resynchronises the handover target before it takes over.</li>
  * </ul>
  *
  * <p>Thread safety: every method is synchronized; none waits or calls out while holding the lock.</p>
@@ -44,8 +44,7 @@ public class EpochAuthority {
      * @return the new promotion, or empty if the result is stale or names the current primary
      */
     public synchronized Optional<Promotion> onLeaderElected(int nodeId, long observedAtNanos) {
-        // TODO(L1): fed by the election module's leader in Phase 9A; until then E8b feeds it from
-        // a module-local selector (highest live id, the legacy rule).
+        // Fed with the leader elected by Experiment 4, through the shared role provider (link L1).
         EpochRules.requireNodeId("nodeId", nodeId);
         if (current != null) {
             if (observedAtNanos < current.observedAtNanos()) {

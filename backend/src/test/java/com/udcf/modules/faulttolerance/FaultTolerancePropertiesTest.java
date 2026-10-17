@@ -58,27 +58,30 @@ class FaultTolerancePropertiesTest {
     }
 
     @Test
-    @DisplayName("worst case = (heartbeat timeout + interval) + 2 x (catch-up + 2 x replication timeout)")
+    @DisplayName("worst case = (heartbeat timeout + interval) + (ok + coordinator timeout) + (catch-up + 2 x replication timeout)")
     void worstCaseFormula() {
         assertThat(FaultToleranceProperties.promotionAttemptBoundMillis(1000, 1500)).isEqualTo(4000);
-        assertThat(FaultToleranceProperties.worstCaseFailoverMillis(700, 2500, 1000, 1500)).isEqualTo(11200);
-        assertThat(FaultToleranceProperties.worstCaseFailoverMillis(100, 600, 250, 300)).isEqualTo(2400);
+        assertThat(FaultToleranceProperties.worstCaseFailoverMillis(700, 2500, 900, 2200, 1000, 1500)).isEqualTo(10300);
+        assertThat(FaultToleranceProperties.worstCaseFailoverMillis(100, 600, 400, 1500, 250, 300)).isEqualTo(3450);
         assertThat(YAML.retryPolicy()).isEqualTo(new UpdateRetryPolicy(50, 250));
         assertThat(YAML.retryWindowMillis()).isEqualTo(12500);
     }
 
     @Test
-    @DisplayName("the configured retry window exceeds the configured worst-case failover by at least 10 %")
+    @DisplayName("in both profiles the configured retry window exceeds the configured worst-case failover (10300 ms) by at least 10 %")
     void yamlWindowCoversWorstCaseWithMargin() {
-        runner.run(context -> {
-            FaultToleranceProperties properties = context.getBean(FaultToleranceProperties.class);
-            ElectionProperties election = context.getBean(ElectionProperties.class);
-            ReplicationProperties replication = context.getBean(ReplicationProperties.class);
-            long worst = properties.worstCaseFailoverMillis(election, replication);
-            assertThat(worst).isEqualTo(11200);
-            assertThat(properties.retryWindowMillis()).isGreaterThanOrEqualTo(Math.round(worst * 1.10));
-            assertThatCode(() -> properties.requireWindowCovers(election, replication)).doesNotThrowAnyException();
-        });
+        for (ApplicationContextRunner profile : java.util.List.of(runner,
+                runner.withPropertyValues("spring.profiles.active=public"))) {
+            profile.run(context -> {
+                FaultToleranceProperties properties = context.getBean(FaultToleranceProperties.class);
+                ElectionProperties election = context.getBean(ElectionProperties.class);
+                ReplicationProperties replication = context.getBean(ReplicationProperties.class);
+                long worst = properties.worstCaseFailoverMillis(election, replication);
+                assertThat(worst).isEqualTo(10300);
+                assertThat(properties.retryWindowMillis()).isGreaterThanOrEqualTo(Math.round(worst * 1.10));
+                assertThatCode(() -> properties.requireWindowCovers(election, replication)).doesNotThrowAnyException();
+            });
+        }
     }
 
     @Test
@@ -86,11 +89,12 @@ class FaultTolerancePropertiesTest {
     void tooSmallWindowIsRejected() {
         ElectionProperties election = new ElectionProperties(900, 2200, 300, 5000, 700, 2500, 10000);
         ReplicationProperties replication = new ReplicationProperties(450, 1500, 200);
-        FaultToleranceProperties small = new FaultToleranceProperties(new FaultToleranceProperties.Client(44, 250),
+        FaultToleranceProperties small = new FaultToleranceProperties(new FaultToleranceProperties.Client(40, 250),
                 YAML.roleQuery(), YAML.promotion(), 10);
         assertThatIllegalStateException().isThrownBy(() -> small.requireWindowCovers(election, replication))
-                .withMessageContaining("11000 ms").withMessageContaining("11200 ms");
-        FaultToleranceProperties exact = new FaultToleranceProperties(new FaultToleranceProperties.Client(56, 200),
+                .withMessageContaining("10000 ms").withMessageContaining("10300 ms")
+                .withMessageContaining("election (900 + 2200)");
+        FaultToleranceProperties exact = new FaultToleranceProperties(new FaultToleranceProperties.Client(103, 100),
                 YAML.roleQuery(), YAML.promotion(), 10);
         assertThatCode(() -> exact.requireWindowCovers(election, replication)).doesNotThrowAnyException();
     }
