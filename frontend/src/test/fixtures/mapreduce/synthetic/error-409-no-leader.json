@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"No leader","status":409,"detail":"No leader could be elected, so this job has no coordinator: no live node won an election in time. Recover a node or reset the cluster, then try again.","instance":"/api/modules/mapreduce/runs","moduleId":"mapreduce","reason":"NO_LEADER"}

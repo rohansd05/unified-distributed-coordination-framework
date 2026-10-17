@@ -2,6 +2,8 @@ package com.udcf.modules.mapreduce;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderChange;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
 import com.udcf.core.events.EventLogExporter;
@@ -41,15 +43,21 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Experiment 7 (lab 7) on the shared cluster: runs a MapReduce job over TCP workers on
  * {@code ports().mapreduce()} (730k) on the bundled sample, an uploaded .txt file or the
  * cluster's own live event log (link L5), optionally crashing a worker during the run.
  *
- * <p><b>Roles.</b> The coordinator is the lowest live node and every live node is a worker,
- * from {@link MapReduceRoleSelector} ({@code // TODO(L1): replaced by the shared role
- * provider in Phase 9A}). R, the number of reducers, is the number of workers.</p>
+ * <p><b>Roles (link L1).</b> The coordinator is the leader elected by Experiment 4, taken from
+ * {@link RoleProvider#ensureLeader()} on the request thread (with no leader the job is refused,
+ * HTTP 409 {@code NO_LEADER}, never given to another node); every live node is a worker. R, the
+ * number of reducers, is the number of workers. The overview only reads
+ * {@link RoleProvider#leaderId()}. A running job keeps its coordinator; once a job has run since
+ * the last reset, a new leader publishes {@code COORDINATOR_CHANGED} exactly once, from whichever
+ * comes first: the leader listener or the next job (compare-and-set). If the coordinator crashes
+ * during a run, it sends no further task and the run ends FAILED with a plain reason.</p>
  *
  * <p><b>A run.</b> Everything about the request is checked on the request thread before the
  * module's {@link ModuleActionGuard} is taken, so a rejected request changes nothing; a second
@@ -101,8 +109,9 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
     static final List<String> NOTES = List.of(
             "Every map and reduce task travels over a real TCP connection to the worker's own port; "
                     + "nothing on this page is simulated.",
-            "For now the coordinator is the lowest-numbered live node and every live node is a worker; "
-                    + "from Phase 9A the coordinator will be the elected leader.",
+            "The coordinator is the leader elected by Experiment 4 and every live node is a worker. With no leader "
+                    + "yet, the first job asks Experiment 4 for an election, which starts its election service and "
+                    + "heartbeats on every live node; if no leader can be elected, the job is refused.",
             "The combiner adds up values on the mapper's node before anything is sent, so fewer pairs "
                     + "reach the shuffle than the mappers emitted.",
             "The average latency job carries a sum and a count through every stage and divides only at "
@@ -127,12 +136,17 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
     private final ModuleActionGuard guard = new ModuleActionGuard(ID);
     private final Object stateLock = new Object();
     private boolean lastRunFailed;   // guarded by stateLock
+    private final RoleProvider roles;
+    private final RoleProvider.Registration leaderChanges;
+    /** The coordinator of the jobs so far; null until the first job after a reset. */
+    private final AtomicReference<Integer> actingCoordinator = new AtomicReference<>();
 
     @Autowired
     public MapReduceModule(Cluster cluster, ClusterEventBus bus, MapReduceProperties wire,
                            MapReduceModuleProperties properties, EventLogExporter exporter,
-                           EventProperties eventProperties, MeterRegistry meterRegistry, Clock clock) {
-        this(cluster, bus, wire, properties, exporter, eventProperties, meterRegistry, clock,
+                           EventProperties eventProperties, MeterRegistry meterRegistry, Clock clock,
+                           RoleProvider roles) {
+        this(cluster, bus, wire, properties, exporter, eventProperties, meterRegistry, clock, roles,
                 Executors.newSingleThreadExecutor(runnable -> {
                     Thread thread = new Thread(runnable, RUN_THREAD_NAME);
                     thread.setDaemon(true);
@@ -144,8 +158,9 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
     MapReduceModule(Cluster cluster, ClusterEventBus bus, MapReduceProperties wire,
                     MapReduceModuleProperties properties, EventLogExporter exporter,
                     EventProperties eventProperties, MeterRegistry meterRegistry, Clock clock,
-                    ExecutorService runExecutor) {
+                    RoleProvider roles, ExecutorService runExecutor) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
+        this.roles = Objects.requireNonNull(roles, "roles must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
         this.wire = Objects.requireNonNull(wire, "wire must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
@@ -157,6 +172,7 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
         this.inputs = new RunInputLoader(properties, exporter, eventLogMaxEvents);
         this.history = new RunHistory(properties.runHistorySize());
         this.metrics = new MapReduceMetrics(meterRegistry);
+        this.leaderChanges = roles.addLeaderListener(this::onLeaderChanged);
     }
 
     @Override
@@ -195,14 +211,14 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
             history.clear();
             lastRunFailed = false;
         }
+        actingCoordinator.set(null);
     }
 
     // ------------------------------------------------------------------ queries
 
     public MapReduceOverviewDto overview() {
-        Roles roles = currentRoles();
         return new MapReduceOverviewDto(status(), guard.currentAction().orElse(null), jobs(), INPUT_TYPES,
-                roles == null ? null : roles.coordinatorId(), roles == null ? List.of() : roles.workerIds(),
+                roles.leaderId().orElse(null), liveWorkers(),   // never ensureLeader: a read starts no election
                 limits(), history.latest().orElse(null), NOTES);
     }
 
@@ -249,10 +265,11 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
         } else if (command.upload() != null) {
             throw new InvalidParameterException("upload", "must be left out unless inputType is UPLOAD");
         }
-        Roles roles = currentRoles();
-        if (roles == null) {
-            throw new NoLiveWorkerException();
+        if (liveWorkers().isEmpty()) {
+            throw new NoLiveWorkerException();   // at once: no election is asked for with every node down
         }
+        int coordinatorId = coordinator();
+        Roles roles = new Roles(coordinatorId, liveWorkers());
         Integer crashWorkerId = command.crashWorkerId();
         if (crashWorkerId != null) {
             checkCrashWorker(crashWorkerId, roles);
@@ -331,7 +348,13 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
             }
         } catch (IOException | RuntimeException e) {
             failure = e;
-            log.warn("MapReduce run {} failed: {}", plan.runId(), messageOf(e));
+        }
+        if (!coordinator.isUp()) {   // its transport refused to send; say why in one sentence
+            failure = new IOException("The coordinator, node " + coordinator.id() + ", crashed during the run, so the "
+                    + "run stopped. The next run asks Experiment 4 for the new leader.");
+        }
+        if (failure != null) {
+            log.warn("MapReduce run {} failed: {}", plan.runId(), messageOf(failure));
         }
 
         boolean completed = failure == null;
@@ -399,14 +422,58 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
     private record Roles(int coordinatorId, List<Integer> workerIds) {
     }
 
-    /** The current coordinator and workers (TODO(L1)), or {@code null} when every node is down. */
-    private Roles currentRoles() {
-        try {
-            int coordinatorId = MapReduceRoleSelector.selectCoordinator(cluster);
-            List<Integer> workers = MapReduceRoleSelector.selectWorkers(cluster);
-            return workers.isEmpty() ? null : new Roles(coordinatorId, List.copyOf(workers));
-        } catch (IllegalStateException e) {
-            return null;
+    /** Every live node, ascending: the workers of a run. */
+    private List<Integer> liveWorkers() {
+        return cluster.nodes().stream().filter(ClusterNode::isUp).map(ClusterNode::id).sorted().toList();
+    }
+
+    /**
+     * The coordinator of the next job: the leader elected by Experiment 4, electing one first if
+     * there is none (blocks up to the election bound). Request thread only, holding no lock.
+     *
+     * @throws NoLeaderException if no leader could be elected (HTTP 409)
+     */
+    private int coordinator() {
+        int leader = roles.ensureLeader().orElseThrow(NoLeaderException::new);
+        follow(leader, true);
+        return leader;
+    }
+
+    /** On the roles dispatcher: never blocks, never ensureLeader. A vacancy publishes nothing. */
+    private void onLeaderChanged(LeaderChange change) {
+        Integer leader = change.leaderId();
+        if (leader != null && roles.leaderId().filter(leader::equals).isPresent()) {
+            follow(leader, false);
+        }
+    }
+
+    /**
+     * Publishes COORDINATOR_CHANGED exactly once: the listener and a job race on one
+     * compare-and-set. The short lock (no wait inside, only the bus publish) makes the loser wait
+     * until the winner's event is on the bus, so it always precedes the next JOB_STARTED. Only a
+     * job remembers the first coordinator after a reset (that is not a change).
+     */
+    private void follow(int leader, boolean fromJob) {
+        synchronized (actingCoordinator) {
+            Integer previous = actingCoordinator.get();
+            if (previous == null) {
+                if (fromJob) {
+                    actingCoordinator.compareAndSet(null, leader);
+                }
+                return;
+            }
+            if (previous == leader || !actingCoordinator.compareAndSet(previous, leader)) {
+                return;
+            }
+            boolean crashed = !cluster.node(previous).isUp();
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("nodeId", leader);
+            data.put("previousNodeId", previous);
+            data.put("cause", crashed ? LeaderChange.Cause.LEADER_CRASHED.name() : LeaderChange.Cause.ELECTED.name());
+            publish(cluster.node(leader), "COORDINATOR_CHANGED", "Node " + leader + " coordinates the next job: "
+                    + (crashed ? "node " + previous + " crashed and Experiment 4 elected node " + leader + "."
+                            : "Experiment 4 elected node " + leader + " in place of node " + previous + ".")
+                    + " A running job keeps its coordinator.", previous, data);
         }
     }
 
@@ -597,6 +664,7 @@ public class MapReduceModule implements ExperimentModule, AutoCloseable {
     /** Stops the run thread; waits at most 5 s. Called by Spring on context shutdown. */
     @Override
     public void close() {
+        leaderChanges.close();
         runExecutor.shutdownNow();
         try {
             if (!runExecutor.awaitTermination(CLOSE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {

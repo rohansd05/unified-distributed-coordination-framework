@@ -4,8 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
+import com.udcf.core.events.EventLogExporter;
+import com.udcf.core.events.EventProperties;
 import com.udcf.core.module.ModuleStatus;
 import com.udcf.modules.mapreduce.dto.RunState;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.io.ByteArrayInputStream;
 import java.net.URI;
@@ -24,6 +30,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -39,7 +46,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * The HTTP API of /api/modules/mapreduce: the contract, every error status, and the request
  * body limit over a real connection (fixed length and chunked).
  *
- * <p>Own context: mapreduce ports 24541-24545 (Track D block 24501-24599) and a 4096-byte
+ * <p>Own context: mapreduce ports 24541-24545 (Track D block 24501-24599), election ports
+ * 24871-24875 (a job asks Experiment 4 for its coordinator) and a 4096-byte
  * upload cap, so the body limit is 4 x 1366 + 8192 = 13656 bytes. The HTTP port is random.
  * The context is closed after the class, so its mapreduce worker and run threads are stopped
  * and joined and never outlive these tests (MapReducePipelineTest checks the whole JVM for
@@ -47,6 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "udcf.cluster.ports.mapreduce-base=24540",
+        "udcf.cluster.ports.election-base=24870",
         "udcf.mapreduce.upload-max-bytes=4096"
 })
 @AutoConfigureMockMvc
@@ -67,6 +76,9 @@ class MapReduceControllerTest {
 
     @Autowired
     private MapReduceModule module;
+
+    @Autowired
+    private RoleProvider roles;
 
     @LocalServerPort
     private int port;
@@ -132,7 +144,9 @@ class MapReduceControllerTest {
         assertThat(root.get("jobs")).hasSize(3);
         assertThat(root.get("jobs").get(0).get("id").asText()).isEqualTo("word-count");
         assertThat(root.get("inputTypes")).hasSize(3);
-        assertThat(root.get("coordinatorId").asInt()).isEqualTo(1);
+        // the elected leader, or null before any election (reading never starts one)
+        assertThat(root.get("coordinatorId").isNull() ? null : root.get("coordinatorId").asInt())
+                .isEqualTo(roles.leaderId().orElse(null));
         assertThat(root.get("workerIds")).hasSize(5);
         assertThat(root.get("limits").get("uploadMaxBytes").asInt()).isEqualTo(4096);
         assertThat(root.get("limits").get("requestBodyMaxBytes").asInt()).isEqualTo(BODY_LIMIT);
@@ -216,13 +230,17 @@ class MapReduceControllerTest {
     }
 
     @Test
-    @DisplayName("400 for a crash worker that is the coordinator, unknown or down")
+    @DisplayName("400 for a crash worker that is the coordinator (the elected leader), unknown or down")
     void badCrashWorker() throws Exception {
-        expectFieldError(body("word-count", "SAMPLE", null, 1), "crashWorkerId");
+        int leader = roles.ensureLeader().orElseThrow();   // the test thread acts as a request thread
+        postRun(body("word-count", "SAMPLE", null, leader)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.crashWorkerId")
+                        .value("node " + leader + " is the coordinator of this run; choose another live worker"));
         expectFieldError(body("word-count", "SAMPLE", null, 9), "crashWorkerId");
-        cluster.crash(5);
-        postRun(body("word-count", "SAMPLE", null, 5)).andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.crashWorkerId").value("node 5 is down; choose a live worker"));
+        int other = leader == 1 ? 2 : 1;
+        cluster.crash(other);
+        postRun(body("word-count", "SAMPLE", null, other)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.crashWorkerId").value("node " + other + " is down; choose a live worker"));
     }
 
     @Test
@@ -242,6 +260,33 @@ class MapReduceControllerTest {
 
         postRun(body("word-count", "SAMPLE", null, null)).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("No live worker"));
+    }
+
+    @Test
+    @DisplayName("409 No leader, reason NO_LEADER, when live nodes exist but no leader could be elected")
+    void noLeader() throws Exception {
+        // A running backend always elects a live node, so this module has no election module at all
+        // (its RoleProvider answers empty at once); its nodes bind nothing (base 24580, never listened on).
+        try (MapReduceModuleHarness h = new MapReduceModuleHarness(3, 24580, MapReduceModuleHarness.wire(4194304),
+                new MapReduceModuleProperties(262144, 100000, 20, 8192))) {
+            RoleProvider none = new RoleProvider(h.cluster, (LeaderElector) null);
+            MapReduceModule alone = new MapReduceModule(h.cluster, h.bus, MapReduceModuleHarness.wire(4194304),
+                    new MapReduceModuleProperties(262144, 100000, 20, 8192), new EventLogExporter(h.bus),
+                    new EventProperties(5000, 4096), new SimpleMeterRegistry(), Clock.systemUTC(), none);
+            try {
+                MockMvcBuilders.standaloneSetup(new MapReduceController(alone)).build()
+                        .perform(post(BASE + "/runs").contentType(MediaType.APPLICATION_JSON)
+                                .content(body("word-count", "SAMPLE", null, null)))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.title").value("No leader"))
+                        .andExpect(jsonPath("$.reason").value("NO_LEADER"))
+                        .andExpect(jsonPath("$.moduleId").value("mapreduce"))
+                        .andExpect(jsonPath("$.detail").value(new NoLeaderException().getMessage()));
+            } finally {
+                alone.close();
+                none.close();
+            }
+        }
     }
 
     // ------------------------------------------------------------------ C3: request body limit over real HTTP

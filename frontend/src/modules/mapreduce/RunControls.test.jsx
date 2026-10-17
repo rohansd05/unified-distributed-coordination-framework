@@ -72,11 +72,11 @@ describe('RunControls', () => {
     expect(screen.getByText('must be a .txt file')).toBeTruthy()
   })
 
-  it('crash: every live worker but the coordinator; the chosen worker is sent', () => {
+  it('crash: every live worker but the coordinator (none yet: overview-idle has no leader); the chosen worker is sent', () => {
     const { onRun } = renderControls()
     fireEvent.click(screen.getByLabelText('Crash a worker right after the first task is sent to it'))
     const select = screen.getByLabelText('Worker to crash')
-    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['Node 2', 'Node 3', 'Node 4', 'Node 5'])
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['Node 1', 'Node 2', 'Node 3', 'Node 4', 'Node 5'])
     fireEvent.change(select, { target: { value: '3' } })
     run()
     expect(onRun).toHaveBeenCalledWith({ jobId: 'word-count', inputType: 'SAMPLE', file: null, crashWorkerId: 3 })
@@ -93,6 +93,15 @@ describe('RunControls', () => {
     renderControls({ fieldErrors: crashWorkerError.errors })
     fireEvent.click(screen.getByLabelText('Crash a worker right after the first task is sent to it'))
     expect(screen.getByText(crashWorkerError.errors.crashWorkerId)).toBeTruthy()
+  })
+
+  it('shows 409 No leader as a calm warning, not an error', () => {
+    // Same status and title as the backend's NO_LEADER ProblemDetail (MapReduceControllerTest pins them).
+    renderControls({ actionError: { status: 409, title: 'No leader', detail: 'No leader could be elected, so this job has no coordinator.', fields: {} } })
+    const alert = screen.getByTestId('action-error')
+    expect(alert.textContent).toContain('No leader. No leader could be elected, so this job has no coordinator.')
+    expect(alert.className).toContain('border-warning')
+    expect(alert.className).not.toContain('destructive')
   })
 
   it('a run cannot start while one is active or a request is pending', () => {

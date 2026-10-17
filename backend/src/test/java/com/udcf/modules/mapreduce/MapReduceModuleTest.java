@@ -1,8 +1,13 @@
 package com.udcf.modules.mapreduce;
 
+import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.EventDraft;
+import com.udcf.core.events.EventLogExporter;
+import com.udcf.core.events.EventProperties;
 import com.udcf.core.metrics.MetricNames;
 import com.udcf.core.module.ModuleBusyException;
 import com.udcf.core.module.ModuleStatus;
@@ -14,6 +19,7 @@ import com.udcf.modules.mapreduce.dto.RunDto;
 import com.udcf.modules.mapreduce.dto.RunState;
 import com.udcf.modules.mapreduce.dto.RunSummaryDto;
 import com.udcf.web.InvalidParameterException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,7 +37,11 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,7 +53,9 @@ import static org.awaitility.Awaitility.await;
  * events, status, history, reset, failure, validation, and the sizing proof (C1).
  *
  * <p>Ports: 24501-24505 (five nodes), 24511-24512 (two-node failure test), 24521-24522
- * (reset test), 24531-24532 (sizing proof); all inside Track D's 24501-24599 block.</p>
+ * (reset test), 24531-24532 (sizing proof), 24571-24573 (coordinator crash during a run); all
+ * inside Track D's 24501-24599 block. The harness's elector is a test elector (lowest live node);
+ * the real Bully leader is proven by MapReduceLeaderIntegrationTest.</p>
  */
 class MapReduceModuleTest {
 
@@ -75,7 +89,7 @@ class MapReduceModuleTest {
     }
 
     @Test
-    @DisplayName("overview: id, lab 7, the three jobs and inputs, coordinator 1, five workers, limits, no run, IDLE")
+    @DisplayName("overview: id, lab 7, the three jobs and inputs, no coordinator before any election (reading elects none), five workers, limits, no run, IDLE")
     void overview() {
         MapReduceOverviewDto overview = h.module.overview();
 
@@ -90,7 +104,8 @@ class MapReduceModuleTest {
                 .containsExactly("Word count", "Events per category", "Average latency per node");
         assertThat(overview.inputTypes()).extracting(t -> t.id())
                 .containsExactly(InputType.SAMPLE, InputType.UPLOAD, InputType.EVENT_LOG);
-        assertThat(overview.coordinatorId()).isEqualTo(1);
+        assertThat(overview.coordinatorId()).isNull();
+        assertThat(h.elections).hasValue(0);
         assertThat(overview.workerIds()).containsExactly(1, 2, 3, 4, 5);
         assertThat(overview.limits().uploadMaxBytes()).isEqualTo(262144);
         assertThat(overview.limits().eventLogMaxEvents()).isEqualTo(5000);
@@ -431,6 +446,140 @@ class MapReduceModuleTest {
             assertThat(run.report().resultKeys()).isEqualTo(words);
             assertThat(run.report().resultsTruncated()).isTrue();
             assertThat(run.report().results()).hasSize(200);
+        }
+    }
+
+    // ------------------------------------------------------------------ coordinator = elected leader (9A.4)
+
+    private List<ClusterEvent> events(String eventModule, String type) {
+        return h.bus.query(eventModule, null, 5000).stream().filter(e -> e.type().equals(type)).toList();
+    }
+
+    private ClusterEvent leaderChangedTo(int leaderId) {
+        return events("cluster", "LEADER_CHANGED").stream()
+                .filter(e -> Integer.valueOf(leaderId).equals(e.data().get("leaderId"))).reduce((a, b) -> b).orElseThrow();
+    }
+
+    /** Waits until the roles dispatcher has delivered every leader change announced so far. */
+    private void awaitDispatcher() throws InterruptedException {
+        CountDownLatch delivered = new CountDownLatch(1);
+        h.roles.afterPendingChanges(delivered::countDown);
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    @DisplayName("the coordinator is the current leader, not the lowest node, and no election is asked for while one leads")
+    void coordinatorIsTheLeader() {
+        h.cluster.assignLeader(3);
+
+        RunDto run = h.runAndWait(command("word-count", InputType.SAMPLE));
+
+        assertThat(run.coordinatorId()).isEqualTo(3);
+        assertThat(run.state()).isEqualTo(RunState.COMPLETED);
+        assertThat(h.runEvents(run.runId())).first().satisfies(e -> {
+            assertThat(e.type()).isEqualTo("JOB_STARTED");
+            assertThat(e.nodeId()).isEqualTo(3);
+            assertThat(e.data()).containsEntry("coordinatorId", 3);
+        });
+        assertThat(h.module.overview().coordinatorId()).isEqualTo(3);
+        assertThat(h.elections).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("no leader could be elected: NoLeaderException (409 NO_LEADER), nothing is recorded or started")
+    void noLeaderRefusesJob() {
+        RoleProvider none = new RoleProvider(h.cluster, (LeaderElector) null);   // no election module: always empty
+        MapReduceModule alone = new MapReduceModule(h.cluster, h.bus, MapReduceModuleHarness.wire(4194304), PROPS,
+                new EventLogExporter(h.bus), new EventProperties(5000, 4096), new SimpleMeterRegistry(),
+                Clock.systemUTC(), none);
+        try {
+            assertThatThrownBy(() -> alone.startRun(command("word-count", InputType.SAMPLE)))
+                    .isInstanceOf(NoLeaderException.class).hasMessageStartingWith("No leader could be elected");
+            assertThat(alone.runs()).isEmpty();
+            assertThat(alone.status()).isEqualTo(ModuleStatus.IDLE);
+            assertThat(h.moduleEvents()).isEmpty();
+        } finally {
+            alone.close();
+            none.close();
+        }
+    }
+
+    @Test
+    @DisplayName("a job right after a re-election: exactly one COORDINATOR_CHANGED, after LEADER_CHANGED and before JOB_STARTED")
+    void coordinatorChangeOnceBeforeNextJob() throws Exception {
+        h.runAndWait(command("word-count", InputType.SAMPLE));   // coordinator 1
+        h.cluster.assignLeader(2);
+        RunDto next = h.runAndWait(command("word-count", InputType.SAMPLE));   // races the listener
+        awaitDispatcher();
+
+        assertThat(next.coordinatorId()).isEqualTo(2);
+        List<ClusterEvent> changes = events(MapReduceModule.ID, "COORDINATOR_CHANGED");
+        assertThat(changes).singleElement().satisfies(e -> {
+            assertThat(e.nodeId()).isEqualTo(2);
+            assertThat(e.peerId()).isEqualTo(1);
+            assertThat(e.data()).containsEntry("nodeId", 2).containsEntry("previousNodeId", 1)
+                    .containsEntry("cause", "ELECTED");
+            assertThat(e.message()).isEqualTo("Node 2 coordinates the next job: Experiment 4 elected node 2 in place "
+                    + "of node 1. A running job keeps its coordinator.");
+        });
+        ClusterEvent started = h.runEvents(next.runId()).get(0);
+        assertThat(changes.get(0).sequence()).isGreaterThan(leaderChangedTo(2).sequence())
+                .isLessThan(started.sequence());
+    }
+
+    @Test
+    @DisplayName("coordinator crashed: nothing for the vacancy, then cause LEADER_CRASHED; quiet before the first job, after a reset and after close")
+    void crashedCoordinatorCauseAndQuietWhenNotUsed() throws Exception {
+        h.cluster.assignLeader(4);   // no job yet: no event
+        awaitDispatcher();
+        h.runAndWait(command("word-count", InputType.SAMPLE));   // coordinator 4: the first is not a change
+        h.cluster.crash(4);
+        awaitDispatcher();
+        assertThat(events(MapReduceModule.ID, "COORDINATOR_CHANGED")).isEmpty();
+
+        h.cluster.assignLeader(3);
+        await().atMost(Duration.ofSeconds(5)).until(() -> !events(MapReduceModule.ID, "COORDINATOR_CHANGED").isEmpty());
+        assertThat(events(MapReduceModule.ID, "COORDINATOR_CHANGED")).singleElement().satisfies(e -> {
+            assertThat(e.data()).containsEntry("nodeId", 3).containsEntry("previousNodeId", 4)
+                    .containsEntry("cause", "LEADER_CRASHED");
+            assertThat(e.message()).isEqualTo("Node 3 coordinates the next job: node 4 crashed and Experiment 4 "
+                    + "elected node 3. A running job keeps its coordinator.");
+        });
+
+        h.module.reset();
+        h.cluster.assignLeader(2);
+        awaitDispatcher();
+        h.runAndWait(command("word-count", InputType.SAMPLE));   // coordinator 2 after the reset
+        h.module.close();
+        h.cluster.assignLeader(1);
+        awaitDispatcher();
+        assertThat(events(MapReduceModule.ID, "COORDINATOR_CHANGED")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("the coordinator crashes during a run: it sends no task, the run ends FAILED with a plain reason and JOB_FAILED")
+    void coordinatorCrashDuringRunFails() {
+        AtomicReference<Cluster> target = new AtomicReference<>();
+        // The run thread crashes the coordinator (node 1, the test elector's leader) just before the run starts.
+        ExecutorService crashFirst = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>()) {
+            @Override
+            protected void beforeExecute(Thread thread, Runnable task) {
+                target.get().crash(1);
+            }
+        };
+        try (MapReduceModuleHarness held = new MapReduceModuleHarness(3, 24570, MapReduceModuleHarness.wire(4194304),
+                PROPS, crashFirst)) {
+            target.set(held.cluster);
+
+            RunDto run = held.runAndWait(command("word-count", InputType.SAMPLE));
+
+            assertThat(run.coordinatorId()).isEqualTo(1);
+            assertThat(run.state()).isEqualTo(RunState.FAILED);
+            assertThat(run.error()).isEqualTo("The coordinator, node 1, crashed during the run, so the run stopped. "
+                    + "The next run asks Experiment 4 for the new leader.");
+            assertThat(held.runEvents(run.runId())).extracting(ClusterEvent::type).containsExactly("JOB_STARTED", "JOB_FAILED");
+            assertThat(held.runEvents(run.runId()).get(1).data()).containsEntry("error", run.error());
+            assertThat(held.moduleEvents()).extracting(ClusterEvent::type).doesNotContain("TASK_SENT");
         }
     }
 }

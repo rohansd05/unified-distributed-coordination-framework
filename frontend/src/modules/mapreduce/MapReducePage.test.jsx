@@ -156,8 +156,8 @@ describe('MapReducePage', () => {
     await renderPage(api)
 
     await waitFor(() => expect(screen.getByTestId('section-what-to-notice').textContent)
-      .toContain('All 116 result rows are identical to the earlier run d4055014 without a crash.'))
-    expect(api.getRun).toHaveBeenCalledWith('d4055014')
+      .toContain('All 116 result rows are identical to the earlier run f388cc86 without a crash.'))
+    expect(api.getRun).toHaveBeenCalledWith('f388cc86')
     expect(screen.getByTestId('pipeline-crash').textContent).toBe('Node 3 was crashed right after its first map task was sent (the map stage).')
     expect(within(screen.getByTestId('pipeline-retries')).getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getByTestId('task-table').textContent).toContain('Connection refused: connect')

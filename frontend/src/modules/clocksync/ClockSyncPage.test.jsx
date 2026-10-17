@@ -14,6 +14,7 @@ import timelineFixture from '@/test/fixtures/clocksync/timeline.json'
 import error409Fixture from '@/test/fixtures/clocksync/error-409-node-down.json'
 import error400Fixture from '@/test/fixtures/clocksync/error-400-validation.json'
 import error404Fixture from '@/test/fixtures/clocksync/error-404-unknown-node.json'
+import abortedRoundSynthetic from '@/test/fixtures/clocksync/synthetic/overview-aborted-round.json'
 import { ClockSyncPage } from './ClockSyncPage'
 
 const experiment = EXPERIMENTS.find((e) => e.id === 'clocksync')
@@ -52,6 +53,31 @@ describe('ClockSyncPage', () => {
     expect(screen.getByText(experiment.concept)).toBeTruthy()
     expect(screen.getByTestId('section-how-it-works')).toBeTruthy()
     expect(screen.getByTestId('section-what-to-notice').querySelectorAll('li')).toHaveLength(3)
+  })
+
+  it('names the elected leader as the daemon of the next round, or says no leader is elected yet', async () => {
+    // The two states differ only in timeDaemonNodeId; built from the fixture so nothing else changes.
+    render(<ClockSyncPage experiment={experiment} api={makeApi({ overview: { ...copy(overviewInitial), timeDaemonNodeId: null } })} />)
+    expect(await screen.findByText('No leader yet: the first Berkeley round asks Experiment 4 to elect one')).toBeTruthy()
+    cleanup()
+
+    render(<ClockSyncPage experiment={experiment} api={makeApi({ overview: { ...copy(overviewInitial), timeDaemonNodeId: 5 } })} />)
+    expect(await screen.findByText('Time daemon for the next round: Node 5, the leader elected by Experiment 4')).toBeTruthy()
+  })
+
+  it('shows an aborted round as a calm notice (synthetic fixture) and clears it when abortedRound is null', async () => {
+    const aborted = abortedRoundSynthetic.abortedRound
+    render(<ClockSyncPage experiment={experiment} api={makeApi({ overview: copy(abortedRoundSynthetic) })} />)
+    const notice = await screen.findByTestId('aborted-round')
+    expect(notice.getAttribute('role')).toBe('status')
+    expect(notice.textContent).toBe(`Berkeley round ${aborted.roundId} coordinated by Node ${aborted.daemonNodeId} was aborted. `
+      + `${aborted.reason} The last finished round shown below is unchanged.`)
+    expect(notice.className).toContain('border-warning')
+    cleanup()
+
+    render(<ClockSyncPage experiment={experiment} api={makeApi({ overview: { ...copy(abortedRoundSynthetic), abortedRound: null } })} />)
+    await screen.findByText(/^(Time daemon for the next round|No leader yet)/)   // the overview has loaded
+    expect(screen.queryByTestId('aborted-round')).toBeNull()
   })
 
   it('shows no all-caps words in authored page text', async () => {

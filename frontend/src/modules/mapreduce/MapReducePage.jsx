@@ -18,7 +18,7 @@ import { readUpload, UploadError } from './uploadFile'
 import { useMapReduce } from './useMapReduce'
 
 const HOW_IT_WORKS = [
-  'MapReduce runs one big job on many workers. The coordinator splits the input into one block of lines per worker and sends each block over TCP to a worker as a map task.',
+  'MapReduce runs one big job on many workers. The coordinator splits the input into one block of lines per worker and sends each block over TCP to a worker as a map task. The coordinator is the leader elected by Experiment 4.',
   'Map: each worker turns its lines into key-value pairs, for example one pair (word, 1) for every word. Combine: before sending anything back, the worker adds up the pairs with the same key, so fewer pairs cross the network.',
   'Shuffle and partition: the coordinator groups every value by key and gives each key to one of R reducers by hashing it (the hash of the key modulo R), so a key always lands on the same reducer. Reduce: each reducer adds up its keys and sends back the final values.',
   'Retry: if a worker does not answer (it crashed, refused the connection or took longer than the task timeout), the coordinator sends the same task to the next worker. The task is a pure function of its input, so re-running it gives the same answer.',

@@ -179,6 +179,24 @@ describe('ClockSyncControls', () => {
     expect(document.activeElement).toBe(alert)
   })
 
+  it('shows 409 No leader as a calm warning, not an error', async () => {
+    const api = makeApi()
+    // Same status and title as the backend's NO_LEADER ProblemDetail (pinned by contract.test.js).
+    api.runBerkeleyRound.mockRejectedValue(
+      new ApiError({ status: 409, title: 'No leader', detail: 'No leader could be elected, so there is no time daemon.' })
+    )
+
+    render(<ClockSyncControls overview={sampleOverview} api={api} onAnnounce={vi.fn()} onActionDone={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Berkeley physical sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run synchronization round' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('No leader could be elected, so there is no time daemon.')
+    expect(alert.textContent).not.toContain('Error:')
+    expect(alert.className).toContain('border-warning')
+    expect(alert.className).not.toContain('destructive')
+  })
+
   it('handles 409 node down error', async () => {
     const api = makeApi()
     api.sendMessage.mockRejectedValue(

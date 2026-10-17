@@ -56,6 +56,9 @@ public class TcpTaskTransport implements TaskTransport {
             throws IOException {
         Objects.requireNonNull(taskType, "taskType must not be null");
         Objects.requireNonNull(jobName, "jobName must not be null");
+        if (!coordinatorNode.isUp()) {   // a crashed coordinator sends nothing (9A.4)
+            throw new IOException("The coordinator, node " + coordinatorNode.id() + ", is down, so it sends no task");
+        }
 
         String taskId = String.valueOf(nextTaskId.incrementAndGet());
         long sendLamport = coordinatorNode.clock().tick();

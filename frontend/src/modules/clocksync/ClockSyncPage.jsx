@@ -16,7 +16,7 @@ import { VerificationPanel } from './VerificationPanel'
 
 const HOW_IT_WORKS = [
   'Lamport logical clocks maintain causal event ordering in distributed systems without synchronized physical clocks. Each node ticks its clock on local computation or message transmission. Every message carries the sender\'s Lamport timestamp over real UDP datagrams. When a node receives a message, it updates its clock to max(local, received) + 1 and ticks. This ensures that cause strictly precedes effect.',
-  'Berkeley physical clock synchronization uses an active time daemon to periodically poll worker nodes over UDP for their physical clock offsets. The daemon calculates an average offset, discards outliers beyond a threshold, and dispatches individual adjustment values back to each node.',
+  'Berkeley physical clock synchronization uses an active time daemon to periodically poll worker nodes over UDP for their physical clock offsets. The daemon calculates an average offset, discards outliers beyond a threshold, and dispatches individual adjustment values back to each node. The daemon is the leader elected by Experiment 4.',
   'Physical clock drift is simulated mathematically because all nodes execute co-hosted on a single hardware host, but all network coordination occurs over real UDP datagrams on loopback socket bindings.',
   'UDP transport is connectionless and unacknowledged: messages transmitted to crashed nodes report delivery status Unknown, accurately reflecting that packets leave the sender socket without confirmation.',
 ]
@@ -62,7 +62,6 @@ export function ClockSyncPage({ experiment, api = clockSyncApi }) {
     return Math.max(...overview.nodes.map((n) => n.lamportValue ?? 0))
   }, [overview])
 
-  // TODO(L1): replaced by the shared role provider in Phase 9A
   const daemonNodeId = overview?.timeDaemonNodeId ?? null
 
   const handleActionAnnouncement = useCallback((text) => {
@@ -109,9 +108,23 @@ export function ClockSyncPage({ experiment, api = clockSyncApi }) {
           )}
         </div>
         <div className="text-xs text-muted-foreground">
-          {daemonNodeId ? `Active time daemon: Node ${daemonNodeId}` : 'No active time daemon'}
+          {daemonNodeId
+            ? `Time daemon for the next round: Node ${daemonNodeId}, the leader elected by Experiment 4`
+            : 'No leader yet: the first Berkeley round asks Experiment 4 to elect one'}
         </div>
       </div>
+
+      {overview?.abortedRound && (
+        <div
+          role="status"
+          data-testid="aborted-round"
+          className="rounded-lg border border-warning/60 bg-warning/10 p-3 text-xs text-foreground"
+        >
+          Berkeley round <span className="font-mono">{overview.abortedRound.roundId}</span> coordinated by Node{' '}
+          {overview.abortedRound.daemonNodeId} was aborted. {overview.abortedRound.reason} The last finished round
+          shown below is unchanged.
+        </div>
+      )}
 
       <ClockSyncControls
         overview={overview}

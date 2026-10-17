@@ -84,6 +84,13 @@ public class MapReduceController {
         return problem(HttpStatus.CONFLICT, "No live worker", e.getMessage(), "moduleId", MapReduceModule.ID);
     }
 
+    @ExceptionHandler(NoLeaderException.class)
+    public ProblemDetail noLeader(NoLeaderException e) {
+        ProblemDetail problem = problem(HttpStatus.CONFLICT, "No leader", e.getMessage(), "moduleId", MapReduceModule.ID);
+        problem.setProperty("reason", "NO_LEADER");
+        return problem;
+    }
+
     @ExceptionHandler(RequestBodyTooLargeException.class)
     public ProblemDetail tooLarge(RequestBodyTooLargeException e) {
         return problem(HttpStatus.PAYLOAD_TOO_LARGE, "Request body too large", e.getMessage(),

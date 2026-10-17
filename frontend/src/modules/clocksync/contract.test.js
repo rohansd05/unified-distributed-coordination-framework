@@ -12,13 +12,16 @@ import verification from '@/test/fixtures/clocksync/verification.json'
 import timeline from '@/test/fixtures/clocksync/timeline.json'
 import error400Validation from '@/test/fixtures/clocksync/error-400-validation.json'
 import error404UnknownNode from '@/test/fixtures/clocksync/error-404-unknown-node.json'
+import error409NoLeader from '@/test/fixtures/clocksync/error-409-no-leader.json'
 import events from '@/test/fixtures/clocksync/events.json'
+import abortedRoundSynthetic from '@/test/fixtures/clocksync/synthetic/overview-aborted-round.json'
 
 describe('clocksync contract fixtures', () => {
   it('overview-initial matches ClockSyncOverviewDto contract', () => {
     expect(overviewInitial.status).toBe('IDLE')
     expect(overviewInitial.actionInProgress).toBeNull()
-    expect(overviewInitial.timeDaemonNodeId).toBe(1)
+    expect(overviewInitial.timeDaemonNodeId).toBeNull()   // no leader before the first round
+    expect(overviewInitial.abortedRound).toBeNull()
     expect(overviewInitial.nodes).toHaveLength(5)
     expect(overviewInitial.latestRound).toBeNull()
 
@@ -38,18 +41,19 @@ describe('clocksync contract fixtures', () => {
     expect(overviewAfterSync.latestRound).not.toBeNull()
     const round = overviewAfterSync.latestRound
     expect(round.roundId).toBe(1)
-    expect(round.daemonNodeId).toBe(1)
+    expect(round.daemonNodeId).toBe(5)   // the leader Experiment 4 elected (Bully: highest live node)
+    expect(overviewAfterSync.timeDaemonNodeId).toBe(5)
     expect(round.outlierThresholdMillis).toBe(400)
-    expect(round.spreadBeforeMillis).toBe(407)
+    expect(round.spreadBeforeMillis).toBe(78)   // measured drift of the 2026-10-17 capture (fresh backend)
     expect(round.spreadAfterMillis).toBe(0)
     expect(round.adjustments).toHaveLength(5)
     expect(round.simulated).toBe(true)
 
     // Node 2 adjustment was negative to pull it back down to average
     const node2Adj = round.adjustments.find((a) => a.nodeId === 2)
-    expect(node2Adj.beforeOffsetMillis).toBe(242)
-    expect(node2Adj.adjustmentMillis).toBe(-218)
-    expect(node2Adj.afterOffsetMillis).toBe(26)
+    expect(node2Adj.beforeOffsetMillis).toBe(45)
+    expect(node2Adj.adjustmentMillis).toBe(-41)
+    expect(node2Adj.afterOffsetMillis).toBe(5)
   })
 
   it('local-event matches LocalEventResult contract', () => {
@@ -78,7 +82,7 @@ describe('clocksync contract fixtures', () => {
 
     expect(berkeleyRound.status).toBe('ACCEPTED')
     expect(berkeleyRound.roundId).toBe(1)
-    expect(berkeleyRound.daemonNodeId).toBe(1)
+    expect(berkeleyRound.daemonNodeId).toBe(5)
   })
 
   it('drift-updated matches NodeDriftResponseDto contract', () => {
@@ -117,11 +121,25 @@ describe('clocksync contract fixtures', () => {
     expect(error404UnknownNode.status).toBe(404)
     expect(error404UnknownNode.title).toBe('Unknown node')
     expect(error404UnknownNode.nodeId).toBe(99)
+
+    // ClockSyncControls shows a calm warning on exactly this status and title
+    expect(error409NoLeader.status).toBe(409)
+    expect(error409NoLeader.title).toBe('No leader')
+    expect(error409NoLeader.reason).toBe('NO_LEADER')
+    expect(error409NoLeader.moduleId).toBe('clocksync')
   })
 
   it('events matches published ClusterEvent array format', () => {
     expect(Array.isArray(events)).toBe(true)
     expect(events.length).toBeGreaterThan(0)
     expect(events[0].module).toBe('clocksync')
+  })
+
+  it('synthetic/overview-aborted-round (labelled, not a capture) keeps the real overview shape and adds abortedRound', () => {
+    const others = (overview) => Object.keys(overview).filter((key) => key !== 'abortedRound')
+    expect(others(abortedRoundSynthetic)).toEqual(others(overviewAfterSync))
+    expect(abortedRoundSynthetic.latestRound).toEqual(overviewAfterSync.latestRound)
+    expect(Object.keys(abortedRoundSynthetic.abortedRound)).toEqual(['roundId', 'daemonNodeId', 'reason', 'abortedAt'])
+    expect(abortedRoundSynthetic.abortedRound.reason).toMatch(/^The time daemon, node \d+, crashed during the poll stage, so the Berkeley round was aborted\.$/)
   })
 })

@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"No leader","status":409,"detail":"No leader could be elected, so there is no time daemon: no live node won an election in time. Recover a node or reset the cluster, then try again.","instance":"/api/modules/clocksync/berkeley-rounds","moduleId":"clocksync","reason":"NO_LEADER"}

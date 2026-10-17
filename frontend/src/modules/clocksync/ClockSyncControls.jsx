@@ -8,6 +8,9 @@ import {
   formatOffset,
 } from './labels'
 
+/** Experiment 4 elected no leader, so a round has no daemon: a calm warning, not an error (409 title "No leader"). */
+const isNoLeader = (err) => err?.status === 409 && err?.title === 'No leader'
+
 /**
  * Interactive Controls for Experiment 3 (Clock Synchronization).
  *
@@ -580,9 +583,16 @@ export function ClockSyncControls({
           tabIndex={-1}
           role="alert"
           data-testid="action-error"
-          className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={cn(
+            'rounded-lg border p-4 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            isNoLeader(actionError)
+              ? 'border-warning/60 bg-warning/10 text-warning'
+              : 'border-destructive/40 bg-destructive/10 text-destructive',
+          )}
         >
-          <div className="font-semibold">Error: {actionError.title || 'Request failed'}</div>
+          <div className="font-semibold">
+            {isNoLeader(actionError) ? 'No leader' : `Error: ${actionError.title || 'Request failed'}`}
+          </div>
           <p className="mt-1 text-foreground/90">{actionError.detail || actionError.message}</p>
           {actionError.nodeId && (
             <p className="mt-0.5 text-muted-foreground">Associated node: Node {actionError.nodeId}</p>

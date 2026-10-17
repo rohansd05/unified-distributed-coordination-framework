@@ -10,8 +10,8 @@ import java.util.List;
  * <p>No dedicated test: a record; tested through MapReduceModuleTest and MapReduceControllerTest.</p>
  *
  * @param currentAction the running action, or {@code null} when none
- * @param coordinatorId the node that would coordinate a run now (lowest live id, TODO(L1)),
- *                      or {@code null} when every node is crashed
+ * @param coordinatorId the leader elected by Experiment 4, which coordinates the next run, or
+ *                      {@code null} when there is no leader yet (reading this never starts an election)
  * @param workerIds     the live nodes that would be workers now (empty when none)
  * @param latestRun     the most recent run, or {@code null} when none is kept
  */

@@ -61,6 +61,8 @@ function ChoiceGroup({ legend, name, options, value, onChange, error }) {
  */
 export function RunControls({ overview, downNodeIds, busy, pending, fieldErrors = {}, actionError, onRun, onRecover }) {
   const model = overviewModel(overview)
+  // Experiment 4 elected no leader, so the job has no coordinator: a calm warning, not an error
+  const noLeader = actionError?.status === 409 && actionError?.title === 'No leader'
   const ids = useId()
   const [jobId, setJobId] = useState(null)
   const [inputType, setInputType] = useState(null)
@@ -173,8 +175,14 @@ export function RunControls({ overview, downNodeIds, busy, pending, fieldErrors 
       </div>
 
       {actionError && (
-        <div role="alert" data-testid="action-error" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
-          <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-destructive" />
+        <div
+          role="alert"
+          data-testid="action-error"
+          className={cn('flex items-start gap-2 rounded-lg border p-3 text-sm', noLeader
+            ? 'border-warning/60 bg-warning/10'
+            : 'border-destructive/40 bg-destructive/10')}
+        >
+          <AlertTriangle aria-hidden="true" className={cn('mt-0.5 size-4 shrink-0', noLeader ? 'text-warning' : 'text-destructive')} />
           <span>
             <span className="font-semibold">{actionError.title}.</span> {actionError.detail}
             {actionError.status === 409 && actionError.title === 'No live worker' && (

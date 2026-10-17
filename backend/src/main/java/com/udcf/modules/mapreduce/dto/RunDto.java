@@ -15,7 +15,7 @@ import java.util.List;
  *                      (last path segment only) or "Live cluster event log"
  * @param inputBytes    UTF-8 size of the input; {@code null} for an event-log run until its
  *                      snapshot is taken
- * @param coordinatorId the coordinating node (lowest live id, TODO(L1))
+ * @param coordinatorId the coordinating node: the elected leader when the run started (a running job keeps it)
  * @param workerIds     planned workers while RUNNING; the workers actually used once finished
  * @param crash         {@code null} for a run without a crash plan
  * @param finishedAt    {@code null} while RUNNING

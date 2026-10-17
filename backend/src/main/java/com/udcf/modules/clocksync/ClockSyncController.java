@@ -14,7 +14,10 @@ import com.udcf.modules.clocksync.dto.SendMessageCommand;
 import com.udcf.modules.clocksync.dto.TimelineResponseDto;
 import com.udcf.modules.clocksync.dto.TrafficSessionDto;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -89,5 +92,15 @@ public class ClockSyncController {
     @GetMapping("/timeline")
     public TimelineResponseDto timeline(@RequestParam(name = "limit", defaultValue = "100") int limit) {
         return module.timeline(limit);
+    }
+
+    /** No leader could be elected, so a Berkeley round has no time daemon (never another node). */
+    @ExceptionHandler(NoLeaderException.class)
+    public ProblemDetail noLeader(NoLeaderException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problem.setTitle("No leader");
+        problem.setProperty("moduleId", ClockSyncModule.ID);
+        problem.setProperty("reason", "NO_LEADER");
+        return problem;
     }
 }

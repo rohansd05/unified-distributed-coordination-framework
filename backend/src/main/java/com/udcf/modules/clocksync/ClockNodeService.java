@@ -9,7 +9,6 @@ import com.udcf.core.events.EventDraft;
 import com.udcf.modules.clocksync.berkeley.BerkeleyAveragingCoordinator;
 import com.udcf.modules.clocksync.berkeley.BerkeleyRoundResult;
 import com.udcf.modules.clocksync.berkeley.ClockDriftModel;
-import com.udcf.modules.clocksync.berkeley.ClockSyncRoleSelector;
 import com.udcf.modules.clocksync.berkeley.NodeAdjustment;
 import com.udcf.modules.clocksync.berkeley.NodeClockReading;
 import com.udcf.modules.clocksync.lamport.ClockEvent;
@@ -383,6 +382,7 @@ public class ClockNodeService implements NodeService {
                     }
                 }
             }
+            abortIfStopped(roundId, "poll");
 
             // 4. Compute consensus round
             BerkeleyAveragingCoordinator coordinator = new BerkeleyAveragingCoordinator();
@@ -422,6 +422,8 @@ public class ClockNodeService implements NodeService {
                 }
             }
 
+            abortIfStopped(roundId, "adjustment");
+
             // 7. Publish round finished event
             bus.publish(EventDraft.of(MODULE, node.id(), "BERKELEY_ROUND_FINISHED", node.clock().current())
                     .withMessage("Berkeley round " + roundId + " finished: spread " + result.spreadBeforeMillis()
@@ -440,6 +442,23 @@ public class ClockNodeService implements NodeService {
         } finally {
             activeRounds.remove(roundId);
         }
+    }
+
+    /**
+     * Ends the round honestly when this daemon's service stopped (its node crashed) during it:
+     * publishes {@code BERKELEY_ROUND_ABORTED} and throws, instead of reporting every peer as
+     * unresponsive and finishing on a crashed node.
+     */
+    private void abortIfStopped(long roundId, String stage) {
+        if (running) {
+            return;
+        }
+        String reason = "The time daemon, node " + node.id() + ", crashed during the " + stage
+                + " stage, so the Berkeley round was aborted.";
+        bus.publish(EventDraft.of(MODULE, node.id(), "BERKELEY_ROUND_ABORTED", node.clock().current())
+                .withMessage(reason)
+                .withData(Map.of("roundId", roundId, "reason", reason)));
+        throw new BerkeleyRoundAbortedException(reason);
     }
 
     private void publishAdjustmentEvent(long roundId, NodeAdjustment adj) {
