@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, CircleDashed, Copy, Crown, Info, PowerOff } from 'lucide-react'
+import { ArrowDown, CircleDashed, Copy, Crown, PowerOff } from 'lucide-react'
 import { SimulatedBadge } from '@/components/experiment/SimulatedBadge'
 import { cn } from '@/lib/utils'
-import { NOTE } from './faultToleranceModel'
 import { NotMeasured } from './MeasurementsPanel'
 
 const REJOIN_TEXT = {
@@ -90,9 +89,8 @@ function NodeTile({ node, demotedFrom, entering }) {
  * @param {object} props.status
  * @param {object|null} props.run
  * @param {object} [props.settings]
- * @param {string[]} [props.notes]
  */
-export function ReplicaRail({ status, run, settings, notes = [] }) {
+export function ReplicaRail({ status, run, settings }) {
   const nodes = status?.nodes ?? []
   const previousRolesRef = useRef(null)
   const previous = previousRolesRef.current
@@ -135,12 +133,6 @@ export function ReplicaRail({ status, run, settings, notes = [] }) {
           ))}
         </ol>
       </div>
-      {notes[NOTE.exp5Interference] && (
-        <p data-testid="exp5-note" className="flex items-start gap-2 text-xs text-muted-foreground">
-          <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          {notes[NOTE.exp5Interference]}
-        </p>
-      )}
     </div>
   )
 }

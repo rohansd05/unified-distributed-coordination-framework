@@ -13,10 +13,12 @@ An earlier capture of the same script (same backend version, before two fixes) w
 every file was captured again: the derived "expected detection window" glossary text was wrong,
 and a crashed node reported `rejoin: "REJOINING"` (now `null`).
 
-**Phase 9A.1:** the four `overview-*.json` files were captured again on 2026-10-17 (see "9A.1
-recapture" below). Every other file here is still the E8c capture of 2026-10-15, made before 9A.1:
-there the first primary is node 1 (the lowest live node), a failover goes from node 1 to node 2,
-and the recovered node 1 stays a backup.
+**Phase 9A.1 and 9A.6:** the four `overview-*.json` files were captured again on 2026-10-17 (see
+"9A.1 recapture" below) and again in 9A.6, after served note 8 was removed (see "9A.6 recapture").
+Every other file here is still the E8c capture of 2026-10-15, made before 9A.1, and shows the
+pre-9A.1 history (not served any more): there the first primary is node 1 (the lowest live node), a
+failover goes from node 1 to node 2, and the recovered node 1 stays a backup. Since 9A.1 the primary
+is the leader elected by Experiment 4 (node 5 first, node 4 after its crash).
 
 | File | Request | Status | Shows |
 |---|---|---|---|
@@ -111,6 +113,15 @@ loops with a deadline. Nothing was edited by hand. The script checked each file:
 | `overview-after-runs.json` | `latestRun`: run 1, node 5 crashed (ACTION) at epoch 2, node 4 detected it, was elected and promoted at epoch 3, RESTORED, `lost: 0` of 11; all eight milestones, the old primary's recovery included (OLD_PRIMARY_RECOVERED, DEMOTED, RESYNCHRONISED). `current`: node 5 PRIMARY again at epoch 4 (the planned handover after its resync), nodes 1 to 4 BACKUP at epoch 4, 12 updates acknowledged, `dataLossNow` lost 0, stream STOPPED (`stopReason: REQUESTED`), the split-brain check passed |
 | `overview-after-reset.json` | IDLE, not started, no run, fresh budget (400); the services still run, so every node is BACKUP at epoch 1 with `believedPrimaryId` null |
 
+## 9A.6 recapture
+
+Served note 8 ("Until Phase 9A this experiment and Experiment 5 share each node's replication
+service, ...") is obsolete since 9A.3 and was removed, so `notes` has seven entries. The four
+`overview-*.json` files were captured again with the 9A.1 steps above by one PowerShell script (in
+docs/tracks/track-b-swanand.md, 9A.6), run by Swanand against a freshly started backend (local
+profile). It waited for no BUSY module before every cluster reset and retried a reset answered 409.
+It checked each file: HTTP 200, seven notes, no "Until Phase 9A". Nothing was edited by hand.
+
 ## Values that are not stable
 
 These differ on every capture; tests should check their type and shape, not their value.
@@ -123,6 +134,6 @@ These differ on every capture; tests should check their type and shape, not thei
 
 ## Stable by design
 
-- Node 1 is the first primary (epoch 2); after its crash node 2 takes over at epoch 3 (lowest live, ready node, `// TODO(L1)`).
+- In the E8c files (captured before 9A.1, history): node 1 is the first primary (epoch 2); after its crash node 2 takes over at epoch 3 (the lowest live, ready node then). In the `overview-*.json` files (9A.1 and later): node 5, the elected leader, is the first primary; node 4 takes over at epoch 3.
 - Synchronous runs show `lost: 0`; asynchronous losses are never synchronous (`lostSynchronous: 0`).
 - The simulated delay shown is the configured `udcf.replication.async-delay-millis` (450 here).

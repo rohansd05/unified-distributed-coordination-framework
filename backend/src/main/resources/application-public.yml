@@ -43,6 +43,10 @@ udcf:
   # The maximum size follows mpi.max-payload-elements (100 here), so the series stays within it.
   matrix:
     series-sizes: [25, 50, 100]
+  # Within the loadbalancing limits above: 5 x 60 x 400 = 120000 work units for one comparison.
+  scenario:
+    slow-node:
+      work-units: 400
 
 management:
   endpoints:

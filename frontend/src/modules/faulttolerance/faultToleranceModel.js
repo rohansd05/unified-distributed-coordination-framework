@@ -6,7 +6,7 @@
  */
 
 /** The served notes, by position (E8c "Notes", served verbatim; contract.test.js pins the count). */
-export const NOTE = { asyncWindow: 1, syncSafe: 2, lossCounts: 3, observedCrash: 4, selector: 5, epochFence: 6, exp5Interference: 7 }
+export const NOTE = { asyncWindow: 1, syncSafe: 2, lossCounts: 3, observedCrash: 4, selector: 5, epochFence: 6 }
 
 /** Milestone kinds in the order a run passes them (E8c "Response shapes"). */
 export const MILESTONE_KINDS = ['CRASHED', 'DETECTED', 'ELECTED', 'PROMOTED', 'SERVICE_RESTORED',

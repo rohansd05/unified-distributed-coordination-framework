@@ -196,6 +196,19 @@ udcf:
     result-store-size: 4
     # E10c: runs the module keeps for the page and the speedup series; at least the number of series sizes.
     history-size: 20
+  # Phase 9A.6: guided scenarios across modules (com.udcf.scenario); not a lab, so after the ten experiments.
+  scenario:
+    # Runs kept in memory; the oldest is dropped first.
+    history-limit: 10
+    # The clean-slate reset before each run retries this long while a module is BUSY (HTTP 409 otherwise).
+    reset-timeout-millis: 20000
+    # Default deadline of one step's waits: well above Experiment 8's worst-case failover (10300 ms).
+    step-deadline-millis: 30000
+    # Polling fallback of every wait; the event-bus subscription usually wakes it sooner.
+    poll-interval-millis: 250
+    slow-node:
+      # Work units per request in "A slow node under load" (E6b probe: the widest round-robin margin, 23 %, at 900).
+      work-units: 900
 
 management:
   endpoints:
