@@ -49,7 +49,7 @@ backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.u
 frontend/       React 18 + Vite 6 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
 infra/          docker-compose.yml, prometheus/, grafana/
 legacy-demos/   original standalone demos for Experiments 2–8
-scripts/        start-all.ps1, stop-all.ps1
+scripts/        start-all.ps1, stop-all.ps1, reset-cluster.ps1
 docs/           HANDOFF.md, architecture/, experiments/
 
 ## Commands (Windows PowerShell)
@@ -71,8 +71,10 @@ track-d-rohan.md. Shared rules: docs/tracks/README.md. Only Rohan edits this fil
 docs/HANDOFF.md and README.md.
 
 Phases 3–12 are complete: all ten experiments, steps a–d, merged by 2026-10-16 (main dc08200,
-PR #47). Current phase: 9A, system integration of all ten experiments (R19); steps, owners and
-dependencies are in docs/tracks/README.md Section 11.
+PR #47). Phase 9A (system integration of all ten experiments, R19; steps 9A.0–9A.9 in
+docs/tracks/README.md Section 11) is complete for the demo of Friday 2026-10-23, except the
+refreshed public lite redeploy, which moves to Phase 16. Demo script: docs/demo/udcf-demo.md.
+Next phase: 14.
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
@@ -116,6 +118,8 @@ dependencies are in docs/tracks/README.md Section 11.
   frontend on Vercel; REST and wss verified end to end, including after a cold start
   (<N> s); Phase 2 complete
 - Phases 3–12 complete: Experiments 1–10, steps a–d, in four tracks (dc08200)
+- Phase 9A complete for the 2026-10-23 demo: 9A.0–9A.9 (refreshed public lite redeploy moved to
+  Phase 16)
 
 ### Known issues
 - docs/HANDOFF.md Section 4.4: problems 1, 2, 3, 4, 10 and 13 are resolved; the rest are

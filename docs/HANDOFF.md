@@ -790,18 +790,18 @@ Every module phase has the same five steps:
 
 ### Phase 9A — System integration, all ten experiments (R19)
 
-| Step | Owner | Work | Needs |
-|---|---|---|---|
-| 9A.0 | Rohan | Docs: R19, this plan, docs/tracks/README.md Section 11, CLAUDE.md | — |
-| 9A.1 | Swanand | Shared role provider under `com.udcf.core`: LEADER from the election, PRIMARY and BACKUP join `NodeRole`. Experiment 8 promotes through the election (`FailoverRoleSelector` removed, `EpochAuthority.onLeaderElected` fed from leader changes, a planned-handover target resynchronised first). L2 verified: Experiments 4 and 8 act on the same `FailureDetector` suspect signal | 9A.0 |
-| 9A.2 | Nidhi | Link audit and backend integration tests for L3 (Experiment 6 dispatches into Experiment 2 executors), L4 (Lamport time on every inter-node message, including the RMI calls of Experiments 1, 9 and 10), L5 (event export to MapReduce) and L6 (Experiment 10 uses the Experiment 9 collectives over Experiment 1 RMI). Gaps in another track's package are recorded and reported to its owner, not fixed | 9A.0 |
-| 9A.3 | Jai | Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root come from the role provider; `TODO(L1)` selectors removed; the Experiment 5 / Experiment 8 interference removed; fixtures recaptured; page hints updated | 9A.1 |
-| 9A.4 | Rohan | Experiment 3 Berkeley time daemon and Experiment 7 coordinator come from the role provider; `TODO(L1)` selectors removed; fixtures recaptured; page hints updated | 9A.1 |
-| 9A.5 | Jai | Timeline page `/timeline`: events from every module ordered by `(lamportTime, nodeId)`, module and node filters, live updates | 9A.0 |
-| 9A.6 | Swanand | `com.udcf.scenario`: scenario engine, API and narration; scenarios "The leader dies mid-write", "A slow node under load" and "Split-brain that never happens"; the leader-crash end-to-end test | 9A.3, 9A.4 |
-| 9A.7 | Jai | Scenarios "Analyse the incident with MapReduce" and "The leader dies during a matrix multiply"; the Scenarios page `/scenarios` | 9A.6 |
-| 9A.8 | Nidhi | Overview integration map showing the six links live; demo polish (R17) of Overview, Cluster, the ten experiment pages and Timeline; nothing shown as "planned" | 9A.3, 9A.4, 9A.5 |
-| 9A.9 | Rohan | Demo package: `scripts/start-all.ps1` and `scripts/stop-all.ps1` (dev mode), `docs/demo/udcf-demo.md`, a refreshed public lite deployment | 9A.7, 9A.8 |
+| Step | Owner | Work | Needs | Status |
+|---|---|---|---|---|
+| 9A.0 | Rohan | Docs: R19, this plan, docs/tracks/README.md Section 11, CLAUDE.md | — | complete |
+| 9A.1 | Swanand | Shared role provider under `com.udcf.core`: LEADER from the election, PRIMARY and BACKUP join `NodeRole`. Experiment 8 promotes through the election (`FailoverRoleSelector` removed, `EpochAuthority.onLeaderElected` fed from leader changes, a planned-handover target resynchronised first). L2 verified: Experiments 4 and 8 act on the same `FailureDetector` suspect signal | 9A.0 | complete |
+| 9A.2 | Nidhi | Link audit and backend integration tests for L3 (Experiment 6 dispatches into Experiment 2 executors), L4 (Lamport time on every inter-node message, including the RMI calls of Experiments 1, 9 and 10), L5 (event export to MapReduce) and L6 (Experiment 10 uses the Experiment 9 collectives over Experiment 1 RMI). Gaps in another track's package are recorded and reported to its owner, not fixed | 9A.0 | complete |
+| 9A.3 | Jai | Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root come from the role provider; `TODO(L1)` selectors removed; the Experiment 5 / Experiment 8 interference removed; fixtures recaptured; page hints updated | 9A.1 | complete |
+| 9A.4 | Rohan | Experiment 3 Berkeley time daemon and Experiment 7 coordinator come from the role provider; `TODO(L1)` selectors removed; fixtures recaptured; page hints updated | 9A.1 | complete |
+| 9A.5 | Jai | Timeline page `/timeline`: events from every module ordered by `(lamportTime, nodeId)`, module and node filters, live updates | 9A.0 | complete |
+| 9A.6 | Swanand | `com.udcf.scenario`: scenario engine, API and narration; scenarios "The leader dies mid-write", "A slow node under load" and "Split-brain that never happens"; the leader-crash end-to-end test | 9A.3, 9A.4 | complete |
+| 9A.7 | Jai | Scenarios "Analyse the incident with MapReduce" and "The leader dies during a matrix multiply"; the Scenarios page `/scenarios` | 9A.6 | complete |
+| 9A.8 | Nidhi | Overview integration map showing the six links live; demo polish (R17) of Overview, Cluster, the ten experiment pages and Timeline; nothing shown as "planned" | 9A.3, 9A.4, 9A.5 | complete |
+| 9A.9 | Rohan | Demo package: `scripts/start-all.ps1` and `scripts/stop-all.ps1` (dev mode), `docs/demo/udcf-demo.md`, a refreshed public lite deployment | 9A.7, 9A.8 | complete; the refreshed public lite redeploy moves to Phase 16 |
 
 **Phase 9A is done when** crashing the leader triggers an election, then a new time daemon, replication failover, a new MapReduce coordinator and a new MPI root, all visible in one timeline; all five scenarios run end to end with narration; events from all ten modules interleave correctly by `(lamportTime, nodeId)`; one command starts the local demo; and a full walkthrough shows no placeholder content.
 
@@ -985,7 +985,7 @@ backend/        Spring Boot app (com.udcf.core, com.udcf.modules.<module>, com.u
 frontend/       React 18 + Vite 6 (JSX), Tailwind 3.4, shadcn/ui, Recharts, Lucide
 infra/          docker-compose.yml, prometheus/, grafana/
 legacy-demos/   original standalone demos for Experiments 2–8
-scripts/        start-all.ps1, stop-all.ps1
+scripts/        start-all.ps1, stop-all.ps1, reset-cluster.ps1
 docs/           HANDOFF.md, architecture/, experiments/
 
 ## Commands (Windows PowerShell)
