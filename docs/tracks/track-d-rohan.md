@@ -496,6 +496,8 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 4. `.\scripts\stop-all.ps1`: "Stopped backend ..." and "Stopped frontend ..."; the page shows the backend as unreachable. Run it again: "Nothing to stop: the UDCF demo is not running."
 5. `.\scripts\start-all.ps1 -NoBrowser`: starts cleanly again without opening a browser. Then `.\scripts\stop-all.ps1`.
 
+**Smoke check result (2026-10-19, Rohan):** 5/5 passed, run after merging main (9A.6–9A.8 included).
+
 ---
 
 ## Progress log
