@@ -65,8 +65,8 @@
 
 ### Steps
 - [x] 9A.3 — Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root from the shared role provider (link L1); `TODO(L1)` selectors removed; the Experiment 5 / Experiment 8 interference removed; fixtures recaptured; page hints updated. Needs: 9A.1.
-- [ ] 9A.5 — Timeline page `/timeline`: events from every module ordered by `(lamportTime, nodeId)`, module and node filters, live updates. Needs: 9A.0.
-- [ ] 9A.7 — Scenarios "Analyse the incident with MapReduce" and "The leader dies during a matrix multiply"; the Scenarios page `/scenarios`. Needs: 9A.6.
+- [ ] 9A.5 — Timeline page `/timeline`: events from every module ordered by `(lamportTime, nodeId)`, module and node filters, live updates. Needs: 9A.0. (Reassigned to Rohan for the demo; done in Track D.)
+- [x] 9A.7 — Scenarios "Analyse the incident with MapReduce" and "The leader dies during a matrix multiply"; the Scenarios page `/scenarios`. Needs: 9A.6.
 
 ### 9A.3 (fast mode)
 
@@ -564,6 +564,57 @@ Before every reset it waits while `@((Invoke-RestMethod "$Api/api/modules") | Wh
 5. The Experiment 5, 9 and 10 hints name the elected leader, and nothing says "lowest live" or "Phase 13". Reset the cluster (retry if it answers busy) → the Experiment 9 option reads "Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)".
 
 Smoke check result: _not run yet_.
+
+### 9A.7 (fast mode)
+
+**What changed.**
+- **Two scenarios, add-only in `com.udcf.scenario.scenarios`** (Swanand's recipe; the engine is unchanged):
+  - `MapReduceIncidentScenario` (`mapreduce-incident`, order 40, 7 steps). A first word-count job gives Experiment 7 a coordinator, the elected leader. The leader node then crashes (`Cluster.crash`). The scenario waits for `LEADER_CHANGED` and then `COORDINATOR_CHANGED` for the new leader, checked in bus order. It takes one L5 export (`EventLogExporter.lines`), keeping the newest lines that fit the upload limit, and checks that the export contains that `LEADER_CHANGED`. Experiment 7's own `event-category-count` job then runs twice on that export as an upload: once on the lines unchanged (count by type), and once with each event keyed `category=node N` (count by node). Both runs must be coordinated by the new leader, and their counts must equal the export's key for key. The last step names the three largest counts of each kind.
+  - **Why an upload and two runs:** no Experiment 7 job counts by node, and its job registry is private to the mapreduce package (Track D). Using one snapshot means both totals can be checked exactly.
+  - `MatrixLeaderCrashScenario` (`matrix-leader-crash`, order 50, 5 steps). The first run starts at the largest size (`limits.maxSize`, 316 locally) with no root requested, on its own thread (`udcf-scenario-matrix`). The leader crashes as soon as `MATRIX_RUN_STARTED` is seen. Step 3 reports the first run's real outcome, with or without an error. It also gives the bus order of `NODE_CRASHED` and `MATRIX_RUN_FINISHED` (`crashedMidRun`). After `LEADER_CHANGED`, the same size and seed run again. The new leader must be the root (`LEADER`), and the result must be COMPLETE and verified. The step also states whether the result's sequential checksum equals the first run's.
+  - **No existing parameter makes a run long:** a 316 run takes a fraction of a second, so the crash follows the start event rather than a sized wait.
+- **Observed on real sockets** (`IncidentScenariosEndToEndTest`, Windows, this session):
+  - MapReduce: node 5 coordinated; after the crash, node 4 was elected (event 378) and named coordinator (event 380). 178 events were exported and counted under 24 types and 6 sources, with `LEADER_CHANGED` 3 times.
+  - Matrix: node 5 was down (event 111) before the first run ended (event 115). That run ended PARTIAL, with 4 of 5 blocks and the result not checkable. Node 4 was elected after 3169 ms. The second run, rooted at node 4 with node 5 skipped, completed with the same checksum as the sequential product.
+- **Scenarios page `/scenarios`** (the stub and its "Phase 13" text are replaced; the route and sidebar entry already existed):
+  - The scenarios sit on one rail: title, summary, modules involved and a Run button. Every Run button is disabled while a run is active. A 409 shows a calm `role="status"` ("Another scenario is running…"), and that run is loaded.
+  - The live step rail shows, for each step, a shape per state with the state in words, its duration, the observed message and "Observed facts".
+  - Below the steps: the verdict, the total time and the end state (the engine's description plus a node row with the leader ringed and down nodes dashed and crossed).
+  - "See in Timeline" opens `/timeline?modules=scenario,cluster,<catalog ids>&order=arrival`, built only from catalog ids and literals.
+  - "Presenter view" is a full-screen overlay with the current narration in large text. It shows the observed message, then the verdict and end state; Escape closes it.
+  - **Live updates:** `/topic/events` messages of module `scenario` are folded into the run at once. While a run is active, `GET /api/scenarios/runs/latest` is polled every second whenever no scenario event arrived in the last second. `GET /runs/{id}` is read on `SCENARIO_FINISHED` (for the end state) and on reconnect. A polled run never replaces one the events had already taken further (`preferRun`).
+- **Files.**
+  - Backend: `scenario/scenarios/{MapReduceIncidentScenario, MatrixLeaderCrashScenario}.java`; tests `scenario/scenarios/{IncidentScenariosEndToEndTest, MapReduceIncidentScenarioTest}.java`.
+  - Frontend: `frontend/src/components/scenarios/{scenariosApi.js, scenarioModel.js, useScenarios.js, StepRail.jsx, ScenarioList.jsx, EndStateView.jsx, PresenterView.jsx}` with `scenariosApi.test.js` and `scenarioModel.test.js`; `pages/ScenariosPage.jsx` (replaced) with `ScenariosPage.test.jsx`.
+  - Outside my packages: `routes.test.jsx` gets add-only lines (one import, two mocks). In Swanand's `ScenarioControllerTest` the listing test now expects the two new scenarios at `$[3]` and `$[4]`, the gate at `$[5]` (it was `$[3]`), and its display name says "five". That edit was needed because orders 40 and 50 shift the gate scenario; it is a test-only change, for Swanand to review.
+
+**Interfaces for other tracks.** Scenario ids `mapreduce-incident` and `matrix-leader-crash`, with the 9A.6 run shape and events. Fact keys used in tests:
+- MapReduce: `coordinatorId`, `newLeaderId`, `leaderChangedSequence` / `coordinatorChangedSequence`, `exportedLines`, `leaderChangedCount`, `totalCounted`, `topTypes`, `topNodes`.
+- Matrix: `rootNodeId`, `rootSource`, `crashedMidRun`, `outcome`, `passed`, `skippedNodeIds`, `sameProductAsFirstRun`.
+
+**Test ports** (block 29500-29899; a search of the test sources found nothing there):
+- Bound: RMI 29501-29505, election 29521-29525, requests 29541-29545, MapReduce 29551-29555.
+- Bases only, never bound: clock 29510, replication 29530.
+- Still free: 29560-29899.
+
+**Known issues.**
+- The first matrix run's outcome is timing-dependent (PARTIAL in this session). The step reports it, and `crashedMidRun` is false if the run ended before the crash began. The test accepts any outcome there (R7: measured, not assumed).
+- The by-node count comes from a transformation the scenario does itself: each exported event is written as `node=N | category=node N`. The job is still Experiment 7's own, unchanged. The Javadoc and the facts say so.
+- The scenario's two uploads appear in Experiment 7's run history like any other run.
+- A run resets the cluster first, as every scenario does. The page says so above the list.
+
+**Gaps in other tracks' packages.**
+- Swanand: the `ScenarioControllerTest` index change above.
+- Rohan: the 9A.5 known issue about `ScenariosPage.jsx` saying "Phase 13" is resolved by this step. The Timeline's scenario bands read `data.title` and `data.runId`, which the engine sends, so nothing is needed there.
+
+**Smoke check** (running app; result recorded below):
+1. Open /scenarios → five scenarios on the rail, each with modules and a Run button; the right side says no scenario has run yet.
+2. Run "Analyse the incident with MapReduce" → every Run button is disabled; the steps go from Waiting to Running to Passed one by one, each with a duration and a message; the verdict reads "Passed: all 7 steps met their expectations." and the end state shows node 5 down and node 4 ringed as leader.
+3. While a run is going, press Run on another scenario from a second browser tab → a calm "Another scenario is running" notice and no error page.
+4. Run "The leader dies during a matrix multiply" with "Presenter view" on → each step's narration appears in large text; step 3 states the first run's real outcome; it ends with the verdict; Escape closes the view.
+5. Click "See in Timeline" → the Timeline opens in arrival order, filtered to scenario, cluster and the scenario's modules, and the scenario band is visible.
+
+Smoke check result (2026-10-19, run by Claude Code against the API of the running app at localhost:8080, no browser): steps 1-3 confirmed on the data the page shows (5 scenarios, 28 steps; mapreduce-incident run 1 PASSED, all 7 steps, end state node 4 leader, node 5 down; a second start during it answered 409 "Scenario busy" with reason SCENARIO_BUSY); the matrix-leader-crash data of step 4 confirmed (run 2 PASSED, first run PARTIAL with crashedMidRun true, second run verified from root 4) and 12 scenario events on the bus for the Timeline; the dev server compiles the new page modules (HTTP 200). Not checked: anything on screen, i.e. the disabled buttons, the presenter view (step 4) and the Timeline link and band (step 5).
 
 ---
 
@@ -3468,3 +3519,4 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - 2026-10-16 E10d done: Experiment 10 page at /experiments/10-matrix (RowBlocks with holes and the one Simulated badge, scatter/broadcast/gather views reusing E9d's CollectiveMap and LatencyChart, RunResult with glossary-labelled figures, withheld reasons, stacked phase bar, verification and per-node table, hand-built SVG speedup chart over the served series sizes, history), useMatrix (overview read then start with the served bound + 3000 ms, edge restart, sequential run-all with stop after the current run, timeout lock and 2000 ms busy polling), five labelled synthetic fixtures; backend not run (no backend change), frontend 1241 tests (baseline 1108); deviations: the seven listed under "E10d deviations from the approved plan".
 - 2026-10-16 E10d Linux verification: clean clone of c1fafcf in Docker node:22 (Linux): npm ci, vitest (128 files, 1241 tests), eslint and vite build all exit 0; main chunk 832.82 kB (gzip 245.57 kB) on Linux against 833.65 kB on Windows; the chunk size stays a Phase 14 item.
 - 2026-10-18 9A.3 done: Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root follow the leader elected by Experiment 4 through RoleProvider (link L1): ensureLeader on the request thread before the guard, 409 NO_LEADER when none, reads never elect; ReplicationRoleSelector, MpiRoleSelector and RootSource.LOWEST_LIVE_ID removed; Experiment 5 never moves the primary away from the leader (no change when it already acts as primary at any epoch; epochs never go down) and publishes PRIMARY/BACKUP after appointing; MPI_ROOT_CHANGED (9A.4 rule, first root after a reset silent); pages name the leader, calm 409 No leader; 88 fixtures recaptured by Jai's capture block plus 4 new leader captures; backend 1939 tests (baseline 1934; 0 failures, 1 skipped), frontend 1262 tests (baseline 1250), lint 0 problems, build exit 0 (main chunk 836.88 kB); fast mode: no Docker run; CI is the Linux gate.
+- 2026-10-19 9A.7 done: scenarios "Analyse the incident with MapReduce" (mapreduce-incident, 7 steps: first job on leader 5, crash, LEADER_CHANGED then COORDINATOR_CHANGED for node 4, one L5 export, Experiment 7 counts it by type and by node with node 4 coordinating, counts equal the export, top counts narrated) and "The leader dies during a matrix multiply" (matrix-leader-crash, 5 steps: largest size rooted at the leader, crash on MATRIX_RUN_STARTED, real first outcome reported with bus order, re-election, same multiply verifies from root 4), add-only in com.udcf.scenario.scenarios; Scenarios page /scenarios (rail of scenarios with Run, live step rail from /topic/events with 1 s poll fallback, verdict, end state, Timeline deep link, presenter view, calm 409); ScenarioControllerTest listing index moved for the two new scenarios (test only, for Swanand); backend 1976 tests (0 failures, 1 skipped; +5 new), frontend 1316 tests in 134 files (baseline 1294 in 131), lint exit 0, build OK (main chunk 877.77 kB); fast mode: no Docker run; CI is the Linux gate

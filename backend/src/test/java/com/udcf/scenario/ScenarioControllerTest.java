@@ -3,6 +3,8 @@ package com.udcf.scenario;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.scenario.scenarios.LeaderDiesMidWriteScenario;
+import com.udcf.scenario.scenarios.MapReduceIncidentScenario;
+import com.udcf.scenario.scenarios.MatrixLeaderCrashScenario;
 import com.udcf.scenario.scenarios.SlowNodeUnderLoadScenario;
 import com.udcf.scenario.scenarios.SplitBrainNeverHappensScenario;
 import org.junit.jupiter.api.DisplayName;
@@ -115,7 +117,7 @@ class ScenarioControllerTest {
 
     @Test
     @Order(2)
-    @DisplayName("GET /api/scenarios lists the three scenarios in order, with 1-based steps whose narration has no numbers")
+    @DisplayName("GET /api/scenarios lists the five scenarios in order, with 1-based steps whose narration has no numbers")
     void listsScenarios() throws Exception {
         mockMvc.perform(get("/api/scenarios"))
                 .andExpect(status().isOk())
@@ -128,7 +130,11 @@ class ScenarioControllerTest {
                 .andExpect(jsonPath("$[1].steps.length()").value(7))
                 .andExpect(jsonPath("$[2].id").value(SlowNodeUnderLoadScenario.ID))
                 .andExpect(jsonPath("$[2].steps.length()").value(3))
-                .andExpect(jsonPath("$[3].id").value("test-gate"));
+                .andExpect(jsonPath("$[3].id").value(MapReduceIncidentScenario.ID))
+                .andExpect(jsonPath("$[3].steps.length()").value(7))
+                .andExpect(jsonPath("$[4].id").value(MatrixLeaderCrashScenario.ID))
+                .andExpect(jsonPath("$[4].steps.length()").value(5))
+                .andExpect(jsonPath("$[5].id").value("test-gate"));
 
         for (JsonNode scenario : json("/api/scenarios")) {
             assertThat(scenario.fieldNames()).toIterable()
