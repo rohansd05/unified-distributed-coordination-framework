@@ -41,9 +41,10 @@ describe('ExperimentPage', () => {
     expect(content().getByText('module id: matrix')).toBeTruthy()
   })
 
-  it('says which phase the module arrives in', () => {
+  it('says plainly that the page is not part of this build, with no phase or "planned" wording', () => {
     renderRoute('/experiments/10-matrix')
-    expect(screen.getByText('This module arrives in Phase 12.')).toBeTruthy()
+    expect(screen.getByText("This experiment's page is not part of this build.")).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/phase|planned|coming soon/i)
   })
 })
 
@@ -71,6 +72,6 @@ describe('ExperimentPage with a registered module page', () => {
       'H2 Event log',
       'H2 What to notice',
     ])
-    expect(content().queryByText('This module arrives in Phase 3.')).toBeNull()
+    expect(content().queryByText("This experiment's page is not part of this build.")).toBeNull()
   })
 })

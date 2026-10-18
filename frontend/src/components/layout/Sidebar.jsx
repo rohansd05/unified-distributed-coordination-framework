@@ -89,7 +89,7 @@ export function Sidebar({ open, onClose, closeButtonRef }) {
                 <NavLink to={`/experiments/${experiment.slug}`} className={itemClass}>
                   <LabBadge lab={experiment.lab} />
                   <span className="truncate">{experiment.title}</span>
-                  {experiment.status && (
+                  {experiment.status && experiment.status !== 'PLANNED' && (
                     <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                       {formatStatus(experiment.status)}
                     </span>

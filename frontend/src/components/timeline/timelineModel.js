@@ -199,7 +199,7 @@ export const ROLE_NAMES = {
   PRIMARY_PROMOTED: 'fault-tolerance primary',
   PRIMARY_SELECTED: 'replication primary',
   REPLICATION_ROLES_CHANGED: 'replication primary role',
-  HANDOVER_STARTED: 'planned handover',
+  HANDOVER_STARTED: 'fault-tolerance handover',
 }
 
 /** Marker shape on the lanes; every shape also has a text legend. */

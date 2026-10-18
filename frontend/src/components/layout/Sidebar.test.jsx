@@ -50,7 +50,7 @@ describe('Sidebar', () => {
     expect(mainNav().getByRole('link', { name: 'Monitoring' }).getAttribute('href')).toBe('/monitoring')
   })
 
-  it('shows "Planned" as status text for experiments when modules are loaded', () => {
+  it('shows no status, never "Planned", for experiments missing from /api/modules (e.g. before it loads)', () => {
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ClusterContext.Provider value={{ modules: [] }}>
@@ -59,7 +59,8 @@ describe('Sidebar', () => {
       </MemoryRouter>,
     )
 
-    const plannedElements = screen.getAllByText('Planned')
-    expect(plannedElements).toHaveLength(10)
+    expect(screen.queryAllByText('Planned')).toHaveLength(0)
+    expect(screen.getByRole('link', { name: /Parallel Matrix Multiplication/ }).textContent)
+      .not.toMatch(/Idle|Running|Busy|Error/)
   })
 })
