@@ -196,9 +196,9 @@
 - [x] 9A.0 — docs: R19, the Phase 9A plan (README section 11), CLAUDE.md. Needs: none.
 - [x] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
 - [x] 9A.5 — Timeline page `/timeline` (reassigned from Jai for the 2026-10-23 demo). Needs: 9A.0.
-- [ ] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`, refreshed public lite deployment. Needs: 9A.7, 9A.8.
+- [x] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`; the refreshed public lite deployment moves to Phase 16. Needs: 9A.7, 9A.8.
   - [x] 9A.9a — demo scripts: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `scripts/reset-cluster.ps1`.
-  - [ ] the rest of 9A.9: `docs/demo/udcf-demo.md`, refreshed public lite deployment.
+  - [x] 9A.9b — demo script `docs/demo/udcf-demo.md`; Phase 9A position update (CLAUDE.md, HANDOFF, README section 11).
 
 ### 9A.4: the time daemon and the MapReduce coordinator follow the elected leader (link L1)
 
@@ -498,6 +498,29 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 
 **Smoke check result (2026-10-19, Rohan):** 5/5 passed, run after merging main (9A.6–9A.8 included).
 
+### 9A.9b (fast mode)
+
+**What changed:** documentation only; no code, test, fixture or script change.
+- New `docs/demo/udcf-demo.md`: summary; T-30 to T-0 checklist with a warm-up (Exp 3 round, Exp 7 run, Exp 9 collective, Start experiment 8), because after a reset nobody holds a role until a module asks for the leader; a run order in nine parts (Overview, crash node 5 on Cluster, Timeline chain in arrival order, the five scenarios, back to Overview); the 15-minute budget with the cut order; recovery table; Q&A crib; the three-command card; known limitations. Scenario titles and step counts come from `com.udcf.scenario.scenarios` (6, 7, 3, 7, 5); button and banner texts from the pages.
+- CLAUDE.md: Layout lists `reset-cluster.ps1`; Current Position says Phase 9A is complete for the 2026-10-23 demo, the public lite redeploy moves to Phase 16, and the next phase is 14.
+- docs/HANDOFF.md (section 11 table, Appendix A layout) and docs/tracks/README.md section 11: the 9A table gets a Status column (it had none), 9A.0–9A.9 complete.
+
+**Known limitations:**
+- Every part duration in the demo file is an estimate: the dry run timed only `start-all` (backend 6 s, frontend 0 s).
+- The tag `demo-2026-10-23` and the backup laptop are named as the fallback; neither was checked here.
+- The About page still says "Arrives in Phase 14" (9A.8 gap for Rohan); the demo file says not to open it.
+
+**Gaps in other tracks:** none new.
+
+**Smoke check (repository root, running app):**
+1. Read `docs/demo/udcf-demo.md` from start to finish: it reads as one script with sections a–g and Known limitations.
+2. Follow section b exactly on this laptop: every command works as written, and at T-15 Overview shows "leader: node 5" with every role "node 5 matches".
+3. Pick any three rows of section c: the clicks and expected results match the live pages.
+4. The Scenarios page lists the five titles with 6, 7, 3, 7 and 5 steps, as in section c.
+5. The commands in sections e and g work as written (stop-all, start-all, reset-cluster).
+
+**Smoke check result (2026-10-19, Rohan):** 5/5 passed.
+
 ---
 
 ## Progress log
@@ -520,3 +543,4 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-18 9A.4 Linux (Docker), run by Rohan on a clean clone of 37f87ae: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1925 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the ten clocksync/mapreduce classes x3 (108 tests each, 0 failures); frontend on node:22: npm ci, vitest (128 files, 1250 tests), lint and build exit 0, main chunk 834.05 kB. Manual checklist run the same day: 11 of 12 PASS, step 10 differs (not a defect).
 - 2026-10-18 9A.5 done: Timeline page /timeline: all modules' events from GET /api/events?limit=500 plus /topic/events, deduplicated by sequence, capped at 2000; Lamport order with bus-sequence tie-break or arrival order; cluster lane plus node lanes in SVG with the event list and details; readable sentences for the role-change, crash/recover and scenario types; leader-chain highlight; scenario bands; module/node/text filters in the URL; pause, clear view, disconnected banner; no backend change; frontend 1294 tests in 131 files (baseline 1262 in 128, +32), lint clean, build OK; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 9A.9a done: demo scripts scripts/start-all.ps1 (Java 21 / Node 22 / free-port checks, hidden backend and frontend with logs in %TEMP%\udcf-demo, PIDs with start times in pids.json, 120 s readiness waits, browser unless -NoBrowser), scripts/stop-all.ps1 (taskkill /T /F on the saved PIDs when the start time matches, then any listener on 8080/5173; idempotent) and scripts/reset-cluster.ps1 (waits for no BUSY module, POST reset with up to 40 tries on 409); checked here: PS 5.1 parse clean, ASCII only, version detection, mocked busy list, unreachable-API and nothing-running paths; start-all end to end not run here (Rohan's smoke check); no backend or frontend change, so no suites run; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-19 9A.9b done: demo script docs/demo/udcf-demo.md (summary, T-30 checklist with role warm-up, nine-part run order with the five scenarios and their real step counts 6/7/3/7/5, 15-minute budget and cut order, recovery table, Q&A crib, three-command card, known limitations); CLAUDE.md Current Position (Phase 9A complete for the 2026-10-23 demo, public lite redeploy to Phase 16, next phase 14) and Layout (reset-cluster.ps1); Status column in the 9A tables of README section 11 and HANDOFF section 11; HANDOFF Appendix A layout; documentation only, no suites run; fast mode: no Docker run; CI is the Linux gate
