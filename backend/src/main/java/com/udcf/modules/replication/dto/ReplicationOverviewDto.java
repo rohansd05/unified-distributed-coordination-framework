@@ -12,11 +12,11 @@ import java.util.List;
  * ReplicationControllerTest.</p>
  *
  * @param actionInProgress       the guarded action running now; null when not BUSY
- * @param primaryNodeId          the node the selector picks now (lowest live node); null if every
- *                               node is crashed
+ * @param primaryNodeId          the leader elected by Experiment 4, which the next action makes primary;
+ *                               null while there is no leader (a read never starts an election)
  * @param currentPrimaryNodeId   the node last made primary; null if none yet (or since a reset)
- * @param takeoverPending        true if a primary was made before and the selector now picks another
- *                               node: the next write, anti-entropy, injection or recover will run a
+ * @param takeoverPending        true if a primary was made before and the leader is now another
+ *                               node: the next write, anti-entropy or injection will run a
  *                               takeover (catch-up, then push)
  * @param lastTakeover           the latest selection; null if none yet
  * @param asyncDelayMillis       the simulated delay before each asynchronous push (R7)

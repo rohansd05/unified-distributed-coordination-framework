@@ -198,6 +198,7 @@ describe('replication contract (real backend JSON)', () => {
       expectShape(event.data, { appliedFromCatchUp: isNumber, catchUpSources: isArray, pushedTo: isArray }, 'PRIMARY_SELECTED.data')
     }
     expect(selections[0].data).not.toHaveProperty('previousPrimaryId')
-    expect(selections[1].data.previousPrimaryId).toBe(1)
+    expect(selections[1].data.previousPrimaryId).toBe(5)
+    expect(selections.map((e) => e.data.reason)).toEqual(['elected leader', 'elected leader', 'elected leader'])
   })
 })

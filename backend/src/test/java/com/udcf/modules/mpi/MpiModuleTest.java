@@ -2,7 +2,9 @@ package com.udcf.modules.mpi;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
 import com.udcf.core.cluster.NodeDownException;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.cluster.UnknownNodeException;
 import com.udcf.core.events.ClusterEvent;
 import com.udcf.core.events.ClusterEventBus;
@@ -46,6 +48,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
 import static com.udcf.core.cluster.NodeCapacity.FAST;
@@ -85,6 +89,7 @@ class MpiModuleTest {
     private RmiModule rmi;
     private SimpleMeterRegistry registry;
     private ScriptedCollectiveTransport transport;
+    private RoleProvider roles;
     private MpiModule module;
 
     @BeforeEach
@@ -96,11 +101,15 @@ class MpiModuleTest {
         when(rmi.overview()).thenAnswer(invocation -> rmiOverview());
         registry = new SimpleMeterRegistry();
         transport = MpiTestResults.transport();
+        roles = new RoleProvider(cluster, (LeaderElector) null);   // no election module: no leader means 409 at once
+        cluster.assignLeader(1);
         module = newModule(MpiTestResults.PROPERTIES, RMI, transport, MpiTestResults.stepping());
     }
 
     @AfterEach
     void tearDown() {
+        module.close();
+        roles.close();
         cluster.close();
         bus.close();
     }
@@ -108,7 +117,7 @@ class MpiModuleTest {
     private MpiModule newModule(MpiProperties properties, RmiProperties rmiProperties, CollectiveTransport collectiveTransport,
                                 LongSupplier nanoClock) {
         return new MpiModule(cluster, bus, properties, rmi, rmiProperties, RMI_TRANSPORT, registry,
-                Clock.fixed(NOW, ZoneOffset.UTC), collectiveTransport, nanoClock);
+                Clock.fixed(NOW, ZoneOffset.UTC), collectiveTransport, nanoClock, roles);
     }
 
     /** What Experiment 1 reports: no node started; node 2 with a start failure. */
@@ -152,7 +161,7 @@ class MpiModuleTest {
         assertThat(dto.seed()).isEqualTo(1);
         assertThat(dto.startedAt()).isEqualTo(NOW);
         assertThat(dto.rootNodeId()).isEqualTo(1);
-        assertThat(dto.rootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
+        assertThat(dto.rootSource()).isEqualTo(RootSource.LEADER);
         assertThat(dto.rankNodeIds()).containsExactly(1, 2, 3);
         assertThat(dto.verification().passed()).isTrue();
         assertThat(dto.transfers()).extracting(TransferDto::status)
@@ -250,8 +259,15 @@ class MpiModuleTest {
         assertThat(overview.status()).isEqualTo(ModuleStatus.IDLE);
     }
 
+    /** Waits until the roles dispatcher has delivered every leader change announced so far. */
+    private void deliverLeaderChanges() throws InterruptedException {
+        CountDownLatch delivered = new CountDownLatch(1);
+        roles.afterPendingChanges(delivered::countDown);
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+    }
+
     @Test
-    @DisplayName("default root: the live leader (LEADER); after the leader crashes, the lowest live id, the crashed node skipped")
+    @DisplayName("default root: the leader (LEADER); after the leader crashes and node 2 is elected, node 2, the crashed node skipped")
     void defaultRoot() {
         cluster.assignLeader(3);
         CollectiveDto led = module.run(command(CollectiveOperation.BROADCAST, 10));
@@ -260,11 +276,82 @@ class MpiModuleTest {
         assertThat(led.rootRank()).isEqualTo(2);
 
         cluster.crash(3);
-        CollectiveDto fallback = module.run(command(CollectiveOperation.BROADCAST, 10));
-        assertThat(fallback.rootNodeId()).isEqualTo(1);
-        assertThat(fallback.rootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
-        assertThat(fallback.skippedNodeIds()).containsExactly(3);
-        assertThat(fallback.outcome()).isEqualTo(CollectiveOutcome.COMPLETE);
+        cluster.assignLeader(2);
+        CollectiveDto next = module.run(command(CollectiveOperation.BROADCAST, 10));
+        assertThat(next.rootNodeId()).isEqualTo(2);
+        assertThat(next.rootSource()).isEqualTo(RootSource.LEADER);
+        assertThat(next.skippedNodeIds()).containsExactly(3);
+        assertThat(next.outcome()).isEqualTo(CollectiveOutcome.COMPLETE);
+    }
+
+    @Test
+    @DisplayName("no leader could be elected: NoLeaderException (409 NO_LEADER) before the guard; nothing started or recorded")
+    void noLeader() {
+        cluster.assignLeader(null);
+
+        assertThatThrownBy(() -> module.run(command(CollectiveOperation.BROADCAST, 10)))
+                .isInstanceOf(NoLeaderException.class).hasMessageStartingWith("No leader could be elected, so a collective");
+        verify(rmi, never()).ensureStarted();
+        assertThat(module.history()).isEmpty();
+        assertThat(events("COLLECTIVE_STARTED")).isEmpty();
+        assertThat(module.overview().defaultRootNodeId()).isNull();
+        assertThat(module.overview().defaultRootSource()).isNull();
+    }
+
+    @Test
+    @DisplayName("MPI_ROOT_CHANGED: the first root after a reset is silent; a crashed leader's successor publishes once, before the next start")
+    void rootChangedAfterLeaderCrash() throws InterruptedException {
+        module.run(command(CollectiveOperation.BROADCAST, 10));   // remembers node 1, silently
+        assertThat(events("MPI_ROOT_CHANGED")).isEmpty();
+
+        cluster.crash(1);
+        cluster.assignLeader(3);
+        deliverLeaderChanges();
+        module.run(command(CollectiveOperation.BROADCAST, 10));
+        deliverLeaderChanges();
+
+        List<ClusterEvent> changed = events("MPI_ROOT_CHANGED");
+        assertThat(changed).hasSize(1);
+        ClusterEvent event = changed.get(0);
+        assertThat(event.nodeId()).isEqualTo(3);
+        assertThat(event.peerId()).isEqualTo(1);
+        assertThat(event.data()).containsEntry("nodeId", 3).containsEntry("previousNodeId", 1)
+                .containsEntry("cause", "LEADER_CRASHED");
+        assertThat(event.message()).isEqualTo("Node 3 is the MPI root for the next collective: node 1 crashed and "
+                + "Experiment 4 elected node 3.");
+        long lastStarted = events("COLLECTIVE_STARTED").stream().mapToLong(ClusterEvent::sequence).max().orElseThrow();
+        assertThat(event.sequence()).isLessThan(lastStarted);   // bus order: the change precedes the next start
+    }
+
+    @Test
+    @DisplayName("MPI_ROOT_CHANGED with cause ELECTED when the previous root is still up; the next collective adds nothing")
+    void rootChangedWhileUp() throws InterruptedException {
+        module.run(command(CollectiveOperation.BROADCAST, 10));
+        cluster.assignLeader(2);
+        deliverLeaderChanges();
+
+        assertThat(events("MPI_ROOT_CHANGED")).singleElement().satisfies(event -> {
+            assertThat(event.nodeId()).isEqualTo(2);
+            assertThat(event.data()).containsEntry("previousNodeId", 1).containsEntry("cause", "ELECTED");
+            assertThat(event.message()).endsWith("Experiment 4 elected node 2 in place of node 1.");
+        });
+        module.run(command(CollectiveOperation.BROADCAST, 10));
+        assertThat(events("MPI_ROOT_CHANGED")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("MPI_ROOT_CHANGED is not published without a default-root collective since the last reset")
+    void rootChangedNeedsAnAction() throws InterruptedException {
+        module.run(new CollectiveCommand(CollectiveOperation.BROADCAST, 10, null, 2));   // a requested root
+        cluster.assignLeader(3);
+        deliverLeaderChanges();
+        assertThat(events("MPI_ROOT_CHANGED")).isEmpty();
+
+        module.run(command(CollectiveOperation.BROADCAST, 10));   // remembers node 3
+        module.reset();
+        cluster.assignLeader(2);
+        deliverLeaderChanges();
+        assertThat(events("MPI_ROOT_CHANGED")).isEmpty();
     }
 
     @Test
@@ -402,7 +489,7 @@ class MpiModuleTest {
         assertThat(dto.transfers().get(2).lamportAfterReply()).isEqualTo(after);
         assertThat(finished.lamportTime()).isEqualTo(after);
         assertThat(started.data()).containsEntry("collectiveId", 1L).containsEntry("operation", "BROADCAST")
-                .containsEntry("count", 10).containsEntry("seed", 1L).containsEntry("rootSource", "LOWEST_LIVE_ID")
+                .containsEntry("count", 10).containsEntry("seed", 1L).containsEntry("rootSource", "LEADER")
                 .containsEntry("liveNodeIds", List.of(1, 2, 3));
         assertThat(finished.data()).containsEntry("outcome", "COMPLETE").containsEntry("delivered", 2L)
                 .containsEntry("notAttempted", 0L).containsEntry("totalNanos", dto.totalNanos())

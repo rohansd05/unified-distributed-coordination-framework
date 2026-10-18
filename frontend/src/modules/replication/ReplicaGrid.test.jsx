@@ -26,6 +26,7 @@ function everyStateView() {
   const row = derived.rows[0]
   const template = row.cells[0]
   derived.replicas = CELL_STATES.map((state, index) => ({ ...derived.replicas[0], nodeId: index + 1, reference: index === 0 }))
+  derived.referenceNodeId = 1   // changed: node 1 is the reference of these seven derived replicas
   row.cells = CELL_STATES.map((state, index) => ({
     nodeId: index + 1,
     state,
@@ -42,9 +43,9 @@ describe('ReplicaGrid', () => {
     const rows = screen.getAllByTestId('replica-row')
     expect(rows.map((row) => row.querySelector('p').textContent)).toEqual(replicasDiverged.rows.map((r) => r.key))
     const firstCells = within(rows[0]).getAllByTestId('replica-cell')
-    expect(firstCells[0].getAttribute('data-node')).toBe('1')
+    expect(firstCells[0].getAttribute('data-node')).toBe('5')
     expect(firstCells[0].getAttribute('aria-label')).toContain('the primary')
-    expect(screen.getByTestId('grid-summary').textContent).toBe('1 difference from the primary (node 1).')
+    expect(screen.getByTestId('grid-summary').textContent).toBe('1 difference from the primary (node 5).')
   })
 
   it('a missing cell says so in words and in shape (real fixture)', () => {
@@ -78,13 +79,13 @@ describe('ReplicaGrid', () => {
     expect(legend.textContent).toContain('Stale: holds an older version than the primary.')
   })
 
-  it('an unreachable replica is marked in the column list (derived: node 5 unreachable)', () => {
+  it('an unreachable replica is marked in the column list (derived: node 4 unreachable)', () => {
     const derived = copy(replicasConverged)
-    derived.replicas[4] = { ...derived.replicas[4], nodeStatus: 'CRASHED', reachable: false, epoch: null, itemCount: null, error: 'ConnectException: x' }
+    derived.replicas[3] = { ...derived.replicas[3], nodeStatus: 'CRASHED', reachable: false, epoch: null, itemCount: null, error: 'ConnectException: x' }
     renderGrid(derived)
 
     const columns = screen.getAllByTestId('replica-column')
-    expect(columns[4].textContent).toBe('Node 5, crashed, not readable')
+    expect(columns[4].textContent).toBe('Node 4, crashed, not readable')   // the primary, node 5, comes first
     expect(screen.getByTestId('grid-summary').textContent).toContain('1 replica is unreachable.')
   })
 
@@ -109,7 +110,7 @@ describe('ReplicaGrid', () => {
   it('announces the comparison politely, inside the positioned figure', () => {
     renderGrid(replicasConverged)
     const live = document.querySelector('[aria-live="polite"]')
-    expect(live.textContent).toBe('Every reachable replica matches the primary (node 1).')
+    expect(live.textContent).toBe('Every reachable replica matches the primary (node 5).')
     expect(live.closest('figure').className).toContain('relative')
   })
 })

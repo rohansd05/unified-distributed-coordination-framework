@@ -32,8 +32,9 @@ const linkClass = 'font-medium text-primary underline underline-offset-2 focus-v
 function ProblemAlert({ problem, alertRef }) {
   if (!problem) return null
   return (
-    <div ref={alertRef} tabIndex={-1} role="alert" data-testid="action-error" data-kind={problem.kind}
-      className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm focus:outline-none">
+    <div ref={alertRef} tabIndex={-1} role={problem.kind === 'no-leader' ? 'status' : 'alert'} data-testid="action-error"
+      data-kind={problem.kind} className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm focus:outline-none">
+      {problem.kind === 'no-leader' && <p className="font-medium text-warning">No leader</p>}
       <p className="font-medium">{problem.message}</p>
       {problem.kind === 'busy' && problem.actionInProgress && (
         <p className="mt-1 text-muted-foreground">Running now: {problem.actionInProgress}</p>

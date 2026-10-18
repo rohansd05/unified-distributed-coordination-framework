@@ -7,8 +7,8 @@ import com.udcf.core.cluster.NodeStatus;
  *
  * <p>No dedicated test: a record; built and tested through ReplicationModuleTest.</p>
  *
- * @param role           PRIMARY or BACKUP by the selector (lowest live node); null if every node
- *                       is crashed
+ * @param role           PRIMARY on the elected leader (Experiment 4), BACKUP on every other node;
+ *                       null while there is no leader
  * @param actingPrimary  true if its replication service acts as primary now
  * @param serviceRunning true if its replication service is listening
  * @param epoch          its store epoch (kept across a crash, as the store is); null if its

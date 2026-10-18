@@ -24,7 +24,8 @@ import unknownNode from '@/test/fixtures/matrix/error-404-unknown-node.json'
 import busy from '@/test/fixtures/matrix/error-409-busy.json'
 import rootDown from '@/test/fixtures/matrix/error-409-root-down.json'
 import noLiveNode from '@/test/fixtures/matrix/error-409-no-live-node.json'
-import overviewLeader from '@/test/fixtures/matrix/synthetic/overview-leader.json'
+import noLeader from '@/test/fixtures/matrix/synthetic/error-409-no-leader.json'
+import overviewLeader from '@/test/fixtures/matrix/overview-leader.json'
 import { RUN_TIMEOUT_MARGIN_MS } from './matrixApi'
 import { MatrixPage } from './MatrixPage'
 
@@ -206,6 +207,7 @@ describe('MatrixPage: running', () => {
       [busy, 'busy', busy.actionInProgress],
       [rootDown, 'node-down', 'Node down'],
       [noLiveNode, 'state-conflict', 'No node is live, so nothing can be the root'],
+      [noLeader, 'no-leader', noLeader.detail],   // synthetic body, from MatrixControllerTest
     ]
     for (const [body, kind, text] of cases) {
       const api = makeApi()
@@ -273,7 +275,7 @@ describe('MatrixPage: states', () => {
   it('shows the latest complete run\'s figures in the strip and per rank, and a partial run\'s withheld speedup', async () => {
     await renderPage(makeApi())
     const strip = screen.getByTestId('section-measurements')
-    expect(strip.textContent).toContain('Communication share72.3 %')
+    expect(strip.textContent).toContain('Communication share69.1 %')
     expect(screen.getAllByTestId('row-band')).toHaveLength(complete316.computes.length)
     cleanup()
     await renderPage(makeApi({ overview: withLatest(overviewAfter, partial) }))
@@ -295,9 +297,18 @@ describe('MatrixPage: states', () => {
     expect(items[2].textContent).toMatch(/^In this run \(run 8, size 100\)/)
   })
 
-  it('synthetic leader: the default root names the elected leader, as served', async () => {
+  it('the default root names the elected leader, as served (real overview with a leader)', async () => {
     await renderPage(makeApi({ overview: overviewLeader, start: overviewLeader }))
-    expect(screen.getByRole('option', { name: 'Default: node 2 (the elected leader, read from the cluster)' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Default: node 5 (the leader elected by Experiment 4)' })).toBeTruthy()
+    const hint = screen.getByTestId('matrix-root-hint').textContent
+    expect(hint).toContain('starts its election service and heartbeats on every live node')
+    expect(hint).not.toMatch(/Phase 13|lowest live/)
+  })
+
+  it('before any election the default root says Experiment 4 elects one first', async () => {
+    await renderPage(makeApi())
+    expect(screen.getByRole('option',
+      { name: 'Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)' })).toBeTruthy()
   })
 })
 

@@ -83,6 +83,14 @@ export function nodesText(ids) {
 export const itemsText = (count) => `${count} ${count === 1 ? 'item' : 'items'}`
 
 /** A ProblemDetail as the user reads it: "Node down: Node 4 is crashed". */
+/**
+ * Experiment 4 could not elect a leader, so the action has no primary (409, title "No leader"): a calm
+ * warning, not an error. Keyed on the title because the shared ApiError drops the problem's `reason`.
+ */
+export function isNoLeader(error) {
+  return error?.status === 409 && error?.title === 'No leader'
+}
+
 export function problemText(error) {
   if (!error) return ''
   const detail = error.detail || error.message || 'The request failed.'

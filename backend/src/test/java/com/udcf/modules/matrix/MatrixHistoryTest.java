@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MatrixHistoryTest {
 
     private static MatrixRunDto entry(long id) {
-        return MatrixDtoMapper.run(Instant.EPOCH, RootSource.LOWEST_LIVE_ID, MatrixTestResults.refused(id),
+        return MatrixDtoMapper.run(Instant.EPOCH, RootSource.LEADER, MatrixTestResults.refused(id),
                 MatrixTestResults.BASIS);
     }
 

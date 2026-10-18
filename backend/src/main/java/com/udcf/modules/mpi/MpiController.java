@@ -22,8 +22,9 @@ import java.util.List;
  * transfer is data, not an HTTP error.
  *
  * <p>Errors are ProblemDetail bodies. From the shared GlobalExceptionHandler: 404 for an unknown
- * root node, 409 "Node down" for a crashed requested root, 409 "Node state conflict" when every node
- * is crashed, 409 "Module busy". From this controller, in the shared shape: 400 "Invalid request
+ * root node, 409 "Node down" for a crashed root, 409 "Node state conflict" when every node
+ * is crashed, 409 "Module busy". From this controller: 409 "No leader" ({@code reason: NO_LEADER}) when
+ * no root was requested and no leader could be elected. From this controller, in the shared shape: 400 "Invalid request
  * parameters" with every offending field under {@code errors}, 404 "Unknown collective". An
  * unreadable body or a non-numeric id gets Spring's default 400, without {@code errors}.</p>
  */
@@ -88,6 +89,16 @@ public class MpiController {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
         problem.setTitle(INVALID_PARAMETERS_TITLE);
         problem.setProperty("errors", e.errors());
+        return problem;
+    }
+
+    /** No leader could be elected, so a run without a requested root has no root (never another node). */
+    @ExceptionHandler(NoLeaderException.class)
+    public ProblemDetail noLeader(NoLeaderException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problem.setTitle("No leader");
+        problem.setProperty("moduleId", MpiModule.ID);
+        problem.setProperty("reason", "NO_LEADER");
         return problem;
     }
 }

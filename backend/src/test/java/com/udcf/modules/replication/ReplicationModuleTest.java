@@ -4,6 +4,8 @@ import com.udcf.core.clock.LamportClock;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.cluster.NodeDownException;
 import com.udcf.core.cluster.NodeStatus;
 import com.udcf.core.cluster.UnknownNodeException;
@@ -51,7 +53,8 @@ import static org.awaitility.Awaitility.await;
 /**
  * The Experiment 5 module on a standalone three-node cluster with real sockets. No Spring
  * context, so crashes here never disturb other tests. No sleeps; Awaitility only waits for
- * asynchronous pushes to end.
+ * asynchronous pushes to end. No election module: the {@link RoleProvider} has no elector, so the
+ * tests play Experiment 4 with {@link Cluster#assignLeader} (node 1 leads from the start).
  *
  * <p>Test-only port bases 28140 to 28640, so node k's replication port is 2844k: below Linux's
  * ephemeral range and Windows' dynamic range, apart from every other test class.</p>
@@ -65,17 +68,21 @@ class ReplicationModuleTest {
 
     private ClusterEventBus bus;
     private Cluster cluster;
+    private RoleProvider roles;
     private ReplicationModule module;
 
     @BeforeEach
     void setUp() {
         bus = new ClusterEventBus(new EventProperties(5000, 5000), Clock.systemUTC());
         cluster = new Cluster(CLUSTER, bus);
-        module = new ReplicationModule(cluster, PROPERTIES, bus, new SimpleMeterRegistry());
+        roles = new RoleProvider(cluster, (LeaderElector) null);
+        cluster.assignLeader(1);
+        module = new ReplicationModule(cluster, PROPERTIES, bus, new SimpleMeterRegistry(), roles);
     }
 
     @AfterEach
     void tearDown() {
+        roles.close();
         cluster.close();
         bus.close();
     }
@@ -117,7 +124,7 @@ class ReplicationModuleTest {
     }
 
     @Test
-    @DisplayName("overview() on a fresh module starts nothing: no service, selector's choice only, nulls for what is unknown")
+    @DisplayName("overview() on a fresh module starts nothing: no service, the leader as the primary to be, nulls for what is unknown")
     void overviewIsReadOnly() {
         ReplicationOverviewDto overview = module.overview();
 
@@ -179,6 +186,7 @@ class ReplicationModuleTest {
     void primaryCrashFromClusterPageMakesTakeoverPending() {
         write("k", "a");
         cluster.crash(1);   // as the cluster page does
+        cluster.assignLeader(2);   // Experiment 4 re-elects
 
         for (int i = 0; i < 2; i++) {
             ReplicationOverviewDto overview = module.overview();
@@ -207,15 +215,24 @@ class ReplicationModuleTest {
     }
 
     @Test
-    @DisplayName("recover() of node 1 runs the pending takeover inside the guarded action: node 1 catches up from 2 and 3")
-    void recoverRunsPendingTakeover() {
+    @DisplayName("recover() runs no takeover; once node 1 leads again, the next write catches it up from 2 and 3")
+    void recoverRunsNoTakeover() {
         write("k", "a");
         cluster.crash(1);
+        cluster.assignLeader(2);
         write("k", "b");                       // node 2 takes over
         write("only-later", "x");
 
         module.recover(1);
+        cluster.assignLeader(1);               // the recovered highest node wins again (Experiment 4)
 
+        ReplicationOverviewDto pending = module.overview();
+        assertThat(pending.currentPrimaryNodeId()).isEqualTo(2);
+        assertThat(pending.takeoverPending()).isTrue();
+        assertThat(bus.query(ReplicationModule.ID, 1, 1000)).extracting(ClusterEvent::type)
+                .doesNotContain("CATCH_UP");
+
+        write("k2", "c");
         ReplicationOverviewDto overview = module.overview();
         assertThat(overview.currentPrimaryNodeId()).isEqualTo(1);
         assertThat(overview.takeoverPending()).isFalse();
@@ -224,6 +241,23 @@ class ReplicationModuleTest {
         assertThat(overview.lastTakeover().appliedFromCatchUp()).isEqualTo(2);
         assertThat(module.read(1, "k").item().value()).isEqualTo("b");
         assertThat(module.replicas().consistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("no leader could be elected: write, anti-entropy and stale injection answer NoLeaderException (409); nothing starts")
+    void noLeaderRefusesActions() {
+        cluster.assignLeader(null);
+
+        assertThatThrownBy(() -> write("k", "v")).isInstanceOf(NoLeaderException.class)
+                .hasMessageStartingWith("No leader could be elected");
+        assertThatThrownBy(() -> module.antiEntropy(new AntiEntropyCommand(2))).isInstanceOf(NoLeaderException.class);
+        assertThatThrownBy(() -> module.injectStale(new InjectStaleCommand(2, "k", "old")))
+                .isInstanceOf(NoLeaderException.class);
+        assertThat(noServiceStarted()).isTrue();
+        assertThat(module.status()).isEqualTo(ModuleStatus.IDLE);
+        ReplicationOverviewDto overview = module.overview();
+        assertThat(overview.primaryNodeId()).isNull();
+        assertThat(overview.nodes()).allSatisfy(n -> assertThat(n.role()).isNull());
     }
 
     // ------------------------------------------------------------------ writes
@@ -257,7 +291,7 @@ class ReplicationModuleTest {
     @Test
     @DisplayName("ASYNCHRONOUS (60 s simulated delay): PENDING and RUNNING, labelled simulated, a backup reads MISSING; reset drops the pushes")
     void asyncWriteIsPendingStaleAndLabelled() {
-        module = new ReplicationModule(cluster, LONG_DELAY, bus, new SimpleMeterRegistry());
+        module = new ReplicationModule(cluster, LONG_DELAY, bus, new SimpleMeterRegistry(), roles);
 
         WriteDto dto = module.write(new WriteCommand("k", "v", ConsistencyModel.ASYNCHRONOUS));
 
@@ -462,6 +496,7 @@ class ReplicationModuleTest {
 
         module.recover(3);
         cluster.crash(1);
+        cluster.assignLeader(2);
         write("k", "w");   // node 2 takes over; its table starts afresh
         ReplicationOverviewDto after = module.overview();
         assertThat(after.healthMeasuredByNodeId()).isEqualTo(2);

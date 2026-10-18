@@ -14,9 +14,9 @@ import java.util.List;
  * @param actionInProgress  the guarded action running now; null when not BUSY
  * @param boundName         the name every node binds its CollectiveEndpoint under
  * @param participants      every cluster node (all take part; a crashed one is skipped at the start)
- * @param defaultRootNodeId the root a collective without a requested root would get now; null when every node
- *                          is crashed
- * @param defaultRootSource LEADER or LOWEST_LIVE_ID; null when every node is crashed
+ * @param defaultRootNodeId the root a collective without a requested root would get now (the leader); null when no
+ *                          leader
+ * @param defaultRootSource LEADER; null while there is no leader (a read never starts an election)
  * @param latencyBasis      what a transfer's latencyNanos measures
  * @param payloadSizeBasis  what requestBytes and replyBytes measure
  * @param algorithmNote     how the collectives are carried out (linear, from the root)

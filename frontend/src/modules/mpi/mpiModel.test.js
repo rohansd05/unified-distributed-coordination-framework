@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import overviewBefore from '@/test/fixtures/mpi/overview-before-start.json'
 import overviewAfter from '@/test/fixtures/mpi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/mpi/overview-node-crashed.json'
+import overviewLeader from '@/test/fixtures/mpi/overview-leader.json'
 import startFixture from '@/test/fixtures/mpi/start.json'
 import startWithFailure from '@/test/fixtures/mpi/start-with-failure.json'
 import broadcast from '@/test/fixtures/mpi/collective-broadcast.json'
@@ -133,10 +134,11 @@ describe('fanModel', () => {
     expect(model.arrows.map((a) => a.peer)).toEqual([2, 4, 5])
   })
 
-  it('centres a requested root, and the default root when nothing has run', () => {
+  it('centres a requested root, the leader as the default root when nothing has run, and none before any election', () => {
     expect(fanModel(overviewAfter, requestedRoot).rootId).toBe(3)
+    expect(fanModel(overviewLeader, null)).toMatchObject({ rootId: 5, arrows: [], hasCollective: false })
     const idle = fanModel(overviewBefore, null)
-    expect(idle).toMatchObject({ rootId: 1, arrows: [], hasCollective: false })
+    expect(idle).toMatchObject({ rootId: null, arrows: [], hasCollective: false })
     expect(idle.nodes.every((n) => n.state === 'not-started')).toBe(true)
   })
 })
@@ -144,10 +146,10 @@ describe('fanModel', () => {
 describe('chartModel', () => {
   it('gives a latency only to delivered transfers and scales to the slowest', () => {
     const model = chartModel(partial)
-    expect(model.slots.map((s) => [s.rank, s.status, s.nanos])).toEqual([[0, 'LOCAL', null], [1, 'DELIVERED', 25739700],
-      [2, 'DELIVERED', 5649700], [3, 'DELIVERED', 3891800], [4, 'FAILED', null]])
-    expect(model.slots[4].timeToFailureNanos).toBe(21944300)   // kept apart, never as a latency
-    expect(model.max).toBe(25739700)
+    expect(model.slots.map((s) => [s.rank, s.status, s.nanos])).toEqual([[0, 'LOCAL', null], [1, 'DELIVERED', 29169100],
+      [2, 'DELIVERED', 4087600], [3, 'DELIVERED', 3290500], [4, 'FAILED', null]])
+    expect(model.slots[4].timeToFailureNanos).toBe(771800)   // kept apart, never as a latency
+    expect(model.max).toBe(29169100)
   })
 
   it('has no slots for a refused collective', () => {
@@ -164,8 +166,8 @@ describe('historyRows and noticeModel', () => {
   it('keeps the backend order and keys rows by id and start time', () => {
     const rows = historyRows(history)
     expect(rows.map((r) => r.id)).toEqual([7, 6, 5, 4, 3, 2, 1])
-    expect(rows[0].key).toBe('7-2026-10-13T14:41:46.056522900Z')
-    expect(rows[6]).toMatchObject({ outcome: 'PARTIAL', totalNanos: 62695100, counts: { remote: 4, delivered: 3 } })
+    expect(rows[0].key).toBe('7-2026-10-18T10:41:09.243404200Z')
+    expect(rows[6]).toMatchObject({ outcome: 'PARTIAL', totalNanos: 44541000, counts: { remote: 4, delivered: 3 } })
     expect(rows[0]).toMatchObject({ outcome: 'REFUSED', totalNanos: null })
     expect(historyRows(null)).toEqual([])
   })
@@ -175,8 +177,8 @@ describe('historyRows and noticeModel', () => {
     expect(empty).toHaveLength(3)
     expect(empty.join(' ')).not.toContain('Measured here')
     const full = noticeModel(history)
-    expect(full[0]).toContain('Measured here: broadcast 6 took 6.772 ms in total for 3 remote transfers.')
-    expect(full[1]).toContain('in collective 1 the transfer with node 5 failed at the registry lookup with connection refused after 21.944 ms')
+    expect(full[0]).toContain('Measured here: broadcast 6 took 4.429 ms in total for 3 remote transfers.')
+    expect(full[1]).toContain('in collective 1 the transfer with node 5 failed at the registry lookup with connection refused after 771.8 µs')
     expect(full[2]).toContain(`Latest refusal: ${refused.refusal.message}`)
     expect(noticeModel([skipped])[1]).toContain('collective 6 skipped node 3.')
   })

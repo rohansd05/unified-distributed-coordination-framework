@@ -62,7 +62,7 @@ import java.util.function.Supplier;
  *
  * <p><b>Primary role and epochs.</b> A node acts as primary only after
  * {@link #becomePrimary(long)}; who should be primary is decided outside (Exp 5:
- * {@link ReplicaSet} with the module-local {@link ReplicationRoleSelector}; Exp 8: failover).
+ * {@link ReplicaSet}, the elected leader; Exp 8: failover to the elected leader).
  * Every push carries the primary's epoch. The node stops acting as primary, and publishes
  * {@code PRIMARY_SUPERSEDED} once, as soon as it learns a higher epoch: from a
  * {@link ApplyResult#STALE_EPOCH} reply to its own push, from a push by a newer primary, or

@@ -9,7 +9,7 @@ function entryTitle(entry) {
 
 function entryDetail(entry) {
   if (entry.previousNodeId === null) {
-    return 'First selection: the lowest live node. Nothing to catch up.'
+    return 'First selection: the leader elected by Experiment 4. Nothing to catch up.'
   }
   const sources = entry.catchUpSources.length > 0
     ? `Caught up ${itemsText(entry.appliedFromCatchUp ?? 0)} from ${nodesText(entry.catchUpSources)}`
@@ -28,8 +28,8 @@ function catchUpLine(catchUp) {
 /**
  * Who has been the replication primary, as a small timeline: each selection (from the module's
  * PRIMARY_SELECTED events, in causal order, with its Lamport time), the per-source catch-up
- * counts of the latest takeover, and a dashed marker when the selector already picks another
- * node, which takes over at the next write, anti-entropy, stale update or recover. Horizontal
+ * counts of the latest takeover, and a dashed marker when Experiment 4 has already elected
+ * another leader, which takes over at the next write, anti-entropy or stale update. Horizontal
  * from the small breakpoint up, stacked on a phone.
  *
  * @param {object} props
@@ -40,7 +40,7 @@ export function TakeoverTimeline({ model }) {
   if (entries.length === 0 && !pending) {
     return (
       <p data-testid="takeover-timeline" className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        No primary selected yet. The first write selects the lowest live node.
+        No primary selected yet. The first write makes the leader elected by Experiment 4 the primary.
       </p>
     )
   }
@@ -77,8 +77,8 @@ export function TakeoverTimeline({ model }) {
         >
           <p className="font-medium">Pending: node {pending.nodeId} takes over next</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Node {pending.fromNodeId} was the primary. Node {pending.nodeId} is now the lowest live node, so the next
-            write, anti-entropy, stale update or recover runs the takeover: it catches up first, then pushes. Reading
+            Node {pending.fromNodeId} was the primary. Experiment 4 has elected node {pending.nodeId} as leader, so
+            the next write, anti-entropy or stale update runs the takeover: it catches up first, then pushes. Reading
             this page changes nothing.
           </p>
         </li>

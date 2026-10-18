@@ -10,7 +10,7 @@ import { formatMillis, modelLabel, moduleStatusLabel } from './labels'
 import { PendingWindow } from './PendingWindow'
 import { ReplicaGrid } from './ReplicaGrid'
 import { ReplicationControls } from './ReplicationControls'
-import { gridModel, pendingWindow, timelineModel } from './replicaModel'
+import { gridModel, pendingWindow, primaryLine, timelineModel } from './replicaModel'
 import { replicationApi } from './replicationApi'
 import { TakeoverTimeline } from './TakeoverTimeline'
 import { useReplication } from './useReplication'
@@ -19,7 +19,7 @@ import { useReplication } from './useReplication'
 export const TIMELINE_EVENT_LIMIT = 500
 
 const HOW_IT_WORKS = [
-  'Every node keeps its own copy of the same small key-value store. One node, the primary, accepts each write and sends it over TCP to every other node, the backups. Until the leader election is wired in, the primary is simply the lowest-numbered node that is up.',
+  'Every node keeps its own copy of the same small key-value store. One node, the primary, accepts each write and sends it over TCP to every other node, the backups. The primary is the leader elected by Experiment 4 (Bully: the highest-numbered live node). With no leader yet, the next write, anti-entropy or stale update first asks Experiment 4 for an election, which starts its election service and heartbeats on every live node; if no leader can be elected, the action is refused. Reading this page never starts an election.',
   'A synchronous write waits until every backup has answered before it tells the client the write succeeded. An asynchronous write tells the client at once and sends the update afterwards, so for a short time a backup can still hold the old value.',
   'When two versions of a key meet, each replica keeps the one with the higher Lamport time, and the node id breaks a tie. That rule also lets a backup refuse an older update that arrives late.',
   'A crashed backup misses writes and stays behind after it recovers. Anti-entropy repairs it: the primary pushes its whole store, and the backup keeps only what is newer. When the primary changes, the new primary first pulls every live replica\'s store, so it holds what it missed, then pushes its store to the backups.',
@@ -111,9 +111,7 @@ export function ReplicationPage({ experiment, api = replicationApi }) {
             {overview.actionInProgress && <span className="text-muted-foreground"> ({overview.actionInProgress})</span>}
             <span className="text-muted-foreground">
               {'. '}
-              {overview.primaryNodeId != null
-                ? `The primary is node ${overview.primaryNodeId}, the lowest live node.`
-                : 'Every node is crashed, so there is no primary.'}
+              {primaryLine(overview)}
             </span>
           </p>
           <ReplicationControls overview={overview} keys={keys} api={api} disabled={busy}

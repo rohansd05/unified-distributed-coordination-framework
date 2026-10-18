@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"No leader","status":409,"detail":"No leader could be elected, so Experiment 5 has no primary: no live node won an election in time. Recover a node or reset the cluster, then try again.","instance":"/api/modules/replication/writes","moduleId":"replication","reason":"NO_LEADER"}

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { NotAvailable } from '@/modules/rmi/CallResult'
-import { nodeStatusText, operationLabel, rootSourceLabel } from './labels'
+import { defaultRootText, nodeStatusText, operationLabel } from './labels'
 import { COLLECTIVE_TIMEOUT_MARGIN_MS, collectiveTimeoutMs } from './mpiApi'
 import { collectiveBody, operationEntry, validateCollective } from './mpiModel'
 
@@ -110,9 +110,7 @@ export function MpiControls({ overview, pending, serverErrors, onRun, onCrash, o
     if (Object.keys(found).length === 0) onRun(collectiveBody(form))
   }
 
-  const defaultRoot = overview.defaultRootNodeId === null || overview.defaultRootNodeId === undefined
-    ? 'Default: none, every node is down'
-    : `Default: node ${overview.defaultRootNodeId} (${rootSourceLabel(overview.defaultRootSource)})`
+  const defaultRoot = defaultRootText(overview, nodes)
 
   return (
     <div className="space-y-4">
@@ -137,7 +135,7 @@ export function MpiControls({ overview, pending, serverErrors, onRun, onCrash, o
               value={form.seed} onChange={update('seed')} disabled={busy} />
           </Field>
           <Field id="mpi-root" label="Root node"
-            hint="Without a choice the root is the elected leader, read from the cluster, otherwise the lowest live node. The leader becomes the MPI root fully in Phase 13.">
+            hint="Without a choice the root is the leader elected by Experiment 4. With no leader yet, the collective first asks Experiment 4 for an election, which starts its election service and heartbeats on every live node; if no leader can be elected, the collective is refused. Reading this page never starts an election.">
             <select {...fieldProps('mpi-root', null)} className={inputClass} value={form.rootNode}
               onChange={update('rootNode')} disabled={busy}>
               <option value="">{defaultRoot}</option>

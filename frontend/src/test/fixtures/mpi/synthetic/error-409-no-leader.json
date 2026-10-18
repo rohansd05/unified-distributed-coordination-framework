@@ -1,0 +1,1 @@
+{"type":"about:blank","title":"No leader","status":409,"detail":"No leader could be elected, so a collective has no root: no live node won an election in time. Recover a node or reset the cluster, then try again, or choose a root.","instance":"/api/modules/mpi/collectives","moduleId":"mpi","reason":"NO_LEADER"}

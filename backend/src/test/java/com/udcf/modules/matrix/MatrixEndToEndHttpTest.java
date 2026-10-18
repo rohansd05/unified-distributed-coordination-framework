@@ -94,7 +94,7 @@ class MatrixEndToEndHttpTest {
     private JsonNode run(int size) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        return read(http.postForEntity(BASE + "/runs", new HttpEntity<>("{\"size\":" + size + ",\"seed\":42}", headers),
+        return read(http.postForEntity(BASE + "/runs", new HttpEntity<>("{\"rootNode\":1,\"size\":" + size + ",\"seed\":42}", headers),
                 String.class));
     }
 

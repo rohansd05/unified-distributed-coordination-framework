@@ -59,6 +59,514 @@
 
 ---
 
+## Phase 9A (R19)
+
+- **Plan:** [docs/tracks/README.md](README.md) Section 11 (steps, owners, dependencies).
+
+### Steps
+- [x] 9A.3 — Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root from the shared role provider (link L1); `TODO(L1)` selectors removed; the Experiment 5 / Experiment 8 interference removed; fixtures recaptured; page hints updated. Needs: 9A.1.
+- [ ] 9A.5 — Timeline page `/timeline`: events from every module ordered by `(lamportTime, nodeId)`, module and node filters, live updates. Needs: 9A.0.
+- [ ] 9A.7 — Scenarios "Analyse the incident with MapReduce" and "The leader dies during a matrix multiply"; the Scenarios page `/scenarios`. Needs: 9A.6.
+
+### 9A.3 (fast mode)
+
+**What changed.**
+- **Experiment 5 (replication).** `ReplicationRoleSelector` and its test are deleted.
+  - `ReplicaSet` takes the `RoleProvider`. `leader()` is `ensureLeader()` or `NoLeaderException`, and `selectedPrimaryId()` is the read-only `leaderId()`. `primary(int leader)`, `write(int leader, …)`, `antiEntropy(int leader, …)` and `injectStale(int leader, …)` take the leader.
+  - `ReplicationModule` gets the leader on the request thread, before its guard, for write, anti-entropy and stale injection. "Every node crashed" stays the plain 409; no leader is a 409 with `reason: NO_LEADER`.
+  - `primary(leader)` starts the service on every live node.
+  - If the leader already acts as primary at any epoch, and no live peer acts as primary at that epoch or above, nothing moves: no step-down, no takeover, no event, no role publish. The second condition is needed because a recovered old primary still believes it is primary.
+  - Otherwise it steps down any other acting primary and takes over (catch-up, then push) if the leader is not the node made primary last. It acts at the highest of its own epoch and every stepped-down node's epoch (R1: epochs never go down), publishes `PRIMARY_SELECTED` (`reason: "elected leader"`), then `RoleProvider.publishReplicationRoles(leader, liveBackups)`.
+  - Recover runs no takeover (ruling (c)). A recovered backup gets every later write through its reopened service, and anti-entropy repairs what it missed (R4, `ReplicaSetTest.recoveredBackupGetsTheNextWrite`).
+- **Experiments 9 and 10 (mpi, matrix).** `MpiRoleSelector`, its test and `RootSource.LOWEST_LIVE_ID` are deleted.
+  - A requested root still wins (`REQUESTED`).
+  - Otherwise `MpiModule.defaultRoot(cluster, roles, what)` applies: "every node crashed" stays the plain 409, then `ensureLeader()` on the request thread, before the guard, gives `LEADER`. Empty is `mpi.NoLeaderException`, a 409 with `NO_LEADER`; Experiment 10 uses the same rule.
+  - If the root crashed by the time the guard is taken, the answer is 409 Node down.
+  - Overviews read `leaderId()` only: `defaultRootNodeId` / `defaultRootSource` are null before any election.
+- **`MPI_ROOT_CHANGED`** is published only by mpi (ruling (a)), with 9A.4's CAS-plus-lock rule: the leader listener and the next default-root collective race on one compare-and-set inside a `synchronized` block.
+  - **R3, copied from 9A.4:** the first default root after a reset publishes nothing (only remembered). The event exists only for a change, never for a vacancy or a reset.
+  - Only default-root collectives count as the module having acted (ruling (d)).
+  - `cause` uses 9A.4's vocabulary: `LEADER_CRASHED` (the previous root is down) or `ELECTED`.
+- **Reads never elect** (ruling (b)): every overview, read, `replicas()` and `crashBackup`'s primary check use `leaderId()`.
+- **Pages.**
+  - The Experiment 5 intro and status line ("The primary is node 5, the leader elected by Experiment 4." / "No leader yet: the next write asks Experiment 4 to elect one, and that node becomes the primary.") and the takeover timeline name the leader.
+  - The Experiment 9 and 10 root hints name the leader and the side effect, and the default option reads "Default: node 5 (the leader elected by Experiment 4)" or "Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)".
+  - The Experiment 9 map says "no leader yet" instead of "no live node" when that is the reason.
+  - 409 "No leader" is a calm amber `role="status"` on all three pages, keyed on status 409 plus title "No leader" in `rmiApi.describeProblem` (kind `no-leader`) and in Experiment 5's `isNoLeader`.
+  - An unknown `rootSource` shows its raw value (R2). Before any election the anti-entropy and stale-update targets are every live node (no node holds a role yet).
+- **Side effect, documented in the module Javadoc and the page hints:** with no leader, an Experiment 5 write, anti-entropy or stale update, and an Experiment 9 or 10 run without a requested root, ask Experiment 4 for an election. That starts its election service and the failure detector's heartbeats on every live node (a `REQUESTED` Bully round, at most about 3.1 s).
+- **Spring contract tests** (`MpiControllerTest`, `MpiEndToEndTest`, `MpiNeverStartedNodeTest`, the three matrix Spring tests) now name root 1, so they test what they were written for without starting an election. The leader path is covered by `MpiModuleTest`, `MatrixModuleTest`, the standalone `noLeader` controller tests and `LeaderRolesIntegrationTest`.
+
+**Interfaces for other tracks (9A.5 timeline, 9A.6 and 9A.7 scenarios, 9A.8 map).**
+- **`MPI_ROOT_CHANGED`**: module `mpi`, node = the new root, Lamport = one tick of its clock, peer = the previous root, data `{nodeId, previousNodeId, cause}`.
+  - Message: "Node 4 is the MPI root for the next collective: node 5 crashed and Experiment 4 elected node 4." or "…: Experiment 4 elected node 5 in place of node 4."
+  - Published at most once per new leader, only after a default-root collective since the last reset.
+  - By bus sequence it comes after the `LEADER_CHANGED` that elected the new leader and before the next `COLLECTIVE_STARTED`. As in 9A.4, its `(lamportTime, nodeId)` order against `LEADER_CHANGED` is not causal.
+- **Experiment 5** publishes no new event. `REPLICATION_ROLES_CHANGED` (9A.1) follows each Experiment 5 appointment, and `PRIMARY_SELECTED.data.reason` is `"elected leader"`.
+- **REST:**
+  - 409 `{title: "No leader", moduleId, reason: "NO_LEADER"}` on `POST /api/modules/replication/{writes,anti-entropy,stale-injections}`, and on `POST /api/modules/mpi/collectives` and `POST /api/modules/matrix/runs` without `rootNode`.
+  - `GET /api/modules/replication`: `primaryNodeId` = the leader (null: none yet), and node `role` is null while there is no leader.
+  - `rootSource` is `REQUESTED` or `LEADER` only.
+- **Java:**
+  - Constructors gained `RoleProvider`: `ReplicaSet`, `ReplicationModule`, `MpiModule` (now `AutoCloseable`; it closes its leader listener) and `MatrixModule`.
+  - New public API: `MpiModule.defaultRoot(Cluster, RoleProvider, String)`, `MpiModule.Root`, `mpi.NoLeaderException(String)`, `replication.NoLeaderException`.
+- **Experiment 8 note 8** (`FaultToleranceModule.java:617`, "Until Phase 9A this experiment and Experiment 5 share each node's replication service, so a write on the Experiment 5 page can move the primary.") is obsolete after 9A.3 (for Swanand). The faulttolerance package was not edited.
+
+**Test ports** (block 28100-28899; free decades found by a search of the test sources):
+- `LeaderRolesIntegrationTest`: bases 28180 (RMI), 28190 (clock), 28220 (election), 28230 (replication), 28260 (requests), 28270 (MapReduce, never bound).
+- Election bases: `ReplicationControllerTest` 28120, `MpiControllerTest` 28130, `MpiEndToEndTest` 28160, `MpiNeverStartedNodeTest` 28170.
+- The standalone `noLeader` tests use bases 28460-28490 and 28360-28370 as numbers only (nothing binds).
+- Still free: 28320, 28330, 28380, 28390.
+
+**Known issues.**
+- (a) **Failover window (for Swanand's scenarios and the 9A.8 map).** Between a re-election and Experiment 8's promotion of the new leader (at most about 4 s), an Experiment 5 action makes the leader primary at its current epoch (at least the epoch of the node it steps down). Experiment 8 then promotes it at e + 1, which is allowed because epochs only rise. Untested.
+- (b) **Backups after a recovery.** Experiment 5 publishes PRIMARY/BACKUP only when it appoints a primary, so a backup recovered later shows no BACKUP role on the Cluster page until the next appointment. Writes still reach it. Republishing on every action could overwrite Experiment 8's view of the backups.
+- (c) Right after a requested election the election module is BUSY until its round closes, so a cluster reset answers 409 for a moment (existing behaviour). The capture's last reset needed 3 tries.
+- (d) R5 is checked with one existing event: `LeaderRolesIntegrationTest` asserts `PRIMARY_PROMOTED` on the leader after Experiment 5 had already made it primary.
+- (e) The Timeline and Scenarios pages still show their placeholders ("extended in Phase 13"); they are replaced in 9A.5 and 9A.7.
+- (f) The fixture READMEs' tables quote figures from the earlier captures; the 9A.3 section at the top of each says so.
+
+**Gaps in other tracks' packages.**
+- Swanand: Experiment 8 note 8 is obsolete (above).
+- Swanand: `frontend/src/test/fixtures/faulttolerance/README.md` lines 18 and 126 describe the pre-9A.1 lowest-live failover (history text, not served).
+- 9A.2's "Gaps for owners" listed none for my packages.
+
+**Fixtures.**
+- Recaptured on 2026-10-18 by the block below: all of mpi, matrix and replication except the busy files, 88 kept responses, every one with the expected status.
+- New real captures: `mpi/collective-leader-root.json`, `mpi/overview-leader.json`, `matrix/run-leader-root.json`, `matrix/overview-leader.json`.
+- New synthetic files: `{replication,mpi,matrix}/synthetic/error-409-no-leader.json`. The five matrix synthetic files' `rootSource` became `REQUESTED`. The README of each folder describes the changes.
+
+<details>
+<summary>The 9A.3 capture block (run once on 2026-10-18, fresh backend, Windows PowerShell 5.1)</summary>
+
+In short:
+1. MPI sequence (E9c table, default-root requests with `"rootNode":1`, port 1105 blocked by a .NET socket for the start failure); cluster reset.
+2. Matrix sequence (E10c table, same changes); cluster reset.
+3. Experiment 5 sequence (E5c table, with the leader crash and recovery of node 5 instead of node 1, waiting for the re-elections).
+4. The four leader-root captures; cluster reset.
+
+Before every reset it waits while `@((Invoke-RestMethod "$Api/api/modules") | Where-Object { $_.status -eq 'BUSY' } | ForEach-Object { $_.id })` is not empty, and retries a 409 (at most 20 tries, 500 ms apart).
+
+```powershell
+# 9A.3 fixture recapture: Experiment 9 (mpi), Experiment 10 (matrix), Experiment 5 (replication), then the new
+
+# LEADER-root captures. Needs a FRESH backend: cd backend; .\mvnw.cmd spring-boot:run  (frontend not needed).
+
+# Run in a separate Windows PowerShell 5.1 terminal; close it afterwards. Writes only under frontend\src\test\fixtures.
+
+& {
+
+    $Repo = 'C:\Users\rohan\Desktop\DC\PROGRAM\unified-distributed-coordination-framework'
+
+    $Api = 'http://localhost:8080'
+
+    $Fx = Join-Path $Repo 'frontend\src\test\fixtures'
+
+    $Tmp = Join-Path $env:TEMP 'udcf-9a3-capture'
+
+    New-Item -ItemType Directory -Force $Tmp | Out-Null
+
+    $Utf8 = New-Object System.Text.UTF8Encoding $false
+
+    $Results = New-Object System.Collections.Generic.List[object]
+
+    $Warnings = New-Object System.Collections.Generic.List[string]
+
+
+
+    function Send-Request([string]$Method, [string]$Path, [string]$Body, [string]$Out) {
+
+        if ($Body) {
+
+            $bodyFile = Join-Path $Tmp 'body.json'
+
+            [System.IO.File]::WriteAllText($bodyFile, $Body, $Utf8)
+
+            return (curl.exe -s -o $Out -w '%{http_code}' -X $Method -H 'Content-Type: application/json' --data-binary "@$bodyFile" "$Api$Path")
+
+        }
+
+        if ($Method -eq 'GET') { return (curl.exe -s -o $Out -w '%{http_code}' "$Api$Path") }
+
+        return (curl.exe -s -o $Out -w '%{http_code}' -X $Method "$Api$Path")
+
+    }
+
+    # Kept: saved under fixtures\<File>, listed in the final table.
+
+    function Save([string]$Method, [string]$Path, [string]$Body, [string]$File, [string]$Expect) {
+
+        $out = Join-Path $Fx $File
+
+        $code = Send-Request $Method $Path $Body $out
+
+        $bytes = 0
+
+        if (Test-Path $out) { $bytes = (Get-Item $out).Length }
+
+        $Results.Add([pscustomobject]@{ File = $File; HTTP = $code; Expected = $Expect; Bytes = $bytes; OK = ($code -eq $Expect -and $bytes -gt 0) })
+
+        "$Method $code $File"
+
+    }
+
+    # Not kept: run, response discarded.
+
+    function Call([string]$Method, [string]$Path, [string]$Body, [string]$Expect = '200') {
+
+        $code = Send-Request $Method $Path $Body 'NUL'
+
+        if ($code -ne $Expect) { $Warnings.Add("$Method $Path answered $code, expected $Expect") }
+
+        "$Method $code $Path (not kept)"
+
+    }
+
+    function Wait-Until([string]$What, [scriptblock]$Condition, [int]$Seconds = 30) {
+
+        $deadline = (Get-Date).AddSeconds($Seconds)
+
+        while ($true) {
+
+            $ok = $false
+
+            try { $ok = [bool](& $Condition) } catch { $ok = $false }
+
+            if ($ok) { return }
+
+            if ((Get-Date) -gt $deadline) { $Warnings.Add("Timed out waiting for $What"); return }
+
+            Start-Sleep -Milliseconds 250
+
+        }
+
+    }
+
+    function Reset-Cluster {
+
+        for ($try = 1; $try -le 20; $try++) {
+
+            $busy = @((Invoke-RestMethod "$Api/api/modules") | Where-Object { $_.status -eq 'BUSY' } | ForEach-Object { $_.id })
+
+            if ($busy.Count -eq 0) {
+
+                $code = curl.exe -s -o NUL -w '%{http_code}' -X POST "$Api/api/cluster/reset"
+
+                if ($code -eq '204') { "Cluster reset (try $try)"; return }
+
+                "Cluster reset answered HTTP $code (try $try); retrying"
+
+            } else {
+
+                "Waiting for busy modules: $($busy -join ', ') (try $try)"
+
+            }
+
+            Start-Sleep -Milliseconds 500
+
+        }
+
+        $Warnings.Add('Cluster reset kept failing after 20 tries')
+
+    }
+
+    function Block-Port([int]$Port) {
+
+        $socket = New-Object System.Net.Sockets.Socket([System.Net.Sockets.AddressFamily]::InterNetwork,
+
+            [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Tcp)
+
+        $socket.Bind((New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('127.0.0.1'), $Port)))   # bound, never listening
+
+        return $socket
+
+    }
+
+    function Replication-Primary { (Invoke-RestMethod "$Api/api/modules/replication").primaryNodeId }
+
+
+
+    # ---------------------------------------------------------------- health
+
+    $health = curl.exe -s -o NUL -w '%{http_code}' "$Api/api/system/health"
+
+    if ($health -ne '200') { Write-Warning "Backend not healthy (HTTP $health). Start a fresh backend and run this again."; return }
+
+    "Backend healthy"
+
+
+
+    # ---------------------------------------------------------------- Experiment 9 (fresh backend; no election runs here)
+
+    $M = '/api/modules/mpi'
+
+    Save GET $M $null 'mpi\overview-before-start.json' '200'
+
+    Save GET "$M/collectives/latest" $null 'mpi\error-404-no-collective-yet.json' '404'
+
+    $blocker = Block-Port 1105
+
+    Save POST "$M/start" $null 'mpi\start-with-failure.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"seed":42,"rootNode":1}' 'mpi\collective-partial.json' '200'
+
+    $blocker.Close()
+
+    Save POST "$M/start" $null 'mpi\start.json' '200'
+
+    Save GET $M $null 'mpi\overview-after-start.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"seed":42,"rootNode":1}' 'mpi\collective-broadcast.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"SCATTER","count":1003,"seed":42,"rootNode":1}' 'mpi\collective-scatter.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"GATHER","count":1003,"seed":42,"rootNode":1}' 'mpi\collective-gather.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"seed":42,"rootNode":3}' 'mpi\collective-requested-root.json' '200'
+
+    Call POST '/api/cluster/nodes/3/crash'
+
+    Save GET $M $null 'mpi\overview-node-crashed.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"seed":42,"rootNode":1}' 'mpi\collective-node-crashed-skipped.json' '200'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"rootNode":3}' 'mpi\error-409-root-down.json' '409'
+
+    Save POST "$M/collectives" '{"operation":"SCATTER","count":3,"seed":42,"rootNode":1}' 'mpi\collective-refused.json' '200'
+
+    foreach ($k in 1, 2, 4, 5) { Call POST "/api/cluster/nodes/$k/crash" }
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000}' 'mpi\error-409-no-live-node.json' '409'
+
+    foreach ($k in 1..5) { Call POST "/api/cluster/nodes/$k/recover" }
+
+    Save POST "$M/collectives" '{}' 'mpi\error-400-missing-fields.json' '400'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":100001}' 'mpi\error-400-count.json' '400'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":5,"seed":-1}' 'mpi\error-400-seed.json' '400'
+
+    Save POST "$M/collectives" '{"operation":"FOO","count":5}' 'mpi\error-400-unreadable.json' '400'
+
+    Save GET "$M/collectives/abc" $null 'mpi\error-400-bad-id.json' '400'
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":5,"rootNode":9}' 'mpi\error-404-unknown-node.json' '404'
+
+    Save GET "$M/collectives/999" $null 'mpi\error-404-unknown-collective.json' '404'
+
+    Save GET "$M/collectives" $null 'mpi\collectives-history.json' '200'
+
+    Save GET "$M/collectives/latest" $null 'mpi\collective-latest.json' '200'
+
+    Save GET "$M/collectives/2" $null 'mpi\collective-by-id.json' '200'
+
+    Save GET '/api/events?module=mpi&limit=200' $null 'mpi\events.json' '200'
+
+    Save GET '/api/events/export?module=mpi&limit=40' $null 'mpi\events-export.txt' '200'
+
+    Reset-Cluster
+
+
+
+    # ---------------------------------------------------------------- Experiment 10 (no election runs here)
+
+    $X = '/api/modules/matrix'
+
+    Save GET $X $null 'matrix\overview-before-start.json' '200'
+
+    Save GET "$X/runs/latest" $null 'matrix\error-404-no-run-yet.json' '404'
+
+    Save GET "$X/series" $null 'matrix\series-before-runs.json' '200'
+
+    $blocker = Block-Port 1105
+
+    Save POST "$X/start" $null 'matrix\start-with-failure.json' '200'
+
+    Save POST "$X/runs" '{"size":100,"seed":42,"rootNode":1}' 'matrix\run-partial.json' '200'
+
+    foreach ($k in 2, 3, 4) { Call POST "/api/cluster/nodes/$k/crash" }
+
+    Save POST "$X/runs" '{"size":100,"seed":42,"rootNode":1}' 'matrix\run-failed.json' '200'
+
+    foreach ($k in 2, 3, 4) { Call POST "/api/cluster/nodes/$k/recover" }
+
+    $blocker.Close()
+
+    Save POST "$X/start" $null 'matrix\start.json' '200'
+
+    Save GET $X $null 'matrix\overview-after-start.json' '200'
+
+    foreach ($n in 50, 100, 200, 316) { Save POST "$X/runs" "{`"size`":$n,`"seed`":42,`"rootNode`":1}" "matrix\run-complete-$n.json" '200' }
+
+    Save GET "$X/series" $null 'matrix\series.json' '200'
+
+    Save POST "$X/runs" '{"size":100,"seed":42,"rootNode":3}' 'matrix\run-requested-root.json' '200'
+
+    Call POST '/api/cluster/nodes/3/crash'
+
+    Save GET $X $null 'matrix\overview-node-crashed.json' '200'
+
+    Save POST "$X/runs" '{"size":100,"seed":42,"rootNode":1}' 'matrix\run-node-crashed-skipped.json' '200'
+
+    Save POST "$X/runs" '{"size":100,"rootNode":3}' 'matrix\error-409-root-down.json' '409'
+
+    Save POST "$X/runs" '{"size":3,"seed":42,"rootNode":1}' 'matrix\run-refused.json' '200'
+
+    foreach ($k in 1, 2, 4, 5) { Call POST "/api/cluster/nodes/$k/crash" }
+
+    Save POST "$X/runs" '{"size":100}' 'matrix\error-409-no-live-node.json' '409'
+
+    foreach ($k in 1..5) { Call POST "/api/cluster/nodes/$k/recover" }
+
+    Save POST "$X/runs" '{"size":317}' 'matrix\error-400-size-above-max.json' '400'
+
+    Save POST "$X/runs" '{"size":1}' 'matrix\error-400-size-below-min.json' '400'
+
+    Save POST "$X/runs" '{"size":50,"seed":-1}' 'matrix\error-400-seed.json' '400'
+
+    Save POST "$X/runs" '{}' 'matrix\error-400-missing-fields.json' '400'
+
+    Save POST "$X/runs" '{"size":"abc"}' 'matrix\error-400-unreadable.json' '400'
+
+    Save GET "$X/runs/abc" $null 'matrix\error-400-bad-id.json' '400'
+
+    Save POST "$X/runs" '{"size":50,"rootNode":9}' 'matrix\error-404-unknown-node.json' '404'
+
+    Save GET "$X/runs/999" $null 'matrix\error-404-unknown-run.json' '404'
+
+    Save GET "$X/series" $null 'matrix\series-after-more-runs.json' '200'
+
+    Save GET "$X/runs" $null 'matrix\runs-history.json' '200'
+
+    Save GET "$X/runs/latest" $null 'matrix\run-latest.json' '200'
+
+    Save GET "$X/runs/3" $null 'matrix\run-by-id.json' '200'
+
+    Save GET '/api/events?module=matrix&limit=200' $null 'matrix\events.json' '200'
+
+    Save GET '/api/events/export?module=matrix&limit=40' $null 'matrix\events-export.txt' '200'
+
+    Reset-Cluster
+
+
+
+    # ---------------------------------------------------------------- Experiment 5 (the first write elects the leader, node 5)
+
+    $R = '/api/modules/replication'
+
+    Save GET $R $null 'replication\overview-before.json' '200'
+
+    Save POST "$R/writes" '{"key":"balance","value":"1000","model":"SYNCHRONOUS"}' 'replication\write-sync.json' '200'
+
+    Save POST "$R/writes" '{"key":"balance","value":"2000","model":"ASYNCHRONOUS"}' 'replication\write-async.json' '200'
+
+    Save GET "$R/nodes/2/values?key=balance" $null 'replication\read-stale.json' '200'
+
+    Wait-Until 'Experiment 5 idle' { (Invoke-RestMethod "$Api$R").status -eq 'IDLE' }
+
+    Save GET $R $null 'replication\overview-after-async.json' '200'
+
+    Save GET "$R/nodes/2/values?key=balance" $null 'replication\read-current.json' '200'
+
+    Save POST "$R/nodes/3/crash" $null 'replication\crash-backup.json' '200'
+
+    Save POST "$R/writes" '{"key":"region","value":"eu;west~1","model":"SYNCHRONOUS"}' 'replication\write-while-backup-down.json' '200'
+
+    Save GET "$R/nodes/3/values?key=region" $null 'replication\read-unreachable.json' '200'
+
+    Save POST "$R/nodes/3/recover" $null 'replication\recover-backup.json' '200'
+
+    Save GET "$R/replicas" $null 'replication\replicas-diverged.json' '200'
+
+    Save POST "$R/anti-entropy" '{"targetNodeId":3}' 'replication\anti-entropy.json' '200'
+
+    Save GET "$R/replicas" $null 'replication\replicas-converged.json' '200'
+
+    Save POST "$R/stale-injections" '{"backupNodeId":2,"key":"balance","staleValue":"500"}' 'replication\stale-injection.json' '200'
+
+    Call POST '/api/cluster/nodes/5/crash'
+
+    Wait-Until 'node 4 elected after the leader crash' { (Replication-Primary) -eq 4 }
+
+    Save GET $R $null 'replication\overview-takeover-pending.json' '200'
+
+    Save POST "$R/writes" '{"key":"balance","value":"3000","model":"SYNCHRONOUS"}' 'replication\write-after-failover.json' '200'
+
+    Call POST '/api/cluster/nodes/5/recover'
+
+    Wait-Until 'node 5 elected again after its recovery' { (Replication-Primary) -eq 5 }
+
+    Save POST "$R/writes" '{"key":"balance","value":"4000","model":"SYNCHRONOUS"}' 'replication\write-after-reclaim.json' '200'
+
+    Save GET $R $null 'replication\overview-after-takeover.json' '200'
+
+    Save POST "$R/writes" '{"key":"","value":"v","model":"SYNCHRONOUS"}' 'replication\error-400-validation.json' '400'
+
+    Save POST "$R/nodes/5/crash" $null 'replication\error-400-crash-primary.json' '400'
+
+    Save GET "$R/nodes/9/values?key=balance" $null 'replication\error-404-unknown-node.json' '404'
+
+    Call POST "$R/nodes/4/crash"
+
+    Save POST "$R/anti-entropy" '{"targetNodeId":4}' 'replication\error-409-node-down.json' '409'
+
+    Call POST "$R/nodes/4/recover"
+
+    Save POST "$R/nodes/2/recover" $null 'replication\error-409-node-state.json' '409'
+
+    Save GET '/api/events?module=replication&limit=200' $null 'replication\events.json' '200'
+
+
+
+    # ---------------------------------------------------------------- new: the leader as the default root (node 5 leads)
+
+    Wait-Until 'node 5 leading' { (Invoke-RestMethod "$Api$M").defaultRootNodeId -eq 5 }
+
+    Save POST "$M/collectives" '{"operation":"BROADCAST","count":1000,"seed":42}' 'mpi\collective-leader-root.json' '200'
+
+    Save GET $M $null 'mpi\overview-leader.json' '200'
+
+    Save POST "$X/runs" '{"size":50,"seed":42}' 'matrix\run-leader-root.json' '200'
+
+    Save GET $X $null 'matrix\overview-leader.json' '200'
+
+    Reset-Cluster
+
+
+
+    # ---------------------------------------------------------------- report
+
+    $sfm = Get-Content (Join-Path $Fx 'mpi\start-with-failure.json') -Raw
+
+    $sfx = Get-Content (Join-Path $Fx 'matrix\start-with-failure.json') -Raw
+
+    if ($sfm -notmatch '"startFailure":"[^"]+') { $Warnings.Add('mpi\start-with-failure.json has no startFailure: the 1105 blocker did not take') }
+
+    if ($sfx -notmatch '"startFailure":"[^"]+') { $Warnings.Add('matrix\start-with-failure.json has no startFailure: the 1105 blocker did not take') }
+
+    $Results | Format-Table File, HTTP, Expected, Bytes, OK -AutoSize
+
+    "Files: $($Results.Count); not OK: $(@($Results | Where-Object { -not $_.OK }).Count)"
+
+    if ($Warnings.Count -gt 0) { 'WARNINGS:'; $Warnings | ForEach-Object { " - $_" } } else { 'No warnings.' }
+
+    'Done. Stop the backend (Ctrl+C in its terminal) and close this terminal.'
+
+}
+```
+</details>
+
+**Smoke check** (running app; result recorded below):
+1. Fresh backend and frontend. On the Experiment 5 page → "No leader yet: the next write asks Experiment 4 to elect one…". Write `k = 1` synchronously → "confirmed by node 5". The Cluster page shows node 5 "LEADER, PRIMARY" and nodes 1 to 4 "BACKUP".
+2. Experiment 8: "Start experiment 8", then "Start stream" (synchronous, rate 4). Back on Experiment 5, write twice → both confirmed by node 5. On Experiment 8: "No two primaries: check passed", nothing given up, no "not primary" retry visible; then "Stop stream".
+3. Experiment 9 → the root option says "Default: node 5 (the leader elected by Experiment 4)". Run a broadcast → root node 5, "chosen as the leader elected by Experiment 4".
+4. Cluster page: crash node 5 and wait for the top bar to show leader node 4. Experiment 9 broadcast → root node 4, and the event log shows "Node 4 is the MPI root for the next collective: node 5 crashed and Experiment 4 elected node 4." An Experiment 10 run of size 50 → root node 4. An Experiment 5 write → node 4 "took over from node 5".
+5. The Experiment 5, 9 and 10 hints name the elected leader, and nothing says "lowest live" or "Phase 13". Reset the cluster (retry if it answers busy) → the Experiment 9 option reads "Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)".
+
+Smoke check result: _not run yet_.
+
+---
+
 ## Interfaces for other tracks
 
 ### E5a — replication store (`com.udcf.modules.replication`), for E5b (Track C) and Exp 8 (Track B)
@@ -2959,3 +3467,4 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - 2026-10-16 E10c Linux check: clean clone of 7d17c7d on Linux (Docker, maven:3.9-eclipse-temurin-21, --cpus=2), run by Jai: the 10 new test classes x 3 runs, 67 tests, 0 failures each; the full backend suite x 1, 1893 tests, 0 failures, 1 skipped, BUILD SUCCESS. GitHub CI is still the Linux gate.
 - 2026-10-16 E10d done: Experiment 10 page at /experiments/10-matrix (RowBlocks with holes and the one Simulated badge, scatter/broadcast/gather views reusing E9d's CollectiveMap and LatencyChart, RunResult with glossary-labelled figures, withheld reasons, stacked phase bar, verification and per-node table, hand-built SVG speedup chart over the served series sizes, history), useMatrix (overview read then start with the served bound + 3000 ms, edge restart, sequential run-all with stop after the current run, timeout lock and 2000 ms busy polling), five labelled synthetic fixtures; backend not run (no backend change), frontend 1241 tests (baseline 1108); deviations: the seven listed under "E10d deviations from the approved plan".
 - 2026-10-16 E10d Linux verification: clean clone of c1fafcf in Docker node:22 (Linux): npm ci, vitest (128 files, 1241 tests), eslint and vite build all exit 0; main chunk 832.82 kB (gzip 245.57 kB) on Linux against 833.65 kB on Windows; the chunk size stays a Phase 14 item.
+- 2026-10-18 9A.3 done: Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root follow the leader elected by Experiment 4 through RoleProvider (link L1): ensureLeader on the request thread before the guard, 409 NO_LEADER when none, reads never elect; ReplicationRoleSelector, MpiRoleSelector and RootSource.LOWEST_LIVE_ID removed; Experiment 5 never moves the primary away from the leader (no change when it already acts as primary at any epoch; epochs never go down) and publishes PRIMARY/BACKUP after appointing; MPI_ROOT_CHANGED (9A.4 rule, first root after a reset silent); pages name the leader, calm 409 No leader; 88 fixtures recaptured by Jai's capture block plus 4 new leader captures; backend 1939 tests (baseline 1934; 0 failures, 1 skipped), frontend 1262 tests (baseline 1250), lint 0 problems, build exit 0 (main chunk 836.88 kB); fast mode: no Docker run; CI is the Linux gate.

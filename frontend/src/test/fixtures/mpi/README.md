@@ -1,5 +1,26 @@
 # MPI contract fixtures (E9c)
 
+## 9A.3 recapture
+
+Recaptured on 2026-10-18 for Phase 9A.3 (link L1), with every other kept file in this folder, by one Windows PowerShell 5.1 block (`curl.exe -s -o <file>`) against a fresh backend; the block is in `docs/tracks/track-c-jai.md`, section "9A.3 (fast mode)". All 88 kept responses (across the mpi, matrix and replication folders) had the expected status; nothing was edited by hand. The order is the table below, with these differences:
+
+- Every collective that used the default root now names `"rootNode":1` (`rootSource: REQUESTED`), because since
+  9A.3 the default root is the leader elected by Experiment 4 and asking for it starts an election. No election
+  runs in that part, so `defaultRootNodeId` and `defaultRootSource` are `null` in the overviews (a read never elects).
+  `LOWEST_LIVE_ID` is no longer served.
+- Port 1105 was blocked with a .NET socket (bound, never listening) instead of Python's; node 5 again reports
+  "Port already in use: 1105".
+- Measured figures quoted in the table (nanoseconds) are from the 2026-10-13 capture; the files hold
+  the new ones.
+- `error-409-busy.json` is kept from the 2026-10-13 capture (it holds no root field).
+- New, captured at the end, after Experiment 5's writes had elected node 5: `collective-leader-root.json`
+  (`{"operation":"BROADCAST","count":1000,"seed":42}`: root node 5, `rootSource: LEADER`) and `overview-leader.json`
+  (`defaultRootNodeId` 5, `defaultRootSource` `LEADER`, node 5 `leader: true`).
+- `synthetic/error-409-no-leader.json` is not a capture: the body `MpiControllerTest.noLeader` checks (no running
+  backend can fail to elect a live node on demand).
+
+## 2026-10-13 capture (E9c)
+
 Real response bodies from the running backend (`cd backend; ./mvnw spring-boot:run`, local profile,
 five nodes, RMI registries on ports 1101 to 1105), captured on 2026-10-13 with
 `curl -s -o <file>` from a capture script and, for the 409 busy only, a Python 3 standard-library

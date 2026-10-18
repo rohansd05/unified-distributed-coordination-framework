@@ -28,8 +28,7 @@ const OPERATIONS = { BROADCAST: 'Broadcast', SCATTER: 'Scatter', GATHER: 'Gather
 const OUTCOMES = { COMPLETE: 'Complete', PARTIAL: 'Partial', FAILED: 'Failed', REFUSED: 'Refused' }
 const ROOT_SOURCES = {
   REQUESTED: 'the node you chose',
-  LEADER: 'the elected leader, read from the cluster',
-  LOWEST_LIVE_ID: 'the lowest live node id; no leader is elected',
+  LEADER: 'the leader elected by Experiment 4',
 }
 const DIRECTIONS = { TO_RANK: 'root to rank', FROM_RANK: 'rank to root' }
 const TRANSFER_STATUSES = { LOCAL: 'Local (root)', DELIVERED: 'Delivered', FAILED: 'Failed', NOT_ATTEMPTED: 'Not attempted' }
@@ -37,8 +36,21 @@ const RMI_STATES = { NOT_STARTED: 'Not started', EXPORTED: 'Exported', CRASHED: 
 
 export const operationLabel = (operation) => lookup(OPERATIONS, operation)
 export const outcomeLabel = (outcome) => lookup(OUTCOMES, outcome)
-/** Lower case, for use inside a sentence: "the lowest live node id; no leader is elected". */
-export const rootSourceLabel = (source) => (ROOT_SOURCES[source] ?? sentenceCase(source).toLowerCase())
+/** Lower case, for use inside a sentence: "the leader elected by Experiment 4". An unknown value shows as it came. */
+export const rootSourceLabel = (source) => ROOT_SOURCES[source] ?? (source == null ? '' : String(source))
+/**
+ * The "no root chosen" option of Experiments 9 and 10: the leader, or why there is none yet. A read
+ * never starts an election, so before the first one the leader is unknown, not missing.
+ */
+export function defaultRootText(overview, nodes) {
+  if (typeof overview?.defaultRootNodeId === 'number') {
+    return `Default: node ${overview.defaultRootNodeId} (${rootSourceLabel(overview.defaultRootSource)})`
+  }
+  const anyUp = (nodes ?? []).some((node) => node.nodeStatus !== 'CRASHED')
+  return anyUp
+    ? 'Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)'
+    : 'Default: none, every node is down'
+}
 export const directionLabel = (direction) => (DIRECTIONS[direction] ?? sentenceCase(direction).toLowerCase())
 export const transferStatusLabel = (status) => lookup(TRANSFER_STATUSES, status)
 export const rmiStateLabel = (state) => lookup(RMI_STATES, state)

@@ -9,6 +9,7 @@ import {
   cellStateLabel,
   cellStateMeaning,
   formatMillis,
+  isNoLeader,
   modelLabel,
   nodeStatusText,
   problemText,
@@ -67,6 +68,15 @@ function useAction(perform, onDone) {
 
 function ActionError({ action }) {
   if (!action.error) return null
+  if (isNoLeader(action.error)) {
+    return (
+      <p ref={action.errorRef} tabIndex={-1} role="status" data-testid="action-error" data-kind="no-leader"
+        className="rounded-md border border-warning/60 bg-warning/10 px-3 py-2 text-sm text-warning focus:outline-none">
+        <span className="font-medium">No leader. </span>
+        <span className="text-foreground/90">{action.error.detail}</span>
+      </p>
+    )
+  }
   return (
     <p ref={action.errorRef} tabIndex={-1} role="alert" data-testid="action-error" className="text-sm text-destructive focus:outline-none">
       {problemText(action.error)}
@@ -311,7 +321,7 @@ function NodeActions({ api, nodes, disabled, onAnnounce, onDone }) {
       setFocusRequest({ kind: kind === 'crash' ? 'recover' : 'crash', nodeId })
       onAnnounce(kind === 'crash'
         ? `Node ${nodeId} crashed. Its replication port is closed, for every experiment.`
-        : `Node ${nodeId} recovered${dto.role === 'PRIMARY' ? ' and is the primary again' : ''}.`)
+        : `Node ${nodeId} recovered${dto.role === 'PRIMARY' ? ' and leads again: the next write makes it the primary' : ''}.`)
       onDone()
     } catch (err) {
       setError(err)

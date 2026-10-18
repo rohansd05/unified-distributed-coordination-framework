@@ -3,6 +3,7 @@ package com.udcf.modules.replication;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.NodeDownException;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.module.ExperimentModule;
 import com.udcf.core.module.ModuleActionGuard;
@@ -60,10 +61,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * module's {@link ModuleActionGuard} for their whole duration, so a second action gets HTTP
  * 409. Parameters are checked before the guard is taken; node states inside it. Only these
  * actions can change roles: a takeover (catch-up, then push; see {@link ReplicaSet}) happens only
- * inside a write, anti-entropy, stale injection or recover, never in a read.</p>
+ * inside a write, anti-entropy or stale injection, never in a read or a recover.</p>
+ *
+ * <p><b>The primary (link L1)</b> is the leader elected by Experiment 4. A write, anti-entropy or
+ * stale injection gets it from {@link RoleProvider#ensureLeader()} on the request thread, before the
+ * guard: with no leader yet, that action asks Experiment 4 for an election, which starts its
+ * election service and heartbeats on every live node; if none can be elected the action answers 409
+ * {@code NO_LEADER} ({@link NoLeaderException}), never with another node. When the leader already
+ * acts as primary (for example made primary by Experiment 8 at a higher epoch), nothing moves.</p>
  *
  * <p><b>Reads.</b> {@link #overview()}, {@link #replicas()} and {@link #read} never start a
- * service, change a role or run a takeover. Replica contents are read over TCP as a
+ * service, change a role, run a takeover or start an election. Replica contents are read over TCP as a
  * cluster-level client, so a crashed replica is UNREACHABLE, never a cached value.</p>
  *
  * <p><b>Crash and recover</b> go through the core path ({@code Cluster.crash} and
@@ -122,10 +130,11 @@ public class ReplicationModule implements ExperimentModule {
     private volatile InjectionDto latestInjection;
 
     public ReplicationModule(Cluster cluster, ReplicationProperties properties, ClusterEventBus bus,
-                             MeterRegistry meterRegistry) {
+                             MeterRegistry meterRegistry, RoleProvider roles) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
-        this.replicas = new ReplicaSet(cluster, properties, Objects.requireNonNull(bus, "bus must not be null"));
+        this.replicas = new ReplicaSet(cluster, properties, Objects.requireNonNull(bus, "bus must not be null"),
+                Objects.requireNonNull(roles, "roles must not be null"));
         this.metrics = new ReplicationMetrics(meterRegistry, cluster);
     }
 
@@ -190,6 +199,7 @@ public class ReplicationModule implements ExperimentModule {
      *
      * @throws InvalidParameterException  invalid key, value or model (400)
      * @throws NodeStateConflictException every node is crashed, or the primary was superseded (409)
+     * @throws NoLeaderException          no leader could be elected (409 NO_LEADER)
      * @throws NodeDownException          the primary went down during the write (409)
      * @throws com.udcf.core.module.ModuleBusyException another action is running (409)
      */
@@ -200,13 +210,14 @@ public class ReplicationModule implements ExperimentModule {
         }
         checkItem(command.key(), command.value(), "value");
         ConsistencyModel model = command.model();
+        int leader = leader();
         try (ModuleActionGuard.ActionTicket ignored = guard.begin("Write of '" + command.key() + "' ["
                 + model.name().toLowerCase(Locale.ROOT) + "]")) {
             requireLiveNode();
             Optional<TakeoverReport> before = replicas.lastTakeover();
             WriteResult result;
             try {
-                result = replicas.write(command.key(), command.value(), model);
+                result = replicas.write(leader, command.key(), command.value(), model);
             } catch (NotPrimaryException e) {
                 throw new NodeStateConflictException(e.nodeId(), e.getMessage());
             }
@@ -263,9 +274,10 @@ public class ReplicationModule implements ExperimentModule {
     }
 
     /**
-     * Recovers any crashed node through the core path ({@code Cluster.recover}). If a primary
-     * was made before and the selector now picks another node (a lower-id node came back), the
-     * takeover runs here, inside this guarded action.
+     * Recovers any crashed node through the core path ({@code Cluster.recover}), which reopens its
+     * replication service. Runs no takeover: if the recovery leads to a new leader (Experiment 4
+     * re-elects asynchronously), the next write, anti-entropy or injection follows it. A recovered
+     * backup receives every later write; anti-entropy repairs what it missed while down.
      *
      * @throws com.udcf.core.cluster.UnknownNodeException no such node (404)
      * @throws NodeStateConflictException the node is already up (409)
@@ -277,13 +289,6 @@ public class ReplicationModule implements ExperimentModule {
                 throw new NodeStateConflictException(nodeId, "Node " + nodeId + " is already up");
             }
             cluster.recover(nodeId);
-            if (replicas.takeoverPending()) {
-                try {
-                    replicas.primary();
-                } catch (NotPrimaryException e) {
-                    throw new NodeStateConflictException(e.nodeId(), e.getMessage());
-                }
-            }
             return nodeDto(node);
         }
     }
@@ -293,6 +298,7 @@ public class ReplicationModule implements ExperimentModule {
      *
      * @throws com.udcf.core.cluster.UnknownNodeException no such node (404)
      * @throws InvalidParameterException the target is the primary (400)
+     * @throws NoLeaderException         no leader could be elected (409 NO_LEADER)
      * @throws NodeDownException         the target is crashed (409)
      */
     public AntiEntropyDto antiEntropy(AntiEntropyCommand command) {
@@ -302,10 +308,11 @@ public class ReplicationModule implements ExperimentModule {
         }
         int targetId = command.targetNodeId();
         ClusterNode target = cluster.node(targetId);
+        int leader = leader();
         try (ModuleActionGuard.ActionTicket ignored = guard.begin("Anti-entropy to node " + targetId)) {
             requireLiveNode();
             requireLiveBackup(target, "targetNodeId", "anti-entropy pushes from the primary to a backup");
-            ReplicationNodeService primary = primaryForAction();
+            ReplicationNodeService primary = primaryForAction(leader);
             if (!target.isUp()) {
                 throw new NodeDownException(targetId);
             }
@@ -322,6 +329,7 @@ public class ReplicationModule implements ExperimentModule {
      * @throws com.udcf.core.cluster.UnknownNodeException no such node (404)
      * @throws InvalidParameterException the backup is the primary, the primary does not hold the key,
      *                                   or the stale value is invalid (400)
+     * @throws NoLeaderException         no leader could be elected (409 NO_LEADER)
      * @throws NodeDownException         the backup is crashed (409)
      */
     public InjectionDto injectStale(InjectStaleCommand command) {
@@ -332,10 +340,11 @@ public class ReplicationModule implements ExperimentModule {
         checkItem(command.key(), command.staleValue(), "staleValue");
         int backupId = command.backupNodeId();
         ClusterNode backup = cluster.node(backupId);
+        int leader = leader();
         try (ModuleActionGuard.ActionTicket ignored = guard.begin("Stale update to node " + backupId)) {
             requireLiveNode();
             requireLiveBackup(backup, "backupNodeId", "a stale update is delivered to a backup");
-            ReplicationNodeService primary = primaryForAction();
+            ReplicationNodeService primary = primaryForAction(leader);
             if (!backup.isUp()) {
                 throw new NodeDownException(backupId);
             }
@@ -476,9 +485,18 @@ public class ReplicationModule implements ExperimentModule {
         return holdsKey ? ReplicaState.CURRENT : ReplicaState.ABSENT;
     }
 
-    private ReplicationNodeService primaryForAction() {
+    /**
+     * The leader for an action, on the request thread before the guard (it may wait for an
+     * election). Every node crashed stays the plain 409 it always was.
+     */
+    private int leader() {
+        requireLiveNode();
+        return replicas.leader();
+    }
+
+    private ReplicationNodeService primaryForAction(int leader) {
         try {
-            return replicas.primary();
+            return replicas.primary(leader);
         } catch (NotPrimaryException e) {
             throw new NodeStateConflictException(e.nodeId(), e.getMessage());
         }

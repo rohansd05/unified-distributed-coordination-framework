@@ -16,7 +16,7 @@ describe('LatencyChart', () => {
     expect(screen.getAllByTestId('latency-bar')).toHaveLength(4)
     expect(screen.getAllByTestId('latency-local')).toHaveLength(1)
     expect(screen.getByText(broadcast.latencyBasis)).toBeTruthy()
-    expect(screen.getByText('tallest bar 6.817 ms')).toBeTruthy()
+    expect(screen.getByText('tallest bar 5.106 ms')).toBeTruthy()
   })
 
   it('draws a failed rank as a cross, never a bar, with its time to failure in text, not as a latency', () => {
@@ -24,8 +24,8 @@ describe('LatencyChart', () => {
     expect(screen.getAllByTestId('latency-bar')).toHaveLength(3)
     expect(screen.getAllByTestId('latency-failed')).toHaveLength(1)
     const list = screen.getByTestId('latency-list').textContent
-    expect(list).toContain('Rank 4, node 5: failed, connection refused, after 21.944 ms (time to failure, not a latency)')
-    expect(list).not.toContain('latency 21.944')
+    expect(list).toContain('Rank 4, node 5: failed, connection refused, after 771.8 µs (time to failure, not a latency)')
+    expect(list).not.toContain('latency 771.8')
     const heights = screen.getAllByTestId('latency-bar').map((bar) => Number(bar.getAttribute('height')))
     expect(heights.every((h) => h >= 2)).toBe(true)
   })

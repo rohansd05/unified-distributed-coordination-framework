@@ -1,5 +1,23 @@
 # Matrix contract fixtures (E10c)
 
+## 9A.3 recapture
+
+Recaptured on 2026-10-18 for Phase 9A.3 (link L1), with every other kept file in this folder, by one Windows PowerShell 5.1 block (`curl.exe -s -o <file>`) against a fresh backend; the block is in `docs/tracks/track-c-jai.md`, section "9A.3 (fast mode)". All 88 kept responses (across the mpi, matrix and replication folders) had the expected status; nothing was edited by hand. The order is the table below, with these differences:
+
+- Every run that used the default root now names `"rootNode":1` (`rootSource: REQUESTED`), because since 9A.3 the
+  default root is the leader elected by Experiment 4. No election runs in that part, so `defaultRootNodeId` and
+  `defaultRootSource` are `null` in the overviews. `LOWEST_LIVE_ID` is no longer served.
+- Port 1105 was blocked with a .NET socket (bound, never listening) from PowerShell instead of Python.
+- Measured figures quoted below are from the 2026-10-16 capture; the files hold the new ones.
+- `error-409-busy.json` is kept from the 2026-10-16 capture (it holds no root field).
+- New, captured at the end, after Experiment 5's writes had elected node 5: `run-leader-root.json`
+  (`{"size":50,"seed":42}`: root node 5, `rootSource: LEADER`) and `overview-leader.json` (`defaultRootNodeId` 5,
+  `LEADER`, node 5 `leader: true`). State 5 below is therefore no longer synthetic-only.
+- `synthetic/`: the five files keep their sources' `rootSource` (`REQUESTED` since this recapture), and
+  `synthetic/error-409-no-leader.json` is the body `MatrixControllerTest.noLeader` checks.
+
+## 2026-10-16 capture (E10c)
+
 Real response bodies from the running backend (`cd backend; ./mvnw spring-boot:run`, local profile, five
 nodes, RMI registries on ports 1101 to 1105, request listeners on 7201 to 7205), captured on 2026-10-16 by one
 Python 3 standard-library script run with `python -I` outside the repository. The script made every kept
@@ -94,4 +112,6 @@ These differ on every capture. Tests should check their type and shape, not thei
 3. The two timeouts: the node's own `COMPUTE_TIMED_OUT` (`failureKind` `METHOD_THREW`) and the root's wait bound
    (`failureKind` `TIMED_OUT`, no `nodeReason`).
 4. Steps `NOT_ATTEMPTED` because the run's deadline had passed.
-5. A leader as the default root (`rootSource: LEADER`, `leader: true`): no election runs in this capture.
+5. A leader as the default root (`rootSource: LEADER`, `leader: true`): no election ran in the 2026-10-16 capture;
+   since 9A.3 `overview-leader.json` and `run-leader-root.json` are real captures, and the synthetic copy stays for the
+   key-path check.

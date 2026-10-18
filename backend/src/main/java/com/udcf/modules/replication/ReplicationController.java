@@ -11,6 +11,9 @@ import com.udcf.modules.replication.dto.ReplicationOverviewDto;
 import com.udcf.modules.replication.dto.WriteCommand;
 import com.udcf.modules.replication.dto.WriteDto;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,7 +27,8 @@ import org.springframework.web.bind.annotation.RestController;
  * maps to HTTP. Writes answer 200 for both models: an asynchronous write is confirmed when it
  * returns, with its pushes PENDING. GETs never start a service, change a role or take over.
  * Errors are ProblemDetail bodies from the shared GlobalExceptionHandler: 400 invalid input or the
- * primary as a target, 404 unknown node, 409 node down, node already in that state, or module busy.
+ * primary as a target, 404 unknown node, 409 node down, node already in that state, or module busy;
+ * here: 409 {@code reason: NO_LEADER} when no leader could be elected for the primary.
  */
 @RestController
 @RequestMapping("/api/modules/replication")
@@ -82,5 +86,15 @@ public class ReplicationController {
     @PostMapping("/stale-injections")
     public InjectionDto injectStale(@Valid @RequestBody InjectStaleCommand command) {
         return module.injectStale(command);
+    }
+
+    /** No leader could be elected, so an action has no primary (never another node). */
+    @ExceptionHandler(NoLeaderException.class)
+    public ProblemDetail noLeader(NoLeaderException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problem.setTitle("No leader");
+        problem.setProperty("moduleId", ReplicationModule.ID);
+        problem.setProperty("reason", "NO_LEADER");
+        return problem;
     }
 }

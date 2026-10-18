@@ -16,7 +16,7 @@ describe('HistoryTable', () => {
     expect(within(rows[0]).getByTestId('not-available').getAttribute('title')).toBe('Refused: nothing was sent')
     expect(rows[6].textContent).toContain('Partial')
     expect(rows[6].textContent).toContain('3 of 4')
-    expect(rows[6].textContent).toContain('62.695 ms')
+    expect(rows[6].textContent).toContain('44.541 ms')
     expect(screen.getByText(/the backend keeps the latest 20/)).toBeTruthy()
   })
 

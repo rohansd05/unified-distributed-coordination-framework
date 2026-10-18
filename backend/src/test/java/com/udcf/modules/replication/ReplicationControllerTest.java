@@ -3,8 +3,15 @@ package com.udcf.modules.replication;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.core.cluster.Cluster;
+import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.NodeCapacity;
+import com.udcf.core.cluster.RoleProvider;
+import com.udcf.core.events.ClusterEventBus;
+import com.udcf.core.events.EventProperties;
 import com.udcf.core.module.ModuleActionGuard;
 import com.udcf.core.module.ModuleStatus;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,7 +23,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -40,9 +49,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Crashes nodes, so it has its own context. {@code udcf.cluster.ports.replication-base=28700}
  * binds {@code ClusterProperties.Ports.replicationBase}, and node k listens on 28700 + k: ports
  * 28701 to 28705 under the local profile's five nodes, inside the Exp 5 test range 28100 to 28899.
- * Each test starts with the module idle and reset and every crashed node recovered.</p>
+ * Each test starts with the module idle and reset, every crashed node recovered, and node 5 (the highest
+ * node, so Experiment 4's Bully winner) elected leader, which makes it the primary of the next action
+ * (link L1). Election UDP ports: {@code udcf.cluster.ports.election-base=28120}, so 28121 to 28125.</p>
  */
-@SpringBootTest(properties = "udcf.cluster.ports.replication-base=28700")
+@SpringBootTest(properties = {"udcf.cluster.ports.replication-base=28700", "udcf.cluster.ports.election-base=28120"})
 @AutoConfigureMockMvc
 @AutoConfigureObservability
 class ReplicationControllerTest {
@@ -91,10 +102,18 @@ class ReplicationControllerTest {
     @Autowired
     private Cluster cluster;
 
+    @Autowired
+    private RoleProvider roles;
+
+    /** Bully elects the highest live node: with every node up, node 5. */
+    private static final int LEADER = 5;
+
     @BeforeEach
     void cleanStart() {
         awaitIdle();
         cluster.recoverAll();
+        // A recovered node 5 wins its recovery election again; ensureLeader elects one if there is none.
+        await().atMost(30, TimeUnit.SECONDS).until(() -> roles.ensureLeader().filter(id -> id == LEADER).isPresent());
         module.reset();
     }
 
@@ -174,7 +193,7 @@ class ReplicationControllerTest {
 
         assertFields(body, OVERVIEW_FIELDS);
         assertThat(body.get("status").asText()).isEqualTo("IDLE");
-        assertThat(body.get("primaryNodeId").asInt()).isEqualTo(1);
+        assertThat(body.get("primaryNodeId").asInt()).isEqualTo(LEADER);
         for (String f : List.of("actionInProgress", "currentPrimaryNodeId", "lastTakeover", "healthMeasuredByNodeId",
                 "latestWrite", "latestAntiEntropy", "latestInjection")) {
             assertThat(body.get(f).isNull()).as(f).isTrue();
@@ -192,8 +211,9 @@ class ReplicationControllerTest {
         assertThat(body.get("nodes")).hasSize(5);
         JsonNode node = body.get("nodes").get(0);
         assertFields(node, NODE_FIELDS);
-        assertThat(node.get("role").asText()).isEqualTo("PRIMARY");
+        assertThat(node.get("role").asText()).isEqualTo("BACKUP");
         assertThat(node.get("port").asInt()).isEqualTo(28701);
+        assertThat(body.get("nodes").get(4).get("role").asText()).isEqualTo("PRIMARY");
     }
 
     @Test
@@ -221,7 +241,7 @@ class ReplicationControllerTest {
         assertThat(takeover.get("catchUps")).isEmpty();
 
         JsonNode body = overview();
-        assertThat(body.get("currentPrimaryNodeId").asInt()).isEqualTo(1);
+        assertThat(body.get("currentPrimaryNodeId").asInt()).isEqualTo(LEADER);
         assertThat(body.get("health")).hasSize(4);
         assertFields(body.get("health").get(0), HEALTH_FIELDS);
         assertType(body.get("health").get(0), "lastSync", JsonNode::isTextual);
@@ -249,10 +269,10 @@ class ReplicationControllerTest {
     @DisplayName("GET /nodes/{id}/values and /replicas: field names; an unreachable replica has null item, epoch and itemCount")
     void readAndReplicasContract() throws Exception {
         write("k", "SYNCHRONOUS");
-        postJson("/nodes/5/crash", "").andExpect(status().isOk());
+        postJson("/nodes/4/crash", "").andExpect(status().isOk());
 
         JsonNode current = json(mockMvc.perform(get(BASE + "/nodes/2/values").param("key", "k")).andExpect(status().isOk()));
-        JsonNode down = json(mockMvc.perform(get(BASE + "/nodes/5/values").param("key", "k")).andExpect(status().isOk()));
+        JsonNode down = json(mockMvc.perform(get(BASE + "/nodes/4/values").param("key", "k")).andExpect(status().isOk()));
         JsonNode view = json(mockMvc.perform(get(BASE + "/replicas")).andExpect(status().isOk()));
 
         assertFields(current, READ_FIELDS);
@@ -265,7 +285,7 @@ class ReplicationControllerTest {
         assertFields(view, REPLICAS_FIELDS);
         assertThat(view.get("consistent").asBoolean()).isTrue();
         assertThat(view.get("replicas")).hasSize(5);
-        JsonNode column = view.get("replicas").get(4);
+        JsonNode column = view.get("replicas").get(3);
         assertFields(column, COLUMN_FIELDS);
         assertThat(column.get("reachable").asBoolean()).isFalse();
         assertThat(column.get("epoch").isNull()).isTrue();
@@ -273,7 +293,7 @@ class ReplicationControllerTest {
         JsonNode row = view.get("rows").get(0);
         assertFields(row, "key", "cells");
         assertFields(row.get("cells").get(0), "nodeId", "item", "state");
-        assertThat(row.get("cells").get(4).get("state").asText()).isEqualTo("UNREACHABLE");
+        assertThat(row.get("cells").get(3).get("state").asText()).isEqualTo("UNREACHABLE");
     }
 
     @Test
@@ -302,19 +322,21 @@ class ReplicationControllerTest {
     }
 
     @Test
-    @DisplayName("a takeover through the API: node 1 crashed from the cluster API makes it pending; the next write reports catch-up and pushes")
+    @DisplayName("a takeover through the API: the leader crashed from the cluster API; once node 4 is elected it is pending; the next write reports catch-up and pushes")
     void takeoverContract() throws Exception {
         write("k", "SYNCHRONOUS");
-        mockMvc.perform(post("/api/cluster/nodes/1/crash")).andExpect(status().isOk());
+        mockMvc.perform(post("/api/cluster/nodes/5/crash")).andExpect(status().isOk());
 
+        // Experiment 4's failure detector suspects node 5 and re-elects (about 2.5 to 4 s).
+        await().atMost(30, TimeUnit.SECONDS).until(() -> overview().get("primaryNodeId").asInt(0) == 4);
         JsonNode pending = overview();
         assertThat(pending.get("takeoverPending").asBoolean()).isTrue();
-        assertThat(pending.get("primaryNodeId").asInt()).isEqualTo(2);
-        assertThat(pending.get("currentPrimaryNodeId").asInt()).isEqualTo(1);
+        assertThat(pending.get("currentPrimaryNodeId").asInt()).isEqualTo(LEADER);
 
         JsonNode write = write("k", "SYNCHRONOUS");
         JsonNode takeover = write.get("takeover");
-        assertThat(takeover.get("previousPrimaryNodeId").asInt()).isEqualTo(1);
+        assertThat(write.get("primaryNodeId").asInt()).isEqualTo(4);
+        assertThat(takeover.get("previousPrimaryNodeId").asInt()).isEqualTo(LEADER);
         assertThat(takeover.get("catchUps")).hasSize(3);
         assertFields(takeover.get("catchUps").get(0), CATCH_UP_FIELDS);
         assertThat(takeover.get("pushes")).hasSize(3);
@@ -332,7 +354,7 @@ class ReplicationControllerTest {
         JsonNode noModel = json(postJson("/writes", "{\"key\":\"k\",\"value\":\"v\"}").andExpect(status().isBadRequest()));
         JsonNode control = json(postJson("/writes", "{\"key\":\"a\\u0007b\",\"value\":\"v\",\"model\":\"SYNCHRONOUS\"}")
                 .andExpect(status().isBadRequest()));
-        JsonNode primary = json(postJson("/nodes/1/crash", "").andExpect(status().isBadRequest()));
+        JsonNode primary = json(postJson("/nodes/5/crash", "").andExpect(status().isBadRequest()));
         write("k", "SYNCHRONOUS");
         JsonNode missing = json(postJson("/stale-injections", "{\"backupNodeId\":2,\"key\":\"nope\",\"staleValue\":\"x\"}")
                 .andExpect(status().isBadRequest()));
@@ -383,6 +405,34 @@ class ReplicationControllerTest {
         assertThat(busy.get("actionInProgress").asText()).isEqualTo("A test action");
     }
 
+    @Test
+    @DisplayName("409 No leader, reason NO_LEADER, when live nodes exist but no leader could be elected")
+    void noLeader() throws Exception {
+        // A running backend always elects a live node, so this module has no election module at all (its
+        // RoleProvider answers empty at once); its nodes bind nothing (bases 28460 to 28490 and 28360 to 28370).
+        ClusterEventBus bus = new ClusterEventBus(new EventProperties(500, 500), Clock.systemUTC());
+        Cluster alone = new Cluster(new ClusterProperties(3, List.of(NodeCapacity.FAST, NodeCapacity.MEDIUM,
+                NodeCapacity.SLOW), new ClusterProperties.Ports(28460, 28470, 28480, 28490, 28360, 28370)), bus);
+        RoleProvider none = new RoleProvider(alone, (LeaderElector) null);
+        ReplicationModule leaderless = new ReplicationModule(alone, new ReplicationProperties(450, 1500, 200), bus,
+                new SimpleMeterRegistry(), none);
+        try {
+            MockMvc standalone = MockMvcBuilders.standaloneSetup(new ReplicationController(leaderless)).build();
+            JsonNode problem = json(standalone.perform(post(BASE + "/writes").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"key\":\"k\",\"value\":\"v\",\"model\":\"SYNCHRONOUS\"}"))
+                    .andExpect(status().isConflict()));
+            assertProblem(problem, 409, "No leader", "moduleId", "reason");
+            assertThat(problem.get("reason").asText()).isEqualTo("NO_LEADER");
+            assertThat(problem.get("moduleId").asText()).isEqualTo("replication");
+            assertThat(problem.get("detail").asText()).isEqualTo(new NoLeaderException().getMessage());
+            assertThat(alone.nodes()).allSatisfy(node -> assertThat(node.runningServices()).isEmpty());
+        } finally {
+            none.close();
+            alone.close();
+            bus.close();
+        }
+    }
+
     // ------------------------------------------------------------------ reset and metrics
 
     @Test
@@ -392,7 +442,9 @@ class ReplicationControllerTest {
         postJson("/stale-injections", "{\"backupNodeId\":2,\"key\":\"k\",\"staleValue\":\"old\"}").andExpect(status().isOk());
         postJson("/nodes/4/crash", "").andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/cluster/reset")).andExpect(status().isNoContent());
+        // A reset is refused while a module is BUSY (for example Experiment 4's recovery election): retry.
+        await().atMost(30, TimeUnit.SECONDS).pollInterval(200, TimeUnit.MILLISECONDS).until(() ->
+                mockMvc.perform(post("/api/cluster/reset")).andReturn().getResponse().getStatus() == 204);
 
         JsonNode body = overview();
         for (String f : List.of("currentPrimaryNodeId", "lastTakeover", "latestWrite", "latestInjection",
@@ -438,11 +490,11 @@ class ReplicationControllerTest {
         assertThat(lines).filteredOn(l -> l.startsWith("distributed_replication_acks_total{"))
                 .anyMatch(l -> l.contains("result=\"APPLIED\""));
         assertThat(lines).filteredOn(l -> l.startsWith("distributed_replication_writes_total{"))
-                .anyMatch(l -> l.contains("node_id=\"1\"") && l.contains("model=\"SYNCHRONOUS\""));
+                .anyMatch(l -> l.contains("node_id=\"5\"") && l.contains("model=\"SYNCHRONOUS\""));
         assertThat(lines).filteredOn(l -> l.startsWith("distributed_replication_latency_seconds_count{"))
                 .anyMatch(l -> l.contains("kind=\"SYNCHRONOUS\""));
         assertThat(lines).filteredOn(l -> l.startsWith("distributed_replication_store_items{")).hasSize(5)
-                .anyMatch(l -> l.contains("node_id=\"1\"") && l.endsWith(" 1.0"));
+                .anyMatch(l -> l.contains("node_id=\"5\"") && l.endsWith(" 1.0"));
         assertThat(lines).filteredOn(l -> l.startsWith("distributed_replication_epoch{")).hasSize(5);
     }
 }

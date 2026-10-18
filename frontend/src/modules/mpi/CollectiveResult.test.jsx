@@ -20,8 +20,8 @@ describe('CollectiveResult: complete collectives', () => {
     render(<CollectiveResult collective={broadcast} />)
     expect(screen.getByTestId('outcome-badge').textContent).toBe('Complete')
     expect(screen.getByText('Broadcast of 1000 values from node 1')).toBeTruthy()
-    expect(screen.getByTestId('collective-result').textContent).toContain('chosen as the lowest live node id; no leader is elected')
-    expect(screen.getByTestId('total-time').textContent).toBe('13.683 ms')
+    expect(screen.getByTestId('collective-result').textContent).toContain('chosen as the node you chose')
+    expect(screen.getByTestId('total-time').textContent).toBe('10.036 ms')
     expect(screen.getByText(TOTAL_TIME_BASIS)).toBeTruthy()
     expect(screen.getByTestId('latency-basis').textContent).toContain(broadcast.latencyBasis)
     expect(screen.getByTestId('size-basis').textContent).toContain(broadcast.payloadSizeBasis)
@@ -82,9 +82,9 @@ describe('CollectiveResult: failures and refusals', () => {
     expect(screen.getByTestId('outcome-badge').textContent).toBe('Partial')
     const failed = rowFor(4)
     expect(failed.getAttribute('data-status')).toBe('FAILED')
-    expect(within(failed).getByTestId('time-to-failure-cell').textContent).toBe('21.944 ms')
+    expect(within(failed).getByTestId('time-to-failure-cell').textContent).toBe('771.8 µs')
     expect(notAvailable(within(failed).getByTestId('latency-cell'))).toBeTruthy()
-    expect(within(failed).getByTestId('latency-cell').textContent).not.toContain('21.944')
+    expect(within(failed).getByTestId('latency-cell').textContent).not.toContain('771.8')
     expect(failed.textContent).toContain('Nothing was sent: the registry lookup failed')
     const detail = screen.getByTestId('failure-detail')
     expect(detail.textContent).toContain('Failed at the registry lookup with connection refused')
@@ -96,7 +96,7 @@ describe('CollectiveResult: failures and refusals', () => {
 
   it('shows a delivered transfer\'s latency and no time to failure', () => {
     render(<CollectiveResult collective={partial} />)
-    expect(within(rowFor(1)).getByTestId('latency-cell').textContent).toBe('25.740 ms')
+    expect(within(rowFor(1)).getByTestId('latency-cell').textContent).toBe('29.169 ms')
     expect(notAvailable(within(rowFor(1)).getByTestId('time-to-failure-cell'))).toBeTruthy()
   })
 
