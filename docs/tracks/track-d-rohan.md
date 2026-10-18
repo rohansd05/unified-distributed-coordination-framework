@@ -197,6 +197,8 @@
 - [x] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
 - [x] 9A.5 — Timeline page `/timeline` (reassigned from Jai for the 2026-10-23 demo). Needs: 9A.0.
 - [ ] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`, refreshed public lite deployment. Needs: 9A.7, 9A.8.
+  - [x] 9A.9a — demo scripts: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `scripts/reset-cluster.ps1`.
+  - [ ] the rest of 9A.9: `docs/demo/udcf-demo.md`, refreshed public lite deployment.
 
 ### 9A.4: the time daemon and the MapReduce coordinator follow the elected leader (link L1)
 
@@ -466,6 +468,34 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 4. Click the "Exp 3: Clock Synchronization" and "Node 4" chips: only matching events stay and the URL shows `modules=clocksync&nodes=4`. Reload the page: the same filters still apply.
 5. Click Pause live and recover a node: the list doesn't change and the button reads "Resume live (n waiting)". Resume: the events appear. Click Clear view: "View cleared", and the next event appears alone.
 
+### 9A.9a (fast mode)
+
+**What changed:** three new PowerShell 5.1 scripts in `scripts/` (pure ASCII, no modules to install, no `$ErrorActionPreference` at script level; failures print one red line and exit 1). No backend or frontend change.
+
+**Scripts** (from the repository root; add `powershell -ExecutionPolicy Bypass -File` in front if script execution is blocked):
+- `scripts\start-all.ps1 [-NoBrowser]`: checks Java 21 (`JAVA_HOME\bin\java.exe` when JAVA_HOME is set, because mvnw uses it; else `java`), Node 22, `frontend\node_modules`, and that ports 8080 and 5173 are free (names the owning process if not). Starts `backend\mvnw.cmd spring-boot:run` and `npm run dev` hidden, each through `cmd.exe /c` with stdout and stderr in `%TEMP%\udcf-demo\backend.log` / `frontend.log`. Saves the PIDs with their start times to `%TEMP%\udcf-demo\pids.json` before waiting. Waits up to 120 s for `GET /api/system/health` = UP, then up to 120 s for a listener on 5173, printing a dot every 2 s and the last 15 log lines on failure. Opens http://localhost:5173 and prints a summary with the log paths.
+- `scripts\stop-all.ps1`: runs `taskkill /PID <pid> /T /F` on the saved PIDs, but only if the start time still matches (a reused PID is left alone). Then stops anything still listening on 8080/5173 (`Get-NetTCPConnection -State Listen`). Deletes pids.json and prints what it stopped, or "Nothing to stop". Safe to run more than once.
+- `scripts\reset-cluster.ps1 [-Api http://localhost:8080]`: checks health, then waits up to 60 s until no module is BUSY (the parenthesised `$busy` line from Known issues 9A.4), printing the busy ids when they change. Then posts `POST /api/cluster/reset`, retrying on 409 up to 40 tries, 500 ms apart. Prints "Cluster reset: HTTP 204 on try n of 40."
+
+**Checked here (Windows PowerShell 5.1.26100):** all three files parse without errors and contain 0 non-ASCII bytes. The Java and Node detection lines match on this machine (`openjdk version "21.0.12.1"`, `v22.11.0`). With a mocked `/api/modules`, the busy list returns 0, 1 and 2 ids. `reset-cluster.ps1 -Api http://127.0.0.1:1` prints the "not reachable" line and exits 1. `stop-all.ps1` with nothing running prints "Nothing to stop" and exits 0. Not run here: start-all end to end and stop-all against running servers (Rohan's smoke check below).
+
+**Interfaces for other tracks:** the scripts are the demo entry points for `docs/demo/udcf-demo.md` (rest of 9A.9). Scenarios (9A.6/9A.7) can call `scripts\reset-cluster.ps1` before a run.
+
+**Known issues:**
+- Ports 8080/5173 are constants in the scripts that mirror `application.yml` (`${PORT:8080}`) and `vite.config.js`. If either changes, or `PORT` is set in the environment, update the scripts too.
+- stop-all stops anything listening on 8080/5173, including a server that start-all did not start. The addendum asks for this; the script prints its name.
+- The first `spring-boot:run` on a fresh machine can download Maven and dependencies for longer than 120 s. start-all then fails with the log tail; run stop-all, then start-all again.
+- The backend and frontend logs are overwritten on every start.
+
+**Gaps in other tracks:** none found. Note for Rohan (owner): CLAUDE.md "Layout" and docs/HANDOFF.md list `scripts/` as `start-all.ps1, stop-all.ps1`; `reset-cluster.ps1` is not listed there.
+
+**Smoke check (Windows PowerShell 5.1, repository root):**
+1. `.\scripts\start-all.ps1`: "Java 21 OK", "Node 22 OK", dots, then "the backend ... ready" and "the frontend ... ready". The browser opens http://localhost:5173 and the summary names both log files in `%TEMP%\udcf-demo`.
+2. In the browser, Overview and Cluster show five nodes up. A second `.\scripts\start-all.ps1` stops at once with "port 8080 is already in use by java (PID n)".
+3. On Cluster, crash node 5, recover it, and run `.\scripts\reset-cluster.ps1` immediately: "Waiting: busy module(s): election" (or a 409 retry line) appears, then "Cluster reset: HTTP 204". The UI shows five nodes up after the reset.
+4. `.\scripts\stop-all.ps1`: "Stopped backend ..." and "Stopped frontend ..."; the page shows the backend as unreachable. Run it again: "Nothing to stop: the UDCF demo is not running."
+5. `.\scripts\start-all.ps1 -NoBrowser`: starts cleanly again without opening a browser. Then `.\scripts\stop-all.ps1`.
+
 ---
 
 ## Progress log
@@ -487,3 +517,4 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-17 9A.4 done: the Berkeley time daemon (Experiment 3) and the MapReduce coordinator (Experiment 7) are the leader elected by Experiment 4 (`RoleProvider.ensureLeader()` on the request thread, 409 `NO_LEADER` when none; reads use `leaderId()` and never elect); both module-local selectors and every `TODO(L1)` removed; `TIME_DAEMON_CHANGED` / `COORDINATOR_CHANGED` published exactly once per new leader (CAS plus a short lock, after `LEADER_CHANGED`, before the next STARTED); daemon crash mid-round ends as `BERKELEY_ROUND_ABORTED` with `abortedRound` on the overview and a calm page notice; coordinator crash mid-run ends FAILED with a plain reason; served notes and page texts name the elected leader; 409 "No leader" shown as a calm warning; 30 fixtures recaptured by Rohan (full Experiment 3 sequence + new 409, 15 role-bearing Experiment 7 files) and two labelled synthetic fixtures; backend 1925 tests (0 failures, 1 skipped; baseline 1912 - 6 + 19; the 10 new and changed clocksync/mapreduce classes 3 runs, 108 tests each, all green; both packages after the recapture 272 tests, all green), frontend 1250 tests in 128 files (baseline 1244 + 6), lint and build exit 0; Windows only, Linux and the manual checklist not yet run; deviations: baseline 1915 corrected to 1912 (stale surefire report), `abortedRound` with `BerkeleyRoundAbortedException` and `AbortedRoundDto` (R4), the lock beyond R2, extra tests (+6 / +5), synthetic MapReduce 409 fixture, capture block amended with Reset-Cluster.
 - 2026-10-18 9A.4 Linux (Docker), run by Rohan on a clean clone of 37f87ae: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1925 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the ten clocksync/mapreduce classes x3 (108 tests each, 0 failures); frontend on node:22: npm ci, vitest (128 files, 1250 tests), lint and build exit 0, main chunk 834.05 kB. Manual checklist run the same day: 11 of 12 PASS, step 10 differs (not a defect).
 - 2026-10-18 9A.5 done: Timeline page /timeline: all modules' events from GET /api/events?limit=500 plus /topic/events, deduplicated by sequence, capped at 2000; Lamport order with bus-sequence tie-break or arrival order; cluster lane plus node lanes in SVG with the event list and details; readable sentences for the role-change, crash/recover and scenario types; leader-chain highlight; scenario bands; module/node/text filters in the URL; pause, clear view, disconnected banner; no backend change; frontend 1294 tests in 131 files (baseline 1262 in 128, +32), lint clean, build OK; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-19 9A.9a done: demo scripts scripts/start-all.ps1 (Java 21 / Node 22 / free-port checks, hidden backend and frontend with logs in %TEMP%\udcf-demo, PIDs with start times in pids.json, 120 s readiness waits, browser unless -NoBrowser), scripts/stop-all.ps1 (taskkill /T /F on the saved PIDs when the start time matches, then any listener on 8080/5173; idempotent) and scripts/reset-cluster.ps1 (waits for no BUSY module, POST reset with up to 40 tries on 409); checked here: PS 5.1 parse clean, ASCII only, version detection, mocked busy list, unreachable-API and nothing-running paths; start-all end to end not run here (Rohan's smoke check); no backend or frontend change, so no suites run; fast mode: no Docker run; CI is the Linux gate
