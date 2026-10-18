@@ -5,6 +5,7 @@ import { OverviewPage } from './OverviewPage'
 import * as useClusterModule from '@/hooks/useCluster'
 import * as useEventStreamModule from '@/hooks/useEventStream'
 import * as useToastModule from '@/hooks/use-toast'
+import * as integrationEvidenceModule from '@/components/integration/useIntegrationEvidence'
 import clusterFixture from '@/test/fixtures/cluster-node2-crashed.json'
 
 afterEach(() => {
@@ -45,6 +46,8 @@ describe('OverviewPage', () => {
 
   beforeEach(() => {
     mockToast = vi.fn()
+    // The integration map reads the module overviews; no test here may reach the network.
+    vi.spyOn(integrationEvidenceModule, 'useIntegrationEvidence').mockReturnValue({ overviews: {} })
     vi.spyOn(useToastModule, 'useToast').mockReturnValue({
       toast: mockToast,
       toasts: [],

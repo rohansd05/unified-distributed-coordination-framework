@@ -8,6 +8,7 @@ import { getConfig } from '@/lib/config'
 import { isNodeCrashed } from '@/lib/clusterStatus'
 import { ClusterGraph } from '@/components/cluster/ClusterGraph'
 import { EventStream } from '@/components/events/EventStream'
+import { IntegrationSection } from '@/components/integration/IntegrationSection'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -116,7 +117,7 @@ export function OverviewPage({ api = defaultApi }) {
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Overview</h1>
           <p className="text-sm text-muted-foreground">
-            Shared distributed coordination cluster hosting experiments on real sockets
+            One cluster of nodes on real sockets, shared by all ten experiments
           </p>
         </div>
 
@@ -191,6 +192,8 @@ export function OverviewPage({ api = defaultApi }) {
           </Button>
         </div>
       )}
+
+      {!clusterLoading && !clusterError && <IntegrationSection cluster={cluster} events={events} />}
 
       {!clusterLoading && !clusterError && (
         <div className="grid gap-6 md:grid-cols-5 items-start">

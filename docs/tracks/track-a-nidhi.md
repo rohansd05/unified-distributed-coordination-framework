@@ -38,7 +38,7 @@
 ### Steps
 - [x] 9A.2 — link audit and real-socket integration tests for L3, L4, L5 and L6 in
   `backend/src/test/java/com/udcf/integration/`; gaps in other tracks recorded, not fixed. Needs: 9A.0.
-- [ ] 9A.8 — Overview integration map (six links live) and demo polish. Needs: 9A.3, 9A.4, 9A.5.
+- [x] 9A.8 — Overview integration map (six links live) and demo polish. Needs: 9A.3, 9A.4, 9A.5.
 
 ### 9A.2 (fast mode)
 
@@ -96,6 +96,77 @@ fewer).
 4. MapReduce page: run "event-category-count" on "Live cluster event log" -> CLUSTER_RESET counts 1 and the
    RMI and load-balancing event types appear with counts.
 5. Matrix page: run size 40 -> COMPLETE, verification passed, scatter and broadcast delivered to every node.
+
+### 9A.8 (fast mode)
+
+**What changed.** Frontend only; no backend change, no new endpoint, no fixture recaptured.
+- New `frontend/src/components/integration/`: `integrationLinks.js` (L1-L6: one-line meaning, detail, the
+  experiments joined, the proving test, a literal Timeline deep link), `evidenceModel.js` (pure: `roleRows`,
+  `roleSummary`, `linkEvidence`, `evidenceHeadline`), `useIntegrationEvidence.js` (reads the existing
+  overviews of election, clocksync, replication, mapreduce (+ `/runs`), faulttolerance, mpi, matrix and
+  loadbalancing through the existing `*Api` singletons; once on mount, then only the affected sources after
+  `/topic/events` settles (700 ms, at most 3 s under a steady stream), everything on reconnect; no polling;
+  a late older reply is dropped), `IntegrationMap.jsx` (hand-drawn SVG: Exp 4 in the middle, the six role
+  holders on an arc, Exps 6, 2 and 1 below, the shared cluster as a bus with live node dots and the latest
+  Lamport time; L1-L6 are focusable edges with labels), `LinkPanel.jsx` (link list, and the side panel: what it
+  means, current evidence "Live" or "Verified by test", proving tests, experiment links, "See in Timeline"),
+  `IntegrationSection.jsx`; tests for the model, the hook and the section.
+- Overview: the section "How the ten experiments work as one system" sits above the topology; subtitle reworded.
+- L1 holders: Exp 3 `timeDaemonNodeId`, Exp 5 the shared PRIMARY role (else `currentPrimaryNodeId`, the node
+  Exp 5 last made primary), Exp 7 `coordinatorId`, Exp 8 `current.currentPrimaryId` once started, Exps 9 and 10
+  `defaultRootNodeId`; leader from `/api/cluster` roles. States: matches / differs (with the reason, e.g. "the
+  primary moves to node 4 at the next accepted write") / not taken yet / no leader / unreadable, each as a
+  shape plus words.
+- Evidence: L2 the election overview's `suspectedPeers` and Exp 8's last failover milestones; L3 the last
+  balancer run's requests per node; L4 the latest event's Lamport time (by bus sequence) and one stamped RMI
+  transfer; L5 the newest `EVENT_LOG` MapReduce run; L6 the last matrix run's remote scatter, broadcast and RMI
+  fetches. Nothing live: `Wired, verified by <test>` (L1 `LeaderRolesIntegrationTest`, L2
+  `LeaderFailoverIntegrationTest`, L3-L6 the 9A.2 classes).
+
+**Changes on other tracks' pages (presentation only).**
+- Sidebar (`components/layout/Sidebar.jsx`, shared): an experiment missing from `/api/modules` shows no status
+  instead of "Planned" (all ten showed "Planned" until `/api/modules` answered, because `ClusterProvider`
+  starts with `modules: []`); `Sidebar.test.jsx` expectation changed accordingly.
+- Timeline (`components/timeline/timelineModel.js`, Rohan): role name "planned handover" -> "fault-tolerance
+  handover".
+- Experiment page fallback (`pages/ExperimentPage.jsx`, unreachable with ten registered pages): "This module
+  arrives in Phase n." / "Not built yet." -> "This experiment's page is not part of this build." / "Nothing to
+  show in this build."; `ExperimentPage.test.jsx` updated.
+- Overview (`pages/OverviewPage.jsx`): subtitle and the new section; `OverviewPage.test.jsx` add-only mock of
+  the new hook.
+
+**Interfaces for other tracks.** None for the backend. `IntegrationSection({ cluster, events })` and the pure
+`evidenceModel` functions can be reused (e.g. 9A.9 demo notes).
+
+**Known issues.**
+- No visual walk at 1366x768 or 1920x1080 by the agent (the app was not running; rule 9); the smoke check covers it.
+- Exps 3, 7, 9 and 10 report `leaderId()` as their holder, so they match by construction; the map adds the
+  real last holder where it differs ("The last finished round ran on node 5.").
+- At 375 px the SVG scales down and its text is small; the link list beside/below it stays readable.
+
+**Gaps for owners.**
+- Rohan: About page shows "Arrives in Phase 14" (always in the sidebar) and Monitoring "Arrives in Phase 15"
+  (only with `VITE_GRAFANA_URL`): placeholder content in the walkthrough.
+- Swanand: `modules/election/ElectionControls.jsx:38` stale `TODO(L1)` comment (not rendered).
+- Jai (optional): `modules/mpi/labels.js` shows a raw `LOWEST_LIVE_ID` root source only for pre-9A.3 records
+  (no longer served).
+
+**Smoke check** (running app, Overview, after a cluster reset):
+1. Open Overview -> the map shows ten experiment boxes, the cluster bus with five node dots, six labelled
+   links; the list beside it names L1-L6, L3-L6 say "Wired, verified by …" until something runs.
+2. Run an Experiment 3 round, an Experiment 9 collective and an Experiment 5 write -> within about a second
+   Exp 4 shows "leader: node 5" and Exps 3, 5, 9 and 10 show "node 5 matches".
+3. Crash node 5 on the Cluster page and wait about 10 s -> Exp 4 shows "leader: node 4"; Exp 5 shows "node 5
+   differs" and, in the L1 panel, "the primary moves to node 4 at the next accepted write"; Exps 3, 9 and 10 match node 4.
+4. Click L2 -> the panel says "Live", lists which nodes suspect node 5 and the heartbeat timing; click "See in
+   Timeline" -> /timeline opens filtered to election and fault tolerance, arrival order.
+5. Run a load-balancing run, then click L3 -> "Last run (round robin): 60 of 60 requests ran on Experiment 2
+   executors" with requests per node; the bus shows the latest Lamport value changing as events arrive.
+
+Smoke check result (2026-10-19): not run on the Overview page (0/5 checked on screen). The script that was run
+was the 9A.6 scenario API script (`smoke-9a6.ps1`): five scenarios listed, `leader-dies-mid-write` run 1 PASSED
+6 of 6 steps, end state node 5 down and node 4 the leader and replication primary. That is the backend state
+steps 2-3 depend on, but it checks no part of the map.
 
 ---
 
@@ -669,3 +740,9 @@ fewer).
   production code; backend 1925 -> 1934 tests, 0 failures, 0 errors, 1 skipped (the opt-in probe), the four
   classes took about 8.8 s of test time in the full run; frontend not run (no frontend change); fast mode: no
   Docker run; CI is the Linux gate.
+- 2026-10-19 9A.8 done: Overview integration map (ten experiments plus the cluster bus, links L1-L6 as
+  selectable edges, side panel with live evidence or the proving test, "See in Timeline" deep links; L1 role
+  rows with "matches leader" per role, mismatches shown with their reason) from existing endpoints and
+  /topic/events only; presentation fixes on Sidebar ("Planned" never shown), Timeline ("planned handover"),
+  ExperimentPage fallback copy; frontend 1316 tests in 134 files -> 1357 in 137, lint clean, build OK (main
+  chunk 909.67 kB); no backend change; fast mode: no Docker run; CI is the Linux gate
