@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { rootSourceLabel } from '@/modules/mpi/labels'
+import { defaultRootText } from '@/modules/mpi/labels'
 import { RUN_TIMEOUT_MARGIN_MS, runTimeoutMs } from './matrixApi'
 import { validateRun } from './matrixModel'
 
@@ -76,9 +76,7 @@ export function MatrixControls({ overview, locked, pending, progress, stopReques
     setClientErrors(found)
     if (Object.keys(found).length === 0) onRun(form.size, form.rootNode)
   }
-  const defaultRoot = typeof overview.defaultRootNodeId === 'number'
-    ? `Default: node ${overview.defaultRootNodeId} (${rootSourceLabel(overview.defaultRootSource)})`
-    : 'Default: none, every node is down'
+  const defaultRoot = defaultRootText(overview, nodes)
   const wait = runTimeoutMs(overview)
   return (
     <form aria-label="Run a matrix multiplication" noValidate className="space-y-3 rounded-lg border bg-card/60 p-4" onSubmit={submit}>
@@ -89,7 +87,7 @@ export function MatrixControls({ overview, locked, pending, progress, stopReques
             value={form.size} onChange={update('size')} disabled={locked} />
         </Field>
         <Field id="matrix-root" label="Root node (optional)" error={errors.rootNode}
-          hint="Without a choice the root is the elected leader when there is one, otherwise the lowest live node. The leader becomes the root fully in Phase 13.">
+          hint="Without a choice the root is the leader elected by Experiment 4. With no leader yet, the run first asks Experiment 4 for an election, which starts its election service and heartbeats on every live node; if no leader can be elected, the run is refused. Reading this page never starts an election.">
           <select {...fieldProps('matrix-root', errors.rootNode)} className={inputClass} value={form.rootNode}
             onChange={update('rootNode')} disabled={locked}>
             <option value="">{defaultRoot}</option>

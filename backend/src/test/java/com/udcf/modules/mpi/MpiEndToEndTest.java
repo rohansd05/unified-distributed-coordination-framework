@@ -38,7 +38,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the context (UDP 28686 to 28690). Each test starts with a cluster reset. At class end the RMI
  * services are stopped and the ports checked free.</p>
  */
-@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28675", "udcf.cluster.ports.clock-base=28685"})
+@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28675", "udcf.cluster.ports.clock-base=28685",
+        "udcf.cluster.ports.election-base=28160"})
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -80,7 +81,7 @@ class MpiEndToEndTest {
     }
 
     private JsonNode run(String operation) throws Exception {
-        String body = "{\"operation\":\"" + operation + "\",\"count\":" + COUNT + ",\"seed\":" + SEED + "}";
+        String body = "{\"rootNode\":1,\"operation\":\"" + operation + "\",\"count\":" + COUNT + ",\"seed\":" + SEED + "}";
         String json = mockMvc.perform(post("/api/modules/mpi/collectives").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(json);

@@ -24,6 +24,7 @@ import unknownNodeFixture from '@/test/fixtures/replication/error-404-unknown-no
 import nodeDownFixture from '@/test/fixtures/replication/error-409-node-down.json'
 import nodeStateFixture from '@/test/fixtures/replication/error-409-node-state.json'
 import eventsFixture from '@/test/fixtures/replication/events.json'
+import noLeaderFixture from '@/test/fixtures/replication/synthetic/error-409-no-leader.json'
 import { ReplicationPage } from './ReplicationPage'
 
 const experiment = findBySlug('5-replication')
@@ -147,10 +148,10 @@ describe('ReplicationPage', () => {
 
     await waitFor(() => expect(api.write).toHaveBeenCalledWith({ key: 'balance', value: '1000', model: 'SYNCHRONOUS' }))
     const result = await within(write).findByRole('region', { name: 'Write result' })
-    expect(result.textContent).toContain('Synchronous write of balance = 1000 confirmed by node 1')
+    expect(result.textContent).toContain('Synchronous write of balance = 1000 confirmed by node 5')
     expect(result.textContent).toContain('Node 2: acknowledged, applied')
     await waitFor(() => expect(document.activeElement).toBe(result))
-    expect(announcement()).toBe('Synchronous write of balance confirmed by node 1.')
+    expect(announcement()).toBe('Synchronous write of balance confirmed by node 5.')
   })
 
   it('an asynchronous write: PENDING in the result, the window open while the backend says PENDING, closed and announced on COMPLETE', async () => {
@@ -184,7 +185,7 @@ describe('ReplicationPage', () => {
     const result = await within(read).findByRole('region', { name: 'Read result' })
     expect(result.textContent).toContain('Stale')
     expect(result.textContent).toContain('Node 2 holds 1000')
-    expect(result.textContent).toContain('The primary, node 1, holds 2000')
+    expect(result.textContent).toContain('The primary, node 5, holds 2000')
     expect(result.querySelector('[data-glyph="stale"]')).not.toBeNull()
   })
 
@@ -203,60 +204,61 @@ describe('ReplicationPage', () => {
 
   it('recover a crashed node: announced, and focus moves to its crash button', async () => {
     const api = makeApi({ overview: overviewTakeoverPending })
-    api.recover.mockResolvedValue({ ...recoverBackup, nodeId: 1 })
+    api.recover.mockResolvedValue({ ...recoverBackup, nodeId: 5 })
     await renderPage(api)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Recover node 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recover node 5' }))
 
-    await waitFor(() => expect(api.recover).toHaveBeenCalledWith(1))
-    const crash = await screen.findByRole('button', { name: 'Crash node 1' })
+    await waitFor(() => expect(api.recover).toHaveBeenCalledWith(5))
+    const crash = await screen.findByRole('button', { name: 'Crash node 5' })
     await waitFor(() => expect(document.activeElement).toBe(crash))
-    expect(announcement()).toBe('Node 1 recovered.')
+    expect(announcement()).toBe('Node 5 recovered.')
   })
 
-  it('recover a node that comes back as the primary (it has no crash button): focus moves to its label, which says primary', async () => {
+  it('recover a node that leads again (derived: role PRIMARY, it has no crash button): focus moves to its label, which says primary', async () => {
     const api = makeApi({ overview: overviewTakeoverPending })
-    api.recover.mockResolvedValue({ ...recoverBackup, nodeId: 1, role: 'PRIMARY', actingPrimary: true })
+    api.recover.mockResolvedValue({ ...recoverBackup, nodeId: 5, role: 'PRIMARY' })   // changed: node 5 won its recovery election
     await renderPage(api)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Recover node 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recover node 5' }))
 
-    await waitFor(() => expect(api.recover).toHaveBeenCalledWith(1))
-    const row = screen.getAllByTestId('node-action-row')[0]
+    await waitFor(() => expect(api.recover).toHaveBeenCalledWith(5))
+    const row = screen.getAllByTestId('node-action-row')[4]
     const label = within(row).getByTestId('node-label')
     await waitFor(() => expect(document.activeElement).toBe(label))
-    expect(label.textContent).toBe('Node 1, primary, up')
+    expect(label.textContent).toBe('Node 5, primary, up')
     expect(within(row).queryByRole('button')).toBeNull()
     expect(within(row).getByRole('link', { name: 'Cluster page' })).toBeTruthy()
-    expect(announcement()).toBe('Node 1 recovered and is the primary again.')
+    expect(announcement()).toBe('Node 5 recovered and leads again: the next write makes it the primary.')
   })
 
   it('the primary has no crash button here, only a link to the Cluster page', async () => {
-    await renderPage(makeApi())
-    const primaryRow = screen.getAllByTestId('node-action-row')[0]
-    expect(primaryRow.textContent).toContain('Node 1, primary, up')
+    await renderPage(makeApi({ overview: overviewAfterAsync }))
+    const primaryRow = screen.getAllByTestId('node-action-row')[4]
+    expect(primaryRow.textContent).toContain('Node 5, primary, up')
     expect(within(primaryRow).queryByRole('button')).toBeNull()
     expect(within(primaryRow).getByRole('link', { name: 'Cluster page' }).getAttribute('href')).toBe('/cluster')
   })
 
-  it('anti-entropy offers only live backups (the real pending overview: node 1 crashed, node 2 primary) and reports the push', async () => {
+  it('anti-entropy offers only live backups (the real pending overview: node 5 crashed, node 4 primary) and reports the push', async () => {
     const api = makeApi({ overview: overviewTakeoverPending })
     await renderPage(api)
     const repair = form('Run anti-entropy')
     const options = within(repair).getAllByRole('option').map((o) => o.textContent)
-    expect(options).toEqual(['Node 3', 'Node 4', 'Node 5'])
+    expect(options).toEqual(['Node 1', 'Node 2', 'Node 3'])
 
     fireEvent.click(within(repair).getByRole('button', { name: 'Run anti-entropy' }))
 
-    await waitFor(() => expect(api.antiEntropy).toHaveBeenCalledWith(3))
+    await waitFor(() => expect(api.antiEntropy).toHaveBeenCalledWith(1))
     expect((await within(repair).findByRole('region', { name: 'Anti-entropy result' })).textContent)
-      .toContain(`Node 1 pushed ${antiEntropy.pushed} items to node 3: ${antiEntropy.applied} applied`)
+      .toContain(`Node 5 pushed ${antiEntropy.pushed} items to node 3: ${antiEntropy.applied} applied`)
   })
 
   it('a stale update: delivered to the chosen backup, and its rejection explained with both Lamport times', async () => {
-    const api = makeApi()
+    const api = makeApi({ overview: overviewAfterAsync })
     await renderPage(api)
     const stale = form('Deliver a stale update')
+    fireEvent.change(within(stale).getByLabelText('Deliver to'), { target: { value: '2' } })
 
     fireEvent.change(within(stale).getByLabelText('Key'), { target: { value: 'balance' } })
     fireEvent.change(within(stale).getByLabelText('Old value'), { target: { value: '500' } })
@@ -294,7 +296,7 @@ describe('ReplicationPage', () => {
     expect((await within(form('Run anti-entropy')).findByRole('alert')).textContent)
       .toBe(`Node down: ${nodeDownFixture.detail}`)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Recover node 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recover node 5' }))
     const nodes = screen.getAllByTestId('node-action-row')[0].closest('fieldset')
     expect((await within(nodes).findByRole('alert')).textContent).toBe(`Node state conflict: ${nodeStateFixture.detail}`)
 
@@ -316,7 +318,33 @@ describe('ReplicationPage', () => {
     await renderPage(makeApi({ overview: overviewAfterTakeover, replicas: replicasDiverged }))
     expect(screen.getAllByTestId('timeline-entry')).toHaveLength(3)
     expect(screen.getAllByTestId('replica-cell').some((cell) => cell.getAttribute('data-state') === 'MISSING')).toBe(true)
-    expect(screen.getByTestId('health-table').textContent).toContain('Measured by node 1')
+    expect(screen.getByTestId('health-table').textContent).toContain('Measured by node 5')
+  })
+
+  it('409 No leader: a calm status with the backend\'s detail, not a red alert (synthetic body, from ReplicationControllerTest)', async () => {
+    const api = makeApi()
+    api.write.mockRejectedValue(problem(noLeaderFixture))
+    await renderPage(api)
+    const write = form('Write a value')
+    fireEvent.change(within(write).getByLabelText('Key'), { target: { value: 'k' } })
+    fireEvent.change(within(write).getByLabelText('Value'), { target: { value: 'v' } })
+    fireEvent.click(within(write).getByRole('button', { name: 'Write' }))
+
+    const status = await within(write).findByTestId('action-error')
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.getAttribute('data-kind')).toBe('no-leader')
+    expect(status.textContent).toBe(`No leader. ${noLeaderFixture.detail}`)
+    expect(within(write).queryByRole('alert')).toBeNull()
+  })
+
+  it('names the primary as the elected leader, or says none is elected yet (never "lowest live")', async () => {
+    await renderPage(makeApi())
+    expect(screen.getByTestId('module-status').textContent)
+      .toContain('No leader yet: the next write asks Experiment 4 to elect one, and that node becomes the primary.')
+    cleanup()
+    await renderPage(makeApi({ overview: overviewAfterAsync }))
+    expect(screen.getByTestId('module-status').textContent).toContain('The primary is node 5, the leader elected by Experiment 4.')
+    expect(pageText()).not.toMatch(/lowest live|Phase 13/)
   })
 
   it('shows no all-caps words anywhere it authors, whatever it renders (known abbreviations aside)', async () => {

@@ -19,7 +19,7 @@ describe('HealthTable', () => {
   it('one row per backup, measured by the current primary, with real counts and measured latencies', () => {
     render(<HealthTable overview={overviewAfterAsync} />)
 
-    expect(screen.getByRole('table').querySelector('caption').textContent).toContain('Measured by node 1, the current primary')
+    expect(screen.getByRole('table').querySelector('caption').textContent).toContain('Measured by node 5, the current primary')
     const rows = screen.getAllByTestId('health-row')
     expect(rows).toHaveLength(overviewAfterAsync.health.length)
     const first = overviewAfterAsync.health[0]

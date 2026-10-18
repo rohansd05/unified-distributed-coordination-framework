@@ -217,7 +217,7 @@ describe('seriesModel', () => {
 
 describe('labels, history and notice', () => {
   it('formats speedups to three significant digits without rounding a small one to 0', () => {
-    expect(formatSpeedup(series.points[0].speedup)).toBe('0.00491')
+    expect(formatSpeedup(series.points[0].speedup)).toBe('0.00682')
     expect(formatSpeedup(null)).toBeNull()
     expect(formatShare(0.7225496143899325)).toBe('72.3 %')
     expect(kindLabel('MEASURED_ON_NODE')).toBe('Measured on the node')

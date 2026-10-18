@@ -33,6 +33,15 @@ function metric(text, exact, reason) {
 /** Copied from the Experiment 1 page (RmiPage); a shared component is a later refactor. */
 function ProblemAlert({ problem, alertRef }) {
   if (!problem) return null
+  if (problem.kind === 'no-leader') {
+    return (
+      <div ref={alertRef} tabIndex={-1} role="status" data-testid="action-error" data-kind={problem.kind}
+        className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm focus:outline-none">
+        <p className="font-medium text-warning">No leader</p>
+        <p className="mt-1 text-foreground/90">{problem.message}</p>
+      </div>
+    )
+  }
   return (
     <div ref={alertRef} tabIndex={-1} role="alert" data-testid="action-error" data-kind={problem.kind}
       className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm focus:outline-none">

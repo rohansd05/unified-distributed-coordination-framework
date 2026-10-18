@@ -4,11 +4,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
+import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.module.ModuleActionGuard;
 import com.udcf.core.module.ModuleStatus;
+import com.udcf.modules.mpi.MpiProperties;
+import com.udcf.modules.mpi.NoLeaderException;
+import com.udcf.modules.multithreading.MultithreadingProperties;
 import com.udcf.modules.multithreading.RequestsNodeService;
 import com.udcf.modules.rmi.RmiModule;
+import com.udcf.modules.rmi.RmiProperties;
 import com.udcf.modules.rmi.RmiTestSupport;
+import com.udcf.modules.rmi.RmiTransportProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,17 +32,23 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 
+import static com.udcf.core.cluster.NodeCapacity.FAST;
+import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
+import static com.udcf.core.cluster.NodeCapacity.SLOW;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -119,6 +135,27 @@ class MatrixControllerTest {
 
     @Autowired
     private Cluster cluster;
+
+    @Autowired
+    private MatrixProperties matrixProperties;
+
+    @Autowired
+    private MatrixRunProperties runProperties;
+
+    @Autowired
+    private MatrixModuleProperties moduleProperties;
+
+    @Autowired
+    private MpiProperties mpiProperties;
+
+    @Autowired
+    private RmiProperties rmiProperties;
+
+    @Autowired
+    private RmiTransportProperties rmiTransport;
+
+    @Autowired
+    private MultithreadingProperties multithreading;
 
     @BeforeEach
     void cleanStart() throws Exception {
@@ -260,7 +297,7 @@ class MatrixControllerTest {
     @Test
     @DisplayName("COMPLETE run: exact fields of every DTO, exact equality with the sequential product, nulls where nothing applies")
     void completeRun() throws Exception {
-        JsonNode run = run("{\"size\":30,\"seed\":42}");
+        JsonNode run = run("{\"rootNode\":1,\"size\":30,\"seed\":42}");
 
         assertFields(run, RUN_FIELDS);
         assertFields(run.get("scatter"), PHASE_FIELDS);
@@ -304,7 +341,7 @@ class MatrixControllerTest {
     @Test
     @DisplayName("REFUSED (size 2 over three live nodes) is a 200 with the reason and no run-related figure")
     void refused() throws Exception {
-        JsonNode run = run("{\"size\":2,\"seed\":42}");
+        JsonNode run = run("{\"rootNode\":1,\"size\":2,\"seed\":42}");
 
         assertThat(run.get("outcome").asText()).isEqualTo("REFUSED");
         assertThat(run.get("refusal").get("reason").asText()).isEqualTo("SIZE_BELOW_PARTICIPANTS");
@@ -321,7 +358,7 @@ class MatrixControllerTest {
     void crashedNodeSkipped() throws Exception {
         mockMvc.perform(post("/api/cluster/nodes/3/crash")).andExpect(status().isOk());
         try {
-            JsonNode run = run("{\"size\":30,\"seed\":42}");
+            JsonNode run = run("{\"rootNode\":1,\"size\":30,\"seed\":42}");
             assertThat(run.get("outcome").asText()).isEqualTo("COMPLETE");
             assertThat(longs(run.get("skippedNodeIds"))).containsExactly(3L);
             assertThat(longs(run.get("rankNodeIds"))).containsExactly(1L, 2L);
@@ -333,8 +370,8 @@ class MatrixControllerTest {
     @Test
     @DisplayName("history newest first, latest, by id; series shape after one run of a series size")
     void historyAndSeries() throws Exception {
-        run("{\"size\":50,\"seed\":42}");
-        run("{\"size\":30}");
+        run("{\"rootNode\":1,\"size\":50,\"seed\":42}");
+        run("{\"rootNode\":1,\"size\":30}");
 
         JsonNode runs = json(mockMvc.perform(get(BASE + "/runs")).andExpect(status().isOk()));
         assertThat(runs).hasSize(2);
@@ -409,7 +446,7 @@ class MatrixControllerTest {
 
         ModuleActionGuard.ActionTicket held = module.guard().begin("Matrix run of size 316");
         try {
-            JsonNode busy = json(postRun("{\"size\":30}").andExpect(status().isConflict()));
+            JsonNode busy = json(postRun("{\"rootNode\":1,\"size\":30}").andExpect(status().isConflict()));
             assertThat(busy.get("title").asText()).isEqualTo("Module busy");
             assertThat(busy.get("moduleId").asText()).isEqualTo("matrix");
             assertThat(busy.get("actionInProgress").asText()).isEqualTo("Matrix run of size 316");
@@ -418,6 +455,35 @@ class MatrixControllerTest {
             held.close();
         }
         assertThat(module.history()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("409 No leader, reason NO_LEADER, when live nodes exist but no leader could be elected")
+    void noLeader() throws Exception {
+        // A running backend always elects a live node, so this module has no election module at all (its
+        // RoleProvider answers empty at once); its nodes bind nothing (bases 28460 to 28490 and 28360 to 28370).
+        ClusterEventBus bus = RmiTestSupport.bus();
+        Cluster alone = new Cluster(new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
+                new ClusterProperties.Ports(28460, 28470, 28480, 28490, 28360, 28370)), bus);
+        RoleProvider none = new RoleProvider(alone, (LeaderElector) null);
+        MatrixModule leaderless = new MatrixModule(alone, bus, matrixProperties, runProperties, moduleProperties,
+                mpiProperties, rmiModule, rmiProperties, rmiTransport, multithreading, new SimpleMeterRegistry(),
+                Clock.systemUTC(), none);
+        try {
+            MockMvcBuilders.standaloneSetup(new MatrixController(leaderless)).build()
+                    .perform(post(BASE + "/runs").contentType(MediaType.APPLICATION_JSON).content("{\"size\":30}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.title").value("No leader"))
+                    .andExpect(jsonPath("$.reason").value("NO_LEADER"))
+                    .andExpect(jsonPath("$.moduleId").value("matrix"))
+                    .andExpect(jsonPath("$.detail").value(new NoLeaderException("a matrix run").getMessage()));
+            assertThat(leaderless.history()).isEmpty();
+        } finally {
+            leaderless.close();
+            none.close();
+            alone.close();
+            bus.close();
+        }
     }
 
     // ------------------------------------------------------------------ Experiment 2 listeners (ruling 4)
@@ -459,7 +525,7 @@ class MatrixControllerTest {
     @DisplayName("Experiment 2's own batches still work on a listener the matrix started (no 'already running' failure)")
     void experimentTwoStillWorks() throws Exception {
         start();
-        run("{\"size\":30,\"seed\":42}");
+        run("{\"rootNode\":1,\"size\":30,\"seed\":42}");
 
         JsonNode batch = objectMapper.readTree(mockMvc.perform(post("/api/modules/multithreading/nodes/2/batches")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"count\":3,\"type\":\"CPU_HASH\",\"payloadSize\":10}"))
@@ -484,7 +550,7 @@ class MatrixControllerTest {
     @Test
     @DisplayName("only clock, rmi and requests run, on this class's ports; election, replication and mapreduce never start")
     void onlyExpectedServicesStart() throws Exception {
-        run("{\"size\":30,\"seed\":42}");
+        run("{\"rootNode\":1,\"size\":30,\"seed\":42}");
 
         for (ClusterNode node : cluster.nodes()) {
             assertThat(node.runningServices()).as("node %d", node.id()).containsExactlyInAnyOrder("clock", "rmi", "requests");
@@ -497,7 +563,7 @@ class MatrixControllerTest {
     @Test
     @DisplayName("Prometheus: the four matrix meters, node_id = the root (compute: the computing node)")
     void prometheus() throws Exception {
-        run("{\"size\":30,\"seed\":42}");
+        run("{\"rootNode\":1,\"size\":30,\"seed\":42}");
 
         String scrape = mockMvc.perform(get("/actuator/prometheus")).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();

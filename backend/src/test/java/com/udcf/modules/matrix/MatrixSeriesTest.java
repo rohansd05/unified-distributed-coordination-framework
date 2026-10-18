@@ -30,7 +30,7 @@ class MatrixSeriesTest {
                         speedup == null ? "withheld" : null));
         List<Integer> nodes = outcome == CollectiveOutcome.REFUSED ? List.of()
                 : java.util.stream.IntStream.rangeClosed(1, ranks).boxed().toList();
-        return new MatrixRunDto(id, Instant.EPOCH, size, 1, 1, RootSource.LOWEST_LIVE_ID, null, nodes, List.of(), outcome,
+        return new MatrixRunDto(id, Instant.EPOCH, size, 1, 1, RootSource.LEADER, null, nodes, List.of(), outcome,
                 null, 10_000, null, null, List.of(), List.of(), timing, null, null, null, null, null, null);
     }
 

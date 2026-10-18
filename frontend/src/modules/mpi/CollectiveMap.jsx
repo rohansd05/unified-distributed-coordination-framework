@@ -39,8 +39,13 @@ function segment(from, to) {
   return { start, end, mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } }
 }
 
-function sentence(collective, rootId) {
-  if (!collective) return rootId === null ? 'No collective yet, and no live node to be the root.' : `No collective yet. The default root is node ${rootId}.`
+function sentence(collective, rootId, nodes) {
+  if (!collective && rootId === null) {
+    return nodes.some((node) => node.state !== 'down')
+      ? 'No collective yet, and no leader yet: the first collective asks Experiment 4 to elect one, and it becomes the root.'
+      : 'No collective yet, and no live node to be the root.'
+  }
+  if (!collective) return `No collective yet. The default root is node ${rootId}, the leader elected by Experiment 4.`
   return `${operationLabel(collective.operation)} ${collective.id} from root node ${collective.rootNodeId}: ${outcomeLabel(collective.outcome).toLowerCase()}.`
 }
 
@@ -63,7 +68,7 @@ export function CollectiveMap({ overview, collective }) {
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const root = byId.get(rootId)
   const coHosting = overview?.coHosting
-  const text = sentence(collective, rootId)
+  const text = sentence(collective, rootId, nodes)
   const animationKey = collective ? `${collective.id}-${collective.startedAt}` : 'none'
 
   return (

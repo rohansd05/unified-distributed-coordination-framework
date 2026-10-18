@@ -9,7 +9,7 @@ package com.udcf.modules.matrix.dto;
  * @param size     the matrix size N, from udcf.matrix.min-size to floor(sqrt(udcf.mpi.max-payload-elements)) (required)
  * @param seed     seed of A and B, 0 to 2^53 - 1 (a JavaScript number holds it exactly); when left out, the run id is
  *                 used
- * @param rootNode the root; when left out, the live leader, else the lowest live node id
+ * @param rootNode the root; when left out, the leader elected by Experiment 4 (electing one first if needed)
  */
 public record MatrixRunCommand(Integer size, Long seed, Integer rootNode) {
 }

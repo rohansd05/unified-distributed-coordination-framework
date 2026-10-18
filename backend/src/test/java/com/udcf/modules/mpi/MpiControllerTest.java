@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
+import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.module.ModuleActionGuard;
 import com.udcf.core.module.ModuleStatus;
 import com.udcf.modules.rmi.PayloadSizer;
@@ -22,7 +26,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -30,10 +37,14 @@ import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import static com.udcf.core.cluster.NodeCapacity.FAST;
+import static com.udcf.core.cluster.NodeCapacity.MEDIUM;
+import static com.udcf.core.cluster.NodeCapacity.SLOW;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -45,11 +56,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Crashes nodes, so it has its own context with Jai's test ports: {@code rmi-base=28660}, so node
  * k's registry listens on 28660 + k (TCP 28661 to 28665 under the local profile's five nodes), and
  * {@code clock-base=28670}, because the Experiment 3 module starts its UDP clock service on every live
- * node when the context starts (UDP 28671 to 28675). No other service starts (checked). Each test
+ * node when the context starts (UDP 28671 to 28675). No other service starts (checked): every collective here
+ * names root node 1 (REQUESTED), so none asks Experiment 4 for a leader; the leader as the default root is
+ * covered by MpiModuleTest and LeaderRolesIntegrationTest ({@code election-base=28130} is pinned anyway). Each test
  * starts with a cluster reset (every node up, RMI stopped, history and events cleared). At class end
  * the RMI services are stopped and the ports checked free, and the context is closed.</p>
  */
-@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28660", "udcf.cluster.ports.clock-base=28670"})
+@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28660", "udcf.cluster.ports.clock-base=28670",
+        "udcf.cluster.ports.election-base=28130"})
 @AutoConfigureMockMvc
 @AutoConfigureObservability
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -174,7 +188,7 @@ class MpiControllerTest {
         throw new AssertionError("no transfer for node " + nodeId);
     }
 
-    /** A COMPLETE collective over the five nodes from node 1, with every field's type. */
+    /** A COMPLETE collective over the five nodes from node 1 (requested), with every field's type. */
     private static void assertComplete(JsonNode c, String operation) {
         assertFields(c, COLLECTIVE_FIELDS);
         assertThat(c.get("operation").asText()).isEqualTo(operation);
@@ -184,7 +198,7 @@ class MpiControllerTest {
         assertType(c, "seed", JsonNode::isIntegralNumber);
         assertType(c, "totalNanos", JsonNode::isIntegralNumber);
         assertThat(c.get("rootNodeId").asInt()).isEqualTo(1);
-        assertThat(c.get("rootSource").asText()).isEqualTo("LOWEST_LIVE_ID");
+        assertThat(c.get("rootSource").asText()).isEqualTo("REQUESTED");
         assertThat(c.get("rootRank").asInt()).isZero();
         assertThat(c.get("rankNodeIds").toString()).isEqualTo("[1,2,3,4,5]");
         assertThat(c.get("skippedNodeIds").toString()).isEqualTo("[]");
@@ -229,8 +243,7 @@ class MpiControllerTest {
         assertThat(overview.get("status").asText()).isEqualTo("IDLE");
         assertNull(overview, "actionInProgress", "latest");
         assertThat(overview.get("boundName").asText()).isEqualTo("CollectiveEndpoint");
-        assertThat(overview.get("defaultRootNodeId").asInt()).isEqualTo(1);
-        assertThat(overview.get("defaultRootSource").asText()).isEqualTo("LOWEST_LIVE_ID");
+        assertNull(overview, "defaultRootNodeId", "defaultRootSource");   // no leader after a reset; a read never elects
         assertThat(overview.get("latencyBasis").asText()).isEqualTo(RmiCollectiveTransport.LATENCY_BASIS);
         assertThat(overview.get("payloadSizeBasis").asText()).isEqualTo(PayloadSizer.LABEL);
         assertThat(overview.get("algorithmNote").asText()).isEqualTo(MpiModule.ALGORITHM_NOTE);
@@ -288,8 +301,8 @@ class MpiControllerTest {
     @Test
     @DisplayName("POST broadcast and scatter: 200 COMPLETE with exact fields; LOCAL has no number; delivered parts are verified")
     void broadcastAndScatter() throws Exception {
-        assertComplete(run("{\"operation\":\"BROADCAST\",\"count\":1000,\"seed\":42}"), "BROADCAST");
-        JsonNode scatter = run("{\"operation\":\"SCATTER\",\"count\":1003}");
+        assertComplete(run("{\"rootNode\":1,\"operation\":\"BROADCAST\",\"count\":1000,\"seed\":42}"), "BROADCAST");
+        JsonNode scatter = run("{\"rootNode\":1,\"operation\":\"SCATTER\",\"count\":1003}");
         assertComplete(scatter, "SCATTER");
         assertThat(scatter.get("seed").asLong()).isEqualTo(scatter.get("id").asLong());
         assertThat(scatter.get("verification").get("wholeVectorMatches").asBoolean()).isTrue();
@@ -299,7 +312,7 @@ class MpiControllerTest {
     @Test
     @DisplayName("POST gather: blocks with checksums, no values on the wire, the assembled vector verified")
     void gather() throws Exception {
-        JsonNode gather = run("{\"operation\":\"GATHER\",\"count\":1003,\"seed\":42}");
+        JsonNode gather = run("{\"rootNode\":1,\"operation\":\"GATHER\",\"count\":1003,\"seed\":42}");
 
         assertComplete(gather, "GATHER");
         assertThat(gather.get("gathered")).hasSize(5);
@@ -315,7 +328,7 @@ class MpiControllerTest {
     @Test
     @DisplayName("POST scatter with fewer elements than live nodes: 200 REFUSED with the refusal, no transfers, null rank and verification")
     void refused() throws Exception {
-        JsonNode refused = run("{\"operation\":\"SCATTER\",\"count\":4}");
+        JsonNode refused = run("{\"rootNode\":1,\"operation\":\"SCATTER\",\"count\":4}");
 
         assertFields(refused, COLLECTIVE_FIELDS);
         assertThat(refused.get("outcome").asText()).isEqualTo("REFUSED");
@@ -334,8 +347,8 @@ class MpiControllerTest {
         assertThat(none.get("collectiveId").isNull()).isTrue();
         assertThat(json(mockMvc.perform(get(BASE + "/collectives")).andExpect(status().isOk())).toString()).isEqualTo("[]");
 
-        run("{\"operation\":\"BROADCAST\",\"count\":10}");
-        run("{\"operation\":\"GATHER\",\"count\":10}");
+        run("{\"rootNode\":1,\"operation\":\"BROADCAST\",\"count\":10}");
+        run("{\"rootNode\":1,\"operation\":\"GATHER\",\"count\":10}");
 
         JsonNode list = json(mockMvc.perform(get(BASE + "/collectives")).andExpect(status().isOk()));
         assertThat(list).hasSize(2);
@@ -390,7 +403,7 @@ class MpiControllerTest {
     void busy() throws Exception {
         ModuleActionGuard.ActionTicket held = module.guard().begin("BROADCAST of 100000 values");
         try {
-            JsonNode problem = json(postCollective("{\"operation\":\"GATHER\",\"count\":5}").andExpect(status().isConflict()));
+            JsonNode problem = json(postCollective("{\"rootNode\":1,\"operation\":\"GATHER\",\"count\":5}").andExpect(status().isConflict()));
             assertProblem(problem, 409, "Module busy", "moduleId", "actionInProgress");
             assertThat(problem.get("moduleId").asText()).isEqualTo("mpi");
             assertThat(problem.get("actionInProgress").asText()).isEqualTo("BROADCAST of 100000 values");
@@ -417,6 +430,35 @@ class MpiControllerTest {
         assertThat(module.history()).isEmpty();
     }
 
+    @Test
+    @DisplayName("409 No leader, reason NO_LEADER, when live nodes exist but no leader could be elected")
+    void noLeader() throws Exception {
+        // A running backend always elects a live node, so this module has no election module at all (its
+        // RoleProvider answers empty at once); its nodes bind nothing (bases 28460 to 28490 and 28360 to 28370).
+        ClusterEventBus bus = RmiTestSupport.bus();
+        Cluster alone = new Cluster(new ClusterProperties(3, List.of(FAST, MEDIUM, SLOW),
+                new ClusterProperties.Ports(28460, 28470, 28480, 28490, 28360, 28370)), bus);
+        RoleProvider none = new RoleProvider(alone, (LeaderElector) null);
+        MpiModule leaderless = new MpiModule(alone, bus, MpiTestResults.PROPERTIES, rmiModule,
+                RmiTestSupport.PROPERTIES, RmiTestSupport.TRANSPORT, new SimpleMeterRegistry(), Clock.systemUTC(), none);
+        try {
+            MockMvcBuilders.standaloneSetup(new MpiController(leaderless)).build()
+                    .perform(post(BASE + "/collectives").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"operation\":\"BROADCAST\",\"count\":5}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.title").value("No leader"))
+                    .andExpect(jsonPath("$.reason").value("NO_LEADER"))
+                    .andExpect(jsonPath("$.moduleId").value("mpi"))
+                    .andExpect(jsonPath("$.detail").value(new NoLeaderException("a collective").getMessage()));
+            assertThat(leaderless.history()).isEmpty();
+        } finally {
+            leaderless.close();
+            none.close();
+            alone.close();
+            bus.close();
+        }
+    }
+
     // ------------------------------------------------------------------ registry, services, meters
 
     @Test
@@ -437,7 +479,7 @@ class MpiControllerTest {
     @Test
     @DisplayName("a collective starts only the rmi service; with clocksync's eager clock service, every bound port is in 28660-28699")
     void onlyRmiStarts() throws Exception {
-        run("{\"operation\":\"BROADCAST\",\"count\":10}");
+        run("{\"rootNode\":1,\"operation\":\"BROADCAST\",\"count\":10}");
 
         for (ClusterNode node : cluster.nodes()) {
             assertThat(node.runningServices()).as("node %d", node.id()).containsExactlyInAnyOrder("clock", "rmi");
@@ -449,7 +491,7 @@ class MpiControllerTest {
     @Test
     @DisplayName("Prometheus: the four mpi meters with node_id = the root")
     void prometheus() throws Exception {
-        run("{\"operation\":\"BROADCAST\",\"count\":10}");
+        run("{\"rootNode\":1,\"operation\":\"BROADCAST\",\"count\":10}");
 
         String scrape = mockMvc.perform(get("/actuator/prometheus")).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();

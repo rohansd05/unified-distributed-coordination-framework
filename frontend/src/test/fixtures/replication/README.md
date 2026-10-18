@@ -1,5 +1,23 @@
 # Replication contract fixtures (E5c)
 
+## 9A.3 recapture
+
+Recaptured on 2026-10-18 for Phase 9A.3 (link L1), with every other kept file in this folder, by one Windows PowerShell 5.1 block (`curl.exe -s -o <file>`) against a fresh backend; the block is in `docs/tracks/track-c-jai.md`, section "9A.3 (fast mode)". All 88 kept responses (across the mpi, matrix and replication folders) had the expected status; nothing was edited by hand. Same requests and order as the table below, except where the primary now follows the leader elected by
+Experiment 4 (Bully: the highest live node):
+
+- `overview-before.json`: `primaryNodeId` `null` and every `role` `null` (no leader yet; a read never elects).
+- `write-sync.json`: the first write asks Experiment 4 for a leader; node 5 is elected and becomes the primary.
+- The failover crashes node 5 (the leader) through the cluster API instead of node 1, and waits until Experiment 4 has
+  elected node 4 (`overview-takeover-pending.json`: `primaryNodeId` 4, `currentPrimaryNodeId` 5). `write-after-failover`
+  is the takeover 5 to 4.
+- Node 5 is recovered through the cluster API; the block waits until its recovery election makes it leader again;
+  `write-after-reclaim` is the takeover 4 to 5 (catch-up from 1, 2, 3, 4, then push).
+- `error-400-crash-primary.json` crashes node 5, the primary.
+- `PRIMARY_SELECTED` events say `reason: "elected leader"`; the backend no longer says "lowest live node".
+- `synthetic/error-409-no-leader.json` is not a capture: the body `ReplicationControllerTest.noLeader` checks.
+
+## 2026-10-09 capture (E5c)
+
 Real response bodies from the running backend (`cd backend; .\mvnw.cmd spring-boot:run`,
 local profile, five nodes, replication ports 7101 to 7105), captured on 2026-10-09 with
 `curl.exe -s -o <file>`. Each request body was written to a file and sent with

@@ -10,6 +10,11 @@ were never measured; they exist only so the page has something of the right shap
 `contract.test.js` checks that each file has exactly the keys of its source, so a synthetic file cannot drift from
 the real shape.
 
+**9A.3 (2026-10-18):** `LOWEST_LIVE_ID` is no longer served, so each file's `rootSource` (in the run, or in the
+overview's `latest` run) was changed by hand to `REQUESTED`, as in the recaptured sources. `error-409-no-leader.json` was
+added: the 409 body `MatrixControllerTest.noLeader` checks (title "No leader", `reason: NO_LEADER`, the
+`NoLeaderException` message).
+
 | File | Source | Changed fields |
 |---|---|---|
 | `run-checksum-mismatch.json` | `run-complete-100.json` | `gather[2].verified` false; `verification.blocksWithBadChecksum` 1, `mismatchedElements` 37 (made up), `parallelChecksum` 64 zeros (made up), `checksumsMatch` false, `passed` false; `timing.derived.speedup` and `computeBoundSpeedup` null, `speedupWithheldReason` `MatrixTexts.WITHHELD_MISMATCH`. `outcome` stays COMPLETE (`MatrixAssembly`: complete means no block missing). |

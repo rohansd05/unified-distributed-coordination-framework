@@ -43,7 +43,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * context (UDP 28666 to 28670). At class end the RMI services are stopped and the ports checked
  * free, and the context is closed.</p>
  */
-@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28694", "udcf.cluster.ports.clock-base=28665"})
+@SpringBootTest(properties = {"udcf.cluster.ports.rmi-base=28694", "udcf.cluster.ports.clock-base=28665",
+        "udcf.cluster.ports.election-base=28170"})
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -96,7 +97,7 @@ class MpiNeverStartedNodeTest {
         try {
             blocker.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), BLOCKED_PORT));   // bound, never listening
             c = read(mockMvc.perform(post("/api/modules/mpi/collectives").contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"operation\":\"BROADCAST\",\"count\":1003,\"seed\":42}"))
+                            .content("{\"rootNode\":1,\"operation\":\"BROADCAST\",\"count\":1003,\"seed\":42}"))
                     .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
             three = read(mockMvc.perform(get("/api/modules/mpi")).andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString()).get("participants").get(2);

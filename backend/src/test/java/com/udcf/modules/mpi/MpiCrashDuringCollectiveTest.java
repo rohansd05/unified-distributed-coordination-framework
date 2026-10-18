@@ -2,6 +2,8 @@ package com.udcf.modules.mpi;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.modules.mpi.dto.CollectiveCommand;
 import com.udcf.modules.mpi.dto.CollectiveDto;
@@ -47,6 +49,7 @@ class MpiCrashDuringCollectiveTest {
     private Cluster cluster;
     private RmiModule rmi;
     private MpiModule module;
+    private RoleProvider roles;
 
     @BeforeEach
     void setUp() {
@@ -71,8 +74,11 @@ class MpiCrashDuringCollectiveTest {
                 return real.collect(target, context, id, rank, count, seed);
             }
         };
+        roles = new RoleProvider(cluster, (LeaderElector) null);
+        cluster.assignLeader(1);   // the root: node 1, the leader
         module = new MpiModule(cluster, bus, MpiTestResults.PROPERTIES, rmi, RmiTestSupport.PROPERTIES,
-                RmiTestSupport.TRANSPORT, new SimpleMeterRegistry(), Clock.systemUTC(), crashingNode3, System::nanoTime);
+                RmiTestSupport.TRANSPORT, new SimpleMeterRegistry(), Clock.systemUTC(), crashingNode3, System::nanoTime,
+                roles);
     }
 
     private void crashNode3When(int target) {
@@ -83,6 +89,8 @@ class MpiCrashDuringCollectiveTest {
 
     @AfterEach
     void tearDown() {
+        module.close();
+        roles.close();
         rmi.close();
         cluster.close();
         bus.close();

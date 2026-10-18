@@ -4,6 +4,7 @@ import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
 import com.udcf.core.cluster.NodeDownException;
 import com.udcf.core.cluster.NodeRole;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
 import com.udcf.core.module.ExperimentModule;
@@ -22,7 +23,7 @@ import com.udcf.modules.mpi.CollectiveEndpointLogic;
 import com.udcf.modules.mpi.CollectiveTransport;
 import com.udcf.modules.mpi.MpiModule;
 import com.udcf.modules.mpi.MpiProperties;
-import com.udcf.modules.mpi.MpiRoleSelector;
+import com.udcf.modules.mpi.MpiModule;
 import com.udcf.modules.mpi.RmiCollectiveTransport;
 import com.udcf.modules.mpi.dto.RootSource;
 import com.udcf.modules.multithreading.MultithreadingProperties;
@@ -63,8 +64,13 @@ import java.util.stream.Collectors;
  * product.
  *
  * <p><b>Participants and root.</b> Every cluster node takes part. A node crashed at the start is skipped
- * (listed, never hidden). The root is the requested node, otherwise the live leader, otherwise the lowest live
- * node id (Experiment 9's {@link MpiRoleSelector}, TODO(L1) there).</p>
+ * (listed, never hidden). The root is the requested node ({@code REQUESTED}), otherwise the leader elected by
+ * Experiment 4 ({@code LEADER}, link L1), by Experiment 9's rule ({@link MpiModule#defaultRoot}): taken from
+ * {@link RoleProvider#ensureLeader()} on the request thread before the guard; with no leader yet the run asks
+ * Experiment 4 for an election, which starts its election service and heartbeats on every live node; if none can
+ * be elected it answers 409 {@code NO_LEADER}, never with another node. The overview only reads
+ * {@link RoleProvider#leaderId()}. Experiment 9 publishes {@code MPI_ROOT_CHANGED} for its own collectives; a
+ * matrix run publishes no root event (its COMPUTE events name the root).</p>
  *
  * <p><b>RMI and Experiment 2.</b> Experiment 1 owns the RMI services: every action first calls
  * {@link RmiModule#ensureStarted()}. Before every run, and at start, the module makes sure each live node's
@@ -123,6 +129,7 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
     private final MatrixHistory history;
     private final MatrixMetrics metrics;
     private final ModuleActionGuard guard = new ModuleActionGuard(ID);
+    private final RoleProvider roles;
     private MatrixDispatchPool pool;              // guarded by this; created by the first start or run
     private ParallelMatrixExecutor executor;      // guarded by this; built with the pool
 
@@ -130,8 +137,8 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
     public MatrixModule(Cluster cluster, ClusterEventBus bus, MatrixProperties matrix, MatrixRunProperties run,
                         MatrixModuleProperties module, MpiProperties mpi, RmiModule rmi, RmiProperties rmiProperties,
                         RmiTransportProperties rmiTransport, MultithreadingProperties multithreading,
-                        MeterRegistry meterRegistry, Clock clock) {
-        this(cluster, bus, matrix, run, module, mpi, rmi, rmiProperties, rmiTransport, meterRegistry, clock,
+                        MeterRegistry meterRegistry, Clock clock, RoleProvider roles) {
+        this(cluster, bus, matrix, run, module, mpi, rmi, rmiProperties, rmiTransport, meterRegistry, clock, roles,
                 new Seams(RmiCollectiveTransport.of(rmi), RmiMatrixTransport.of(rmi),
                         node -> NodeExecutor.experimentTwo(node, multithreading, meterRegistry, bus),
                         node -> RequestsNodeService.on(node, multithreading, meterRegistry, bus),
@@ -141,8 +148,10 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
     /** For tests: scripted transports, executors, prepare step, time and processors. */
     MatrixModule(Cluster cluster, ClusterEventBus bus, MatrixProperties matrix, MatrixRunProperties run,
                  MatrixModuleProperties module, MpiProperties mpi, RmiModule rmi, RmiProperties rmiProperties,
-                 RmiTransportProperties rmiTransport, MeterRegistry meterRegistry, Clock clock, Seams seams) {
+                 RmiTransportProperties rmiTransport, MeterRegistry meterRegistry, Clock clock, RoleProvider roles,
+                 Seams seams) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
+        this.roles = Objects.requireNonNull(roles, "roles must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
         this.run = Objects.requireNonNull(run, "run must not be null");
         this.module = Objects.requireNonNull(module, "module must not be null");
@@ -219,7 +228,7 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
         Map<Integer, RmiNodeDto> rmiNodes = rmi.overview().nodes().stream()
                 .collect(Collectors.toMap(RmiNodeDto::nodeId, Function.identity()));
         Set<Integer> live = liveIds();
-        Optional<MpiRoleSelector.Choice> root = MpiRoleSelector.select(null, cluster.leaderId(), live);
+        Integer leader = roles.leaderId().orElse(null);   // never ensureLeader: a read starts no election
         List<MatrixNodeDto> participants = cluster.nodes().stream()
                 .map(node -> participant(node, rmiNodes.get(node.id())))
                 .toList();
@@ -228,8 +237,7 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
         int firstPort = cluster.nodes().stream().mapToInt(node -> node.ports().requests()).min().orElseThrow();
         int lastPort = cluster.nodes().stream().mapToInt(node -> node.ports().requests()).max().orElseThrow();
         return new MatrixOverviewDto(status(), guard.currentAction().orElse(null), MatrixEndpoint.BOUND_NAME, limits(),
-                participants, root.map(MpiRoleSelector.Choice::nodeId).orElse(null),
-                root.map(MpiRoleSelector.Choice::source).orElse(null),
+                participants, leader, leader == null ? null : RootSource.LEADER,
                 anyLive ? Math.max(limits.minSize(), live.size()) : null, speedupBasis.processors(),
                 anyLive ? speedupBasis.ceiling(live.size()) : null,
                 anyLive ? MatrixTexts.speedupBasis(speedupBasis, live.size(), warmup) : null,
@@ -286,8 +294,9 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
      * @throws InvalidCallException        a field is missing or out of range (400)
      * @throws com.udcf.core.cluster.UnknownNodeException the requested root does not exist (404)
      * @throws ModuleBusyException         another action is running (409)
-     * @throws NodeDownException           the requested root is crashed (409)
+     * @throws NodeDownException           the requested root, or the leader, is crashed (409)
      * @throws NodeStateConflictException  no root was requested and every node is crashed (409)
+     * @throws com.udcf.modules.mpi.NoLeaderException no root was requested and no leader could be elected (409)
      */
     public MatrixRunDto run(MatrixRunCommand command) {
         validate(command);
@@ -295,21 +304,20 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
         if (requested != null) {
             cluster.node(requested);   // 404 for an unknown node, before taking the guard
         }
+        MpiModule.Root root = requested != null ? new MpiModule.Root(requested, RootSource.REQUESTED)
+                : new MpiModule.Root(MpiModule.defaultRoot(cluster, roles, "a matrix run"), RootSource.LEADER);
         try (ModuleActionGuard.ActionTicket ignored = begin(describe(command))) {
-            if (requested != null && !cluster.node(requested).isUp()) {
-                throw new NodeDownException(requested);   // a dead root cannot multiply or send
+            if (!cluster.node(root.nodeId()).isUp()) {
+                throw new NodeDownException(root.nodeId());   // a dead root cannot multiply or send
             }
             startRmi();
             Set<Integer> live = liveIds();
-            MpiRoleSelector.Choice root = MpiRoleSelector.select(requested, cluster.leaderId(), live)
-                    .orElseThrow(() -> new NodeStateConflictException(0,
-                            "Every node is crashed, so no node can be the root of a matrix run"));
             prepare(live);
             return execute(command, root, live);
         }
     }
 
-    private MatrixRunDto execute(MatrixRunCommand command, MpiRoleSelector.Choice root, Set<Integer> live) {
+    private MatrixRunDto execute(MatrixRunCommand command, MpiModule.Root root, Set<Integer> live) {
         ParallelMatrixExecutor runner = executor();
         MatrixHistory.Slot slot = history.reserve();
         MatrixRunResult result;
@@ -515,8 +523,7 @@ public class MatrixModule implements ExperimentModule, AutoCloseable {
     private static String describe(RootSource source) {
         return switch (source) {
             case REQUESTED -> "requested";
-            case LEADER -> "the leader";
-            case LOWEST_LIVE_ID -> "the lowest live node id";
+            case LEADER -> "the leader elected by Experiment 4";
         };
     }
 

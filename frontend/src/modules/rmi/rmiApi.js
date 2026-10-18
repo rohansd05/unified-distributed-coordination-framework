@@ -97,6 +97,10 @@ export function describeProblem(error) {
   if (status === 409 && title === 'Node down') {
     return { ...problem, kind: 'node-down', message: `Node down: ${detail}.` }
   }
+  if (status === 409 && title === 'No leader') {
+    // Experiment 4 could not elect a leader (reason NO_LEADER; the shared ApiError drops `reason`).
+    return { ...problem, kind: 'no-leader', message: detail || title }
+  }
   if (status === 409 && title === 'Node state conflict') {
     return { ...problem, kind: 'state-conflict', message: `Node state conflict: ${detail}.` }
   }

@@ -18,7 +18,7 @@ describe('PendingWindow', () => {
 
     const window = screen.getByTestId('pending-window')
     expect(window.textContent).toContain('Replication window open')
-    expect(window.textContent).toContain('balance = 2000 was confirmed to the client after 6.1 ms')
+    expect(window.textContent).toContain('balance = 2000 was confirmed to the client after 3.3 ms')
     expect(window.textContent).toContain('after a 450 ms wait')
     const badge = within(window).getByTestId('simulated-badge')
     expect(within(badge).getByRole('tooltip').textContent).toBe(writeAsync.simulatedReason)

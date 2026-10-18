@@ -3,6 +3,7 @@ import { ApiError } from '@/services/api'
 import overviewBefore from '@/test/fixtures/matrix/overview-before-start.json'
 import overviewAfter from '@/test/fixtures/matrix/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/matrix/overview-node-crashed.json'
+import overviewLeader from '@/test/fixtures/matrix/overview-leader.json'
 import startFixture from '@/test/fixtures/matrix/start.json'
 import startWithFailure from '@/test/fixtures/matrix/start-with-failure.json'
 import complete50 from '@/test/fixtures/matrix/run-complete-50.json'
@@ -13,6 +14,7 @@ import partial from '@/test/fixtures/matrix/run-partial.json'
 import failed from '@/test/fixtures/matrix/run-failed.json'
 import skipped from '@/test/fixtures/matrix/run-node-crashed-skipped.json'
 import requestedRoot from '@/test/fixtures/matrix/run-requested-root.json'
+import leaderRoot from '@/test/fixtures/matrix/run-leader-root.json'
 import refused from '@/test/fixtures/matrix/run-refused.json'
 import latest from '@/test/fixtures/matrix/run-latest.json'
 import byId from '@/test/fixtures/matrix/run-by-id.json'
@@ -40,8 +42,18 @@ import synthLeader from '@/test/fixtures/matrix/synthetic/overview-leader.json'
 import { describeProblem } from './matrixApi'
 import { figureRows } from './matrixModel'
 
-const OVERVIEWS = { overviewBefore, overviewAfter, overviewCrashed, startFixture, startWithFailure }
-const RUNS = { complete50, complete100, complete200, complete316, partial, failed, skipped, requestedRoot, refused, latest, byId }
+const OVERVIEWS = { overviewBefore, overviewAfter, overviewCrashed, startFixture, startWithFailure, overviewLeader }
+const RUNS = { complete50, complete100, complete200, complete316, partial, failed, skipped, requestedRoot, leaderRoot, refused,
+  latest, byId }
+
+describe('matrix contract: root rules (9A.3)', () => {
+  it('serves only the root rules the backend can still produce (no LOWEST_LIVE_ID)', () => {
+    const sources = [...Object.values(RUNS).map((r) => r.rootSource), ...Object.values(OVERVIEWS).map((o) => o.defaultRootSource)]
+    expect(new Set(sources)).toEqual(new Set(['REQUESTED', 'LEADER', null]))
+    expect(leaderRoot).toMatchObject({ rootNodeId: 5, rootSource: 'LEADER' })
+    expect(overviewLeader).toMatchObject({ defaultRootNodeId: 5, defaultRootSource: 'LEADER' })
+  })
+})
 const SERIES = { series, seriesBefore, seriesMore }
 
 /** The texts the page shows from the overview as served, never retyped. */

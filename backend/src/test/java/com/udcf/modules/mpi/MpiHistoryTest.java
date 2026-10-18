@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MpiHistoryTest {
 
     private static CollectiveDto entry(long id) {
-        return MpiDtoMapper.collective(Instant.EPOCH, RootSource.LOWEST_LIVE_ID, MpiTestResults.refused(id));
+        return MpiDtoMapper.collective(Instant.EPOCH, RootSource.LEADER, MpiTestResults.refused(id));
     }
 
     private static void add(MpiHistory history) {

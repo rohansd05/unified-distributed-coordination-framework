@@ -95,7 +95,7 @@ export function gridSummary(model) {
 /**
  * The primary's history as a small timeline: each PRIMARY_SELECTED event in causal order (the
  * last six), the per-source catch-up counts for the latest one when the overview's lastTakeover
- * matches it, and a pending marker when the selector already picks another node.
+ * matches it, and a pending marker when Experiment 4 already elected another leader.
  *
  * @param {object[]} events the module's events (any types; others are ignored)
  * @param {object|null} overview a ReplicationOverviewDto
@@ -154,7 +154,18 @@ export function pendingWindow(overview) {
   }
 }
 
-/** Nodes that are up and not the selector's primary: the only valid anti-entropy or stale-update targets. */
+/** Nodes that are up and not the leader (the primary of the next action): the only valid anti-entropy or stale-update targets. */
 export function liveBackups(overview) {
-  return asArray(overview?.nodes).filter((node) => node.role === 'BACKUP' && !isNodeCrashed({ status: node.nodeStatus }))
+  return asArray(overview?.nodes).filter((node) => node.role !== 'PRIMARY' && !isNodeCrashed({ status: node.nodeStatus }))
+}
+
+/** Who the primary is (or will be): the elected leader, or why there is none. */
+export function primaryLine(overview) {
+  if (overview.primaryNodeId != null) {
+    return `The primary is node ${overview.primaryNodeId}, the leader elected by Experiment 4.`
+  }
+  if ((overview.nodes ?? []).length > 0 && overview.nodes.every((node) => node.nodeStatus === 'CRASHED')) {
+    return 'Every node is crashed, so there is no primary.'
+  }
+  return 'No leader yet: the next write asks Experiment 4 to elect one, and that node becomes the primary.'
 }

@@ -97,7 +97,7 @@ class MatrixUnreachableNodeTest {
             assertThat(started.get("participants").get(1).get("matrixEndpointExported").asBoolean()).isTrue();
 
             JsonNode run = body(mockMvc.perform(post("/api/modules/matrix/runs").contentType(MediaType.APPLICATION_JSON)
-                    .content("{\"size\":30,\"seed\":42}")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+                    .content("{\"rootNode\":1,\"size\":30,\"seed\":42}")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 
             assertThat(run.get("outcome").asText()).isEqualTo("PARTIAL");
             assertThat(run.get("skippedNodeIds")).isEmpty();   // live, so a rank

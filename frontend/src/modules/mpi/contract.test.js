@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import overviewBefore from '@/test/fixtures/mpi/overview-before-start.json'
 import overviewAfter from '@/test/fixtures/mpi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/mpi/overview-node-crashed.json'
+import overviewLeader from '@/test/fixtures/mpi/overview-leader.json'
 import startFixture from '@/test/fixtures/mpi/start.json'
 import startWithFailure from '@/test/fixtures/mpi/start-with-failure.json'
 import broadcast from '@/test/fixtures/mpi/collective-broadcast.json'
@@ -11,6 +12,7 @@ import partial from '@/test/fixtures/mpi/collective-partial.json'
 import refused from '@/test/fixtures/mpi/collective-refused.json'
 import skipped from '@/test/fixtures/mpi/collective-node-crashed-skipped.json'
 import requestedRoot from '@/test/fixtures/mpi/collective-requested-root.json'
+import leaderRoot from '@/test/fixtures/mpi/collective-leader-root.json'
 import latest from '@/test/fixtures/mpi/collective-latest.json'
 import byId from '@/test/fixtures/mpi/collective-by-id.json'
 import history from '@/test/fixtures/mpi/collectives-history.json'
@@ -18,8 +20,8 @@ import events from '@/test/fixtures/mpi/events.json'
 import { fanModel, needsStart } from './mpiModel'
 
 // Real fixtures only: nothing here is modified.
-const OVERVIEWS = { overviewBefore, overviewAfter, overviewCrashed, startFixture, startWithFailure }
-const COLLECTIVES = { broadcast, scatter, gather, partial, refused, skipped, requestedRoot, latest, byId }
+const OVERVIEWS = { overviewBefore, overviewAfter, overviewCrashed, startFixture, startWithFailure, overviewLeader }
+const COLLECTIVES = { broadcast, scatter, gather, partial, refused, skipped, requestedRoot, leaderRoot, latest, byId }
 const ALL_COLLECTIVES = [...Object.values(COLLECTIVES), ...history, overviewAfter.latest, overviewCrashed.latest, startFixture.latest]
 
 const COLLECTIVE_FIELDS = ['id', 'startedAt', 'operation', 'rootNodeId', 'rootSource', 'rootRank', 'rankNodeIds', 'skippedNodeIds',
@@ -46,6 +48,14 @@ describe('mpi contract fixtures', () => {
       expect(node.storedCollectiveIds === null).toBe(!node.collectiveEndpointExported)   // null exactly while not exported
     }
     expect(fanModel(overview, overview.latest).nodes).toHaveLength(overview.participants.length)
+  })
+
+  it('serves only the root rules the backend can still produce (9A.3: no LOWEST_LIVE_ID)', () => {
+    const sources = [...Object.values(COLLECTIVES).map((c) => c.rootSource),
+      ...Object.values(OVERVIEWS).map((o) => o.defaultRootSource)]
+    expect(new Set(sources)).toEqual(new Set(['REQUESTED', 'LEADER', null]))
+    expect(leaderRoot).toMatchObject({ rootNodeId: 5, rootSource: 'LEADER' })
+    expect(overviewLeader).toMatchObject({ defaultRootNodeId: 5, defaultRootSource: 'LEADER' })
   })
 
   it('needs a start only on a fresh backend and after a start that left a node unexported', () => {

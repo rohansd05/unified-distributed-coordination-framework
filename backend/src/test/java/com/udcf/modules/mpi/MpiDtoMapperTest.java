@@ -28,7 +28,7 @@ class MpiDtoMapperTest {
     private static final Instant AT = Instant.parse("2026-10-13T12:00:00Z");
 
     private static CollectiveDto map(CollectiveResult result) {
-        return MpiDtoMapper.collective(AT, RootSource.LOWEST_LIVE_ID, result);
+        return MpiDtoMapper.collective(AT, RootSource.LEADER, result);
     }
 
     /** The names of TransferDto's Long components that are not null. */
@@ -54,7 +54,7 @@ class MpiDtoMapperTest {
 
         assertThat(dto.id()).isEqualTo(1);
         assertThat(dto.startedAt()).isEqualTo(AT);
-        assertThat(dto.rootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
+        assertThat(dto.rootSource()).isEqualTo(RootSource.LEADER);
         assertThat(dto.rootNodeId()).isEqualTo(1);
         assertThat(dto.rootRank()).isZero();
         assertThat(dto.rankNodeIds()).containsExactly(1, 2, 3);

@@ -36,7 +36,7 @@ class MatrixDtoMapperTest {
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
 
     private static MatrixRunDto map(MatrixRunResult result) {
-        return MatrixDtoMapper.run(AT, RootSource.LOWEST_LIVE_ID, result, MatrixTestResults.BASIS);
+        return MatrixDtoMapper.run(AT, RootSource.LEADER, result, MatrixTestResults.BASIS);
     }
 
     @Test

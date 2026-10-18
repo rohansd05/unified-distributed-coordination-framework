@@ -2,8 +2,10 @@ package com.udcf.modules.mpi;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterNode;
+import com.udcf.core.cluster.LeaderChange;
 import com.udcf.core.cluster.NodeDownException;
 import com.udcf.core.cluster.NodeRole;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.events.ClusterEventBus;
 import com.udcf.core.events.EventDraft;
 import com.udcf.core.module.ExperimentModule;
@@ -41,6 +43,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -52,8 +55,18 @@ import java.util.stream.Collectors;
  *
  * <p><b>Participants and root.</b> Every cluster node takes part. A node crashed at the start is
  * skipped (listed, never hidden). A live node whose RMI is not running stays a rank and fails at
- * LOOKUP; a node that crashes during the run is a FAILED transfer. The root is the requested node,
- * otherwise the live leader, otherwise the lowest live node id ({@link MpiRoleSelector}).</p>
+ * LOOKUP; a node that crashes during the run is a FAILED transfer. The root is the requested node
+ * ({@code REQUESTED}), otherwise the leader elected by Experiment 4 ({@code LEADER}, link L1).</p>
+ *
+ * <p><b>The default root (link L1)</b> comes from {@link RoleProvider#ensureLeader()} on the request
+ * thread, before the guard (see {@link #defaultRoot(Cluster, RoleProvider, String)}, shared with Experiment 10): with no
+ * leader yet, the collective asks Experiment 4 for an election, which starts its election service and
+ * heartbeats on every live node; if none can be elected it answers 409 {@code NO_LEADER}
+ * ({@link NoLeaderException}), never with another node. The overview only reads
+ * {@link RoleProvider#leaderId()} and never starts an election. Once a default-root collective has run
+ * since the last reset, a new leader publishes {@code MPI_ROOT_CHANGED} exactly once (as 9A.4's
+ * {@code TIME_DAEMON_CHANGED}: compare-and-set under a short lock, from the leader listener or the next
+ * collective, whichever comes first); the first default root after a reset publishes nothing.</p>
  *
  * <p><b>RMI.</b> Experiment 1 owns the services: every action first calls
  * {@link RmiModule#ensureStarted()} (which does not take the rmi guard), and reads never start
@@ -67,7 +80,9 @@ import java.util.stream.Collectors;
  * step it reports: {@code COLLECTIVE_ENDPOINT_EXPORTED} (the started node, its clock),
  * {@code COLLECTIVE_STARTED} (root, its clock before the first transfer), then
  * {@code COLLECTIVE_FINISHED} or {@code COLLECTIVE_REFUSED} (root, its clock afterwards), and
- * {@code ACTION_REJECTED_BUSY} (node 0, the cluster clock).</p>
+ * {@code ACTION_REJECTED_BUSY} (node 0, the cluster clock). The one exception, as 9A.4's change
+ * events: {@code MPI_ROOT_CHANGED} (the new root, one tick of its clock, peer = the previous root, data
+ * {@code nodeId}, {@code previousNodeId}, {@code cause} {@code LEADER_CRASHED} or {@code ELECTED}).</p>
  *
  * <p><b>Status.</b> BUSY while an action holds the guard; otherwise RUNNING while any node exports
  * its CollectiveEndpoint; otherwise IDLE.</p>
@@ -78,7 +93,7 @@ import java.util.stream.Collectors;
  * not a measurement.</p>
  */
 @Component
-public class MpiModule implements ExperimentModule {
+public class MpiModule implements ExperimentModule, AutoCloseable {
 
     public static final String ID = "mpi";
     static final String TITLE = "MPI Collectives";
@@ -113,19 +128,27 @@ public class MpiModule implements ExperimentModule {
     private final MpiHistory history;
     private final MpiMetrics metrics;
     private final ModuleActionGuard guard = new ModuleActionGuard(ID);
+    private final RoleProvider roles;
+    private final RoleProvider.Registration leaderChanges;
+    /** The default root used since the last reset; null after a reset and before the first one. */
+    private final AtomicReference<Integer> actingRoot = new AtomicReference<>();
+
+    /** The root of a collective and the rule that chose it. */
+    public record Root(int nodeId, RootSource source) {
+    }
 
     @Autowired
     public MpiModule(Cluster cluster, ClusterEventBus bus, MpiProperties properties, RmiModule rmi,
                      RmiProperties rmiProperties, RmiTransportProperties rmiTransport, MeterRegistry meterRegistry,
-                     Clock clock) {
+                     Clock clock, RoleProvider roles) {
         this(cluster, bus, properties, rmi, rmiProperties, rmiTransport, meterRegistry, clock,
-                RmiCollectiveTransport.of(rmi), System::nanoTime);
+                RmiCollectiveTransport.of(rmi), System::nanoTime, roles);
     }
 
     /** For tests: a scripted transport and time source. */
     MpiModule(Cluster cluster, ClusterEventBus bus, MpiProperties properties, RmiModule rmi, RmiProperties rmiProperties,
               RmiTransportProperties rmiTransport, MeterRegistry meterRegistry, Clock clock,
-              CollectiveTransport transport, LongSupplier nanoClock) {
+              CollectiveTransport transport, LongSupplier nanoClock, RoleProvider roles) {
         this.cluster = Objects.requireNonNull(cluster, "cluster must not be null");
         this.bus = Objects.requireNonNull(bus, "bus must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
@@ -137,6 +160,14 @@ public class MpiModule implements ExperimentModule {
         this.executor = new CollectiveExecutor(properties, nanoClock);
         this.history = new MpiHistory(properties.historySize());
         this.metrics = new MpiMetrics(meterRegistry);
+        this.roles = Objects.requireNonNull(roles, "roles must not be null");
+        this.leaderChanges = roles.addLeaderListener(this::onLeaderChanged);
+    }
+
+    /** Stops following leader changes. */
+    @Override
+    public void close() {
+        leaderChanges.close();
     }
 
     @Override
@@ -164,12 +195,13 @@ public class MpiModule implements ExperimentModule {
 
     /**
      * Clean slate: forgets every collective (ids restart at 1; one still running cannot record
-     * itself). Never throws, never takes the guard, publishes nothing. Stopping RMI is Experiment 1's
-     * reset.
+     * itself) and the default root used. Never throws, never takes the guard, publishes nothing.
+     * Stopping RMI is Experiment 1's reset.
      */
     @Override
     public void reset() {
         history.clear();
+        actingRoot.set(null);
     }
 
     // ------------------------------------------------------------------ reads (no guard, never start)
@@ -179,13 +211,13 @@ public class MpiModule implements ExperimentModule {
         Map<Integer, RmiNodeDto> rmiNodes = rmi.overview().nodes().stream()
                 .collect(Collectors.toMap(RmiNodeDto::nodeId, Function.identity()));
         Set<Integer> live = liveIds();
-        Optional<MpiRoleSelector.Choice> root = MpiRoleSelector.select(null, cluster.leaderId(), live);
+        Integer leader = roles.leaderId().orElse(null);   // never ensureLeader: a read starts no election
         List<MpiNodeDto> participants = cluster.nodes().stream()
                 .map(node -> participant(node, rmiNodes.get(node.id())))
                 .toList();
         return new MpiOverviewDto(status(), guard.currentAction().orElse(null), CollectiveEndpoint.BOUND_NAME,
-                operations(live.size()), limits(), participants, root.map(MpiRoleSelector.Choice::nodeId).orElse(null),
-                root.map(MpiRoleSelector.Choice::source).orElse(null), RmiCollectiveTransport.LATENCY_BASIS,
+                operations(live.size()), limits(), participants, leader, leader == null ? null : RootSource.LEADER,
+                RmiCollectiveTransport.LATENCY_BASIS,
                 PayloadSizer.LABEL, ALGORITHM_NOTE, CO_HOSTING, history.latest().orElse(null));
     }
 
@@ -225,8 +257,9 @@ public class MpiModule implements ExperimentModule {
      * @throws InvalidCallException        a field is missing or out of range (400)
      * @throws com.udcf.core.cluster.UnknownNodeException the requested root does not exist (404)
      * @throws ModuleBusyException         another action is running (409)
-     * @throws NodeDownException           the requested root is crashed (409)
+     * @throws NodeDownException           the requested root, or the leader, is crashed (409)
      * @throws NodeStateConflictException  no root was requested and every node is crashed (409)
+     * @throws NoLeaderException           no root was requested and no leader could be elected (409 NO_LEADER)
      */
     public CollectiveDto run(CollectiveCommand command) {
         validate(command);
@@ -234,20 +267,82 @@ public class MpiModule implements ExperimentModule {
         if (requested != null) {
             cluster.node(requested);   // 404 for an unknown node, before taking the guard
         }
+        Root root = requested != null ? new Root(requested, RootSource.REQUESTED)
+                : new Root(followedRoot(), RootSource.LEADER);
         try (ModuleActionGuard.ActionTicket ignored = begin(describe(command))) {
-            if (requested != null && !cluster.node(requested).isUp()) {
-                throw new NodeDownException(requested);   // a dead root cannot send
+            if (!cluster.node(root.nodeId()).isUp()) {
+                throw new NodeDownException(root.nodeId());   // a dead root cannot send
             }
             startRmi();
-            Set<Integer> live = liveIds();
-            MpiRoleSelector.Choice root = MpiRoleSelector.select(requested, cluster.leaderId(), live)
-                    .orElseThrow(() -> new NodeStateConflictException(0,
-                            "Every node is crashed, so no node can be the root of a collective"));
-            return execute(command, root, live);
+            return execute(command, root, liveIds());
         }
     }
 
-    private CollectiveDto execute(CollectiveCommand command, MpiRoleSelector.Choice root, Set<Integer> live) {
+    // ------------------------------------------------------------------ the default root (link L1)
+
+    /**
+     * The default root: the leader elected by Experiment 4, electing one first if there is none
+     * (blocks up to the election bound). Request thread only, holding no lock; Experiment 10 uses it
+     * too.
+     *
+     * @param what what needs the root, for the messages, for example "a collective"
+     * @throws NodeStateConflictException every node is crashed (409)
+     * @throws NoLeaderException          no leader could be elected (409 NO_LEADER)
+     */
+    public static int defaultRoot(Cluster cluster, RoleProvider roles, String what) {
+        if (cluster.upCount() == 0) {
+            throw new NodeStateConflictException(0, "Every node is crashed, so no node can be the root of " + what);
+        }
+        return roles.ensureLeader().orElseThrow(() -> new NoLeaderException(what));
+    }
+
+    private int followedRoot() {
+        int leader = defaultRoot(cluster, roles, "a collective");
+        follow(leader, true);
+        return leader;
+    }
+
+    /** On the roles dispatcher: never blocks, never ensureLeader. A vacancy publishes nothing. */
+    private void onLeaderChanged(LeaderChange change) {
+        Integer leader = change.leaderId();
+        if (leader != null && roles.leaderId().filter(leader::equals).isPresent()) {
+            follow(leader, false);
+        }
+    }
+
+    /**
+     * Publishes MPI_ROOT_CHANGED exactly once (9A.4's rule): the listener and a collective race on one
+     * compare-and-set. The short lock (no wait inside, only the bus publish) makes the loser wait until
+     * the winner's event is on the bus, so it always precedes the next COLLECTIVE_STARTED. Only a
+     * collective remembers the first default root after a reset (that is not a change).
+     */
+    private void follow(int leader, boolean fromCollective) {
+        synchronized (actingRoot) {
+            Integer previous = actingRoot.get();
+            if (previous == null) {
+                if (fromCollective) {
+                    actingRoot.compareAndSet(null, leader);
+                }
+                return;
+            }
+            if (previous == leader || !actingRoot.compareAndSet(previous, leader)) {
+                return;
+            }
+            boolean crashed = !cluster.node(previous).isUp();
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("nodeId", leader);
+            data.put("previousNodeId", previous);
+            data.put("cause", crashed ? LeaderChange.Cause.LEADER_CRASHED.name() : LeaderChange.Cause.ELECTED.name());
+            bus.publish(EventDraft.of(ID, leader, "MPI_ROOT_CHANGED", cluster.node(leader).clock().tick())
+                    .withPeer(previous)
+                    .withMessage("Node " + leader + " is the MPI root for the next collective: " + (crashed
+                            ? "node " + previous + " crashed and Experiment 4 elected node " + leader + "."
+                            : "Experiment 4 elected node " + leader + " in place of node " + previous + "."))
+                    .withData(data));
+        }
+    }
+
+    private CollectiveDto execute(CollectiveCommand command, Root root, Set<Integer> live) {
         MpiHistory.Slot slot = history.reserve();
         CollectiveResult result;
         CollectiveDto dto;
@@ -436,8 +531,7 @@ public class MpiModule implements ExperimentModule {
     private static String describe(RootSource source) {
         return switch (source) {
             case REQUESTED -> "requested";
-            case LEADER -> "the leader";
-            case LOWEST_LIVE_ID -> "the lowest live node id";
+            case LEADER -> "the leader elected by Experiment 4";
         };
     }
 

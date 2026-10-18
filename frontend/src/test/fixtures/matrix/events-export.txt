@@ -1,23 +1,23 @@
-2026-10-15 21:24:21.161 | node=1 | category=MATRIX_ENDPOINT_EXPORTED | seq=16 | lamport=2 | module=matrix | msg=Node 1 exported MatrixEndpoint in its RMI registry on port 1101
-2026-10-15 21:24:21.161 | node=2 | category=MATRIX_ENDPOINT_EXPORTED | seq=17 | lamport=2 | module=matrix | msg=Node 2 exported MatrixEndpoint in its RMI registry on port 1102
-2026-10-15 21:24:21.161 | node=3 | category=MATRIX_ENDPOINT_EXPORTED | seq=18 | lamport=2 | module=matrix | msg=Node 3 exported MatrixEndpoint in its RMI registry on port 1103
-2026-10-15 21:24:21.161 | node=4 | category=MATRIX_ENDPOINT_EXPORTED | seq=19 | lamport=2 | module=matrix | msg=Node 4 exported MatrixEndpoint in its RMI registry on port 1104
-2026-10-15 21:24:21.239 | node=1 | category=MATRIX_RUN_STARTED | seq=26 | lamport=3 | module=matrix | msg=Node 1 started matrix run 1 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:21.691 | node=5 | category=MATRIX_ENDPOINT_EXPORTED | seq=39 | lamport=6 | module=matrix | msg=Node 5 exported MatrixEndpoint in its RMI registry on port 1105
-2026-10-15 21:24:21.368 | node=1 | category=MATRIX_RUN_FINISHED | seq=27 | lamport=48 | module=matrix | msg=Node 1 finished matrix run 1 of size 100: partial, 4 of 5 blocks computed in 114.51 ms
-2026-10-15 21:24:21.519 | node=1 | category=MATRIX_RUN_STARTED | seq=32 | lamport=48 | module=matrix | msg=Node 1 started matrix run 2 of size 100 over the live nodes [1, 5] (root: the lowest live node id)
-2026-10-15 21:24:21.552 | node=1 | category=MATRIX_RUN_FINISHED | seq=33 | lamport=50 | module=matrix | msg=Node 1 finished matrix run 2 of size 100: failed, 1 of 2 blocks computed in 27.11 ms
-2026-10-15 21:24:21.759 | node=1 | category=MATRIX_RUN_STARTED | seq=40 | lamport=50 | module=matrix | msg=Node 1 started matrix run 3 of size 50 over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:21.794 | node=1 | category=MATRIX_RUN_FINISHED | seq=41 | lamport=108 | module=matrix | msg=Node 1 finished matrix run 3 of size 50: complete, 5 of 5 blocks computed in 32.41 ms
-2026-10-15 21:24:21.830 | node=1 | category=MATRIX_RUN_STARTED | seq=42 | lamport=108 | module=matrix | msg=Node 1 started matrix run 4 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:21.856 | node=1 | category=MATRIX_RUN_FINISHED | seq=43 | lamport=165 | module=matrix | msg=Node 1 finished matrix run 4 of size 100: complete, 5 of 5 blocks computed in 21.14 ms
-2026-10-15 21:24:21.888 | node=1 | category=MATRIX_RUN_STARTED | seq=44 | lamport=165 | module=matrix | msg=Node 1 started matrix run 5 of size 200 over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:21.957 | node=1 | category=MATRIX_RUN_FINISHED | seq=45 | lamport=221 | module=matrix | msg=Node 1 finished matrix run 5 of size 200: complete, 5 of 5 blocks computed in 48.12 ms
-2026-10-15 21:24:21.991 | node=1 | category=MATRIX_RUN_STARTED | seq=46 | lamport=221 | module=matrix | msg=Node 1 started matrix run 6 of size 316 over the live nodes [1, 2, 3, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:22.242 | node=3 | category=MATRIX_RUN_STARTED | seq=48 | lamport=268 | module=matrix | msg=Node 3 started matrix run 7 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: requested)
-2026-10-15 21:24:22.169 | node=1 | category=MATRIX_RUN_FINISHED | seq=47 | lamport=277 | module=matrix | msg=Node 1 finished matrix run 6 of size 316: complete, 5 of 5 blocks computed in 112.25 ms
-2026-10-15 21:24:22.362 | node=1 | category=MATRIX_RUN_STARTED | seq=51 | lamport=320 | module=matrix | msg=Node 1 started matrix run 8 of size 100 over the live nodes [1, 2, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:22.267 | node=3 | category=MATRIX_RUN_FINISHED | seq=49 | lamport=333 | module=matrix | msg=Node 3 finished matrix run 7 of size 100: complete, 5 of 5 blocks computed in 20.04 ms
-2026-10-15 21:24:22.383 | node=1 | category=MATRIX_RUN_FINISHED | seq=52 | lamport=367 | module=matrix | msg=Node 1 finished matrix run 8 of size 100: complete, 4 of 4 blocks computed in 17.82 ms
-2026-10-15 21:24:22.479 | node=1 | category=MATRIX_RUN_STARTED | seq=53 | lamport=367 | module=matrix | msg=Node 1 started matrix run 9 of size 3 over the live nodes [1, 2, 4, 5] (root: the lowest live node id)
-2026-10-15 21:24:22.481 | node=1 | category=MATRIX_RUN_REFUSED | seq=54 | lamport=367 | module=matrix | msg=Node 1 refused matrix run 9: Size 3 gives fewer rows than the 4 live participants, so a rank would get no row.
+2026-10-18 10:41:09.963 | node=1 | category=MATRIX_ENDPOINT_EXPORTED | seq=58 | lamport=1 | module=matrix | msg=Node 1 exported MatrixEndpoint in its RMI registry on port 1101
+2026-10-18 10:41:09.963 | node=2 | category=MATRIX_ENDPOINT_EXPORTED | seq=59 | lamport=1 | module=matrix | msg=Node 2 exported MatrixEndpoint in its RMI registry on port 1102
+2026-10-18 10:41:09.963 | node=3 | category=MATRIX_ENDPOINT_EXPORTED | seq=60 | lamport=1 | module=matrix | msg=Node 3 exported MatrixEndpoint in its RMI registry on port 1103
+2026-10-18 10:41:09.963 | node=4 | category=MATRIX_ENDPOINT_EXPORTED | seq=61 | lamport=1 | module=matrix | msg=Node 4 exported MatrixEndpoint in its RMI registry on port 1104
+2026-10-18 10:41:09.996 | node=1 | category=MATRIX_RUN_STARTED | seq=68 | lamport=2 | module=matrix | msg=Node 1 started matrix run 1 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.261 | node=5 | category=MATRIX_ENDPOINT_EXPORTED | seq=81 | lamport=5 | module=matrix | msg=Node 5 exported MatrixEndpoint in its RMI registry on port 1105
+2026-10-18 10:41:10.066 | node=1 | category=MATRIX_RUN_FINISHED | seq=69 | lamport=48 | module=matrix | msg=Node 1 finished matrix run 1 of size 100: partial, 4 of 5 blocks computed in 55.89 ms
+2026-10-18 10:41:10.163 | node=1 | category=MATRIX_RUN_STARTED | seq=74 | lamport=48 | module=matrix | msg=Node 1 started matrix run 2 of size 100 over the live nodes [1, 5] (root: requested)
+2026-10-18 10:41:10.183 | node=1 | category=MATRIX_RUN_FINISHED | seq=75 | lamport=50 | module=matrix | msg=Node 1 finished matrix run 2 of size 100: failed, 1 of 2 blocks computed in 15.06 ms
+2026-10-18 10:41:10.304 | node=1 | category=MATRIX_RUN_STARTED | seq=82 | lamport=50 | module=matrix | msg=Node 1 started matrix run 3 of size 50 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.333 | node=1 | category=MATRIX_RUN_FINISHED | seq=83 | lamport=107 | module=matrix | msg=Node 1 finished matrix run 3 of size 50: complete, 5 of 5 blocks computed in 25.54 ms
+2026-10-18 10:41:10.353 | node=1 | category=MATRIX_RUN_STARTED | seq=84 | lamport=107 | module=matrix | msg=Node 1 started matrix run 4 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.382 | node=1 | category=MATRIX_RUN_FINISHED | seq=85 | lamport=163 | module=matrix | msg=Node 1 finished matrix run 4 of size 100: complete, 5 of 5 blocks computed in 23.19 ms
+2026-10-18 10:41:10.412 | node=1 | category=MATRIX_RUN_STARTED | seq=86 | lamport=163 | module=matrix | msg=Node 1 started matrix run 5 of size 200 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.485 | node=1 | category=MATRIX_RUN_FINISHED | seq=87 | lamport=220 | module=matrix | msg=Node 1 finished matrix run 5 of size 200: complete, 5 of 5 blocks computed in 53.00 ms
+2026-10-18 10:41:10.507 | node=1 | category=MATRIX_RUN_STARTED | seq=88 | lamport=220 | module=matrix | msg=Node 1 started matrix run 6 of size 316 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.704 | node=3 | category=MATRIX_RUN_STARTED | seq=90 | lamport=267 | module=matrix | msg=Node 3 started matrix run 7 of size 100 over the live nodes [1, 2, 3, 4, 5] (root: requested)
+2026-10-18 10:41:10.663 | node=1 | category=MATRIX_RUN_FINISHED | seq=89 | lamport=276 | module=matrix | msg=Node 1 finished matrix run 6 of size 316: complete, 5 of 5 blocks computed in 90.61 ms
+2026-10-18 10:41:10.790 | node=1 | category=MATRIX_RUN_STARTED | seq=93 | lamport=320 | module=matrix | msg=Node 1 started matrix run 8 of size 100 over the live nodes [1, 2, 4, 5] (root: requested)
+2026-10-18 10:41:10.733 | node=3 | category=MATRIX_RUN_FINISHED | seq=91 | lamport=333 | module=matrix | msg=Node 3 finished matrix run 7 of size 100: complete, 5 of 5 blocks computed in 24.99 ms
+2026-10-18 10:41:10.812 | node=1 | category=MATRIX_RUN_FINISHED | seq=94 | lamport=365 | module=matrix | msg=Node 1 finished matrix run 8 of size 100: complete, 4 of 4 blocks computed in 17.65 ms
+2026-10-18 10:41:10.853 | node=1 | category=MATRIX_RUN_STARTED | seq=95 | lamport=365 | module=matrix | msg=Node 1 started matrix run 9 of size 3 over the live nodes [1, 2, 4, 5] (root: requested)
+2026-10-18 10:41:10.855 | node=1 | category=MATRIX_RUN_REFUSED | seq=96 | lamport=365 | module=matrix | msg=Node 1 refused matrix run 9: Size 3 gives fewer rows than the 4 live participants, so a rank would get no row.

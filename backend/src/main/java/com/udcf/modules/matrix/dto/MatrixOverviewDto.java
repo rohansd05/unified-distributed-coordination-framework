@@ -14,8 +14,8 @@ import java.util.List;
  *
  * @param actionInProgress        the guarded action running now; null when not BUSY
  * @param boundName               the name every node binds its MatrixEndpoint under
- * @param defaultRootNodeId       the root a run without a requested root would get now; null when every node is down
- * @param defaultRootSource       LEADER or LOWEST_LIVE_ID; null when every node is down
+ * @param defaultRootNodeId       the root a run without a requested root would get now (the leader); null when no leader
+ * @param defaultRootSource       LEADER; null while there is no leader (a read never starts an election)
  * @param minimumSizeNow          the smallest size that is not refused now (min-size or the live node count); null
  *                                when every node is down
  * @param processors              the available processors reported by the JVM now

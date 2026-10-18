@@ -9,6 +9,7 @@ import { findBySlug } from '@/lib/experiments'
 import { modulePages } from '@/modules/registry'
 import overviewAfter from '@/test/fixtures/mpi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/mpi/overview-node-crashed.json'
+import overviewLeader from '@/test/fixtures/mpi/overview-leader.json'
 import startFixture from '@/test/fixtures/mpi/start.json'
 import startWithFailure from '@/test/fixtures/mpi/start-with-failure.json'
 import history from '@/test/fixtures/mpi/collectives-history.json'
@@ -23,6 +24,7 @@ import unknownNode from '@/test/fixtures/mpi/error-404-unknown-node.json'
 import busy from '@/test/fixtures/mpi/error-409-busy.json'
 import rootDown from '@/test/fixtures/mpi/error-409-root-down.json'
 import noLiveNode from '@/test/fixtures/mpi/error-409-no-live-node.json'
+import noLeader from '@/test/fixtures/mpi/synthetic/error-409-no-leader.json'
 import events from '@/test/fixtures/mpi/events.json'
 import { MpiPage } from './MpiPage'
 
@@ -146,7 +148,7 @@ describe('MpiPage: layout and states', () => {
     await renderPage(makeApi())
     expect(screen.getByTestId('map-sentence').textContent).toBe('Broadcast 1 from root node 1: partial.')
     const cards = within(screen.getByTestId('section-measurements')).getAllByTestId('metric-card')
-    expect(cards[0].textContent).toContain('62.695 ms')
+    expect(cards[0].textContent).toContain('44.541 ms')
     expect(cards[1].textContent).toContain('3 of 4')
     expect(cards[1].textContent).toContain('1 failed, 0 not attempted')
     expect(within(cards[2]).getByTestId('not-available')).toBeTruthy()   // passed is null: unknown, never "passed"
@@ -175,30 +177,31 @@ describe('MpiPage: layout and states', () => {
 })
 
 describe('MpiPage: controls', () => {
-  it('shows the root default in plain words, with the Phase 13 note, and each operation\'s description', async () => {
+  it('shows the root default in plain words (no leader yet), the leader rule and its side effect, and each operation\'s description', async () => {
     await renderPage(makeApi())
-    expect(within(screen.getByLabelText('Root node')).getByRole('option', { name: 'Default: node 1 (the lowest live node id; no leader is elected)' })).toBeTruthy()
-    expect(screen.getByTestId('mpi-root-hint').textContent).toContain('Phase 13')
+    expect(within(screen.getByLabelText('Root node')).getByRole('option',
+      { name: 'Default: the leader elected by Experiment 4 (none yet; Experiment 4 elects one first)' })).toBeTruthy()
+    const hint = screen.getByTestId('mpi-root-hint').textContent
+    expect(hint).toContain('the leader elected by Experiment 4')
+    expect(hint).toContain('starts its election service and heartbeats on every live node')
+    expect(hint).not.toMatch(/Phase 13|lowest live/)
     expect(screen.getByTestId('mpi-operation-hint').textContent).toBe(overviewAfter.operations[0].description)
     change('Operation', 'SCATTER')
     expect(screen.getByTestId('mpi-operation-hint').textContent).toBe(overviewAfter.operations[1].description)
     expect(screen.getByTestId('mpi-count-hint').textContent).toContain('Scatter needs at least 5 (one per live node)')
   })
 
-  it('synthetic: names the leader as the default root (no capture has a leader)', async () => {
-    const overview = copy(overviewAfter)
-    overview.defaultRootNodeId = 2   // changed: was 1
-    overview.defaultRootSource = 'LEADER'   // changed: was LOWEST_LIVE_ID
-    overview.participants[1].leader = true   // changed: was false
-    await renderPage(makeApi({ overview, start: overview }))
+  it('names the elected leader as the default root (real overview with a leader)', async () => {
+    await renderPage(makeApi({ overview: overviewLeader, start: overviewLeader }))
     expect(within(screen.getByLabelText('Root node')).getByRole('option',
-      { name: 'Default: node 2 (the elected leader, read from the cluster)' })).toBeTruthy()
+      { name: 'Default: node 5 (the leader elected by Experiment 4)' })).toBeTruthy()
   })
 
   it('synthetic: shows a minimum of n/a when every node is down (no capture of that overview)', async () => {
     const overview = copy(overviewAfter)
     overview.operations[1].minimumCount = null   // changed: was 5 (null when every node is crashed)
-    overview.defaultRootNodeId = null   // changed: was 1 (no live node to be the root)
+    overview.defaultRootNodeId = null   // as captured: no leader
+    overview.participants.forEach((node) => { node.nodeStatus = 'CRASHED' })   // changed: was UP (every node down)
     await renderPage(makeApi({ overview, start: overview }))
     change('Operation', 'SCATTER')
     expect(within(screen.getByTestId('mpi-count-hint')).getByTestId('not-available')).toBeTruthy()
@@ -230,7 +233,7 @@ describe('MpiPage: controls', () => {
     expect(api.runCollective).toHaveBeenCalledWith({ operation: 'BROADCAST', count: 1000 }, startFixture)
     await waitFor(() => expect(document.activeElement).toBe(result))
     expect(within(result).getByTestId('outcome-badge').textContent).toBe('Complete')
-    expect(toast).toHaveBeenCalledWith({ title: 'Broadcast 2: complete, 4 of 4 remote transfers delivered, total 13.683 ms.' })
+    expect(toast).toHaveBeenCalledWith({ title: 'Broadcast 2: complete, 4 of 4 remote transfers delivered, total 10.036 ms.' })
   })
 
   it('sends seed, root and a count below the minimum as typed, and shows the backend\'s refusal', async () => {
@@ -254,7 +257,7 @@ describe('MpiPage: controls', () => {
     run()
     await screen.findByTestId('action-result')
     expect(toast).toHaveBeenCalledWith({ variant: 'destructive',
-      title: 'Broadcast 1: partial, 3 of 4 remote transfers delivered, total 62.695 ms.' })
+      title: 'Broadcast 1: partial, 3 of 4 remote transfers delivered, total 44.541 ms.' })
   })
 
   it('checks count and seed before sending, in the backend\'s words', async () => {
@@ -326,6 +329,13 @@ describe('MpiPage: errors', () => {
     expect(second.alert.textContent).toBe('Node state conflict: Every node is crashed, so no node can be the root of a collective.')
   })
 
+  it('shows 409 No leader as a calm status, not an alert (synthetic body, from MpiControllerTest)', async () => {
+    const { alert } = await failWith(problem(noLeader))
+    expect(alert.getAttribute('data-kind')).toBe('no-leader')
+    expect(alert.getAttribute('role')).toBe('status')
+    expect(alert.textContent).toBe(`No leader${noLeader.detail}`)
+  })
+
   it('shows the backend\'s 400 errors beside their fields', async () => {
     const api = makeApi()
     api.runCollective.mockRejectedValueOnce(problem(countError)).mockRejectedValueOnce(problem(seedError))
@@ -381,7 +391,7 @@ describe('MpiPage: history', () => {
   it('appends measured figures to What to notice from the history', async () => {
     await renderPage(makeApi())
     const notice = screen.getByTestId('section-what-to-notice').textContent
-    expect(notice).toContain('broadcast 6 took 6.772 ms in total for 3 remote transfers')
+    expect(notice).toContain('broadcast 6 took 4.429 ms in total for 3 remote transfers')
     expect(notice).toContain('Latest refusal:')
   })
 })

@@ -7,7 +7,7 @@ import overviewTakeoverPending from '@/test/fixtures/replication/overview-takeov
 import overviewAfterTakeover from '@/test/fixtures/replication/overview-after-takeover.json'
 import writeAsync from '@/test/fixtures/replication/write-async.json'
 import eventsFixture from '@/test/fixtures/replication/events.json'
-import { cellDescription, gridModel, gridSummary, liveBackups, pendingWindow, timelineModel } from './replicaModel'
+import { cellDescription, gridModel, gridSummary, liveBackups, pendingWindow, primaryLine, timelineModel } from './replicaModel'
 
 const copy = (value) => JSON.parse(JSON.stringify(value))
 
@@ -22,17 +22,17 @@ describe('gridModel', () => {
   it('puts the primary first and keeps every state the backend sent (diverged fixture)', () => {
     const model = gridModel(replicasDiverged)
 
-    expect(model.referenceNodeId).toBe(1)
-    expect(model.columns.map((c) => c.nodeId)).toEqual([1, 2, 3, 4, 5])
+    expect(model.referenceNodeId).toBe(5)
+    expect(model.columns.map((c) => c.nodeId)).toEqual([5, 1, 2, 3, 4])
     expect(model.columns[0].isReference).toBe(true)
     const region = model.rows.find((row) => row.key === 'region')
     expect(region.cells.find((cell) => cell.nodeId === 3)).toMatchObject({ state: 'MISSING', label: 'Missing', item: null })
     expect(model.consistent).toBe(false)
-    expect(gridSummary(model)).toBe('1 difference from the primary (node 1).')
+    expect(gridSummary(model)).toBe('1 difference from the primary (node 5).')
   })
 
   it('a consistent view says so', () => {
-    expect(gridSummary(gridModel(replicasConverged))).toBe('Every reachable replica matches the primary (node 1).')
+    expect(gridSummary(gridModel(replicasConverged))).toBe('Every reachable replica matches the primary (node 5).')
   })
 
   it('a reference that is not node 1 still comes first (derived: referenceNodeId changed to 3)', () => {
@@ -76,23 +76,23 @@ describe('timelineModel', () => {
   it('turns PRIMARY_SELECTED events into entries, in causal order, ignoring every other event', () => {
     const model = timelineModel(eventsFixture, overviewAfterTakeover)
 
-    expect(model.entries.map((e) => [e.nodeId, e.previousNodeId])).toEqual([[1, null], [2, 1], [1, 2]])
+    expect(model.entries.map((e) => [e.nodeId, e.previousNodeId])).toEqual([[5, null], [4, 5], [5, 4]])
     expect(model.entries[2].appliedFromCatchUp).toBe(1)
-    expect(model.entries[2].catchUpSources).toEqual([2, 3, 4, 5])
+    expect(model.entries[2].catchUpSources).toEqual([1, 2, 3, 4])
     expect(model.pending).toBeNull()
   })
 
   it('adds the per-source catch-up counts to the latest entry when the overview\'s lastTakeover matches it', () => {
     const model = timelineModel(eventsFixture, overviewAfterTakeover)
     const latest = model.entries[2]
-    expect(latest.catchUps.map((c) => [c.sourceNodeId, c.applied, c.pulled])).toEqual([[2, 1, 2], [3, 0, 2], [4, 0, 2], [5, 0, 2]])
+    expect(latest.catchUps.map((c) => [c.sourceNodeId, c.applied, c.pulled])).toEqual([[1, 1, 2], [2, 0, 2], [3, 0, 2], [4, 0, 2]])
     expect(model.entries[1].catchUps).toEqual([])
   })
 
   it('marks a pending takeover from the overview, without inventing an entry', () => {
     const model = timelineModel([], overviewTakeoverPending)
-    expect(model.pending).toEqual({ nodeId: 2, fromNodeId: 1 })
-    expect(model.entries.map((e) => e.nodeId)).toEqual([1])   // from lastTakeover, the first selection
+    expect(model.pending).toEqual({ nodeId: 4, fromNodeId: 5 })
+    expect(model.entries.map((e) => e.nodeId)).toEqual([5])   // from lastTakeover, the first selection
     expect(model.entries[0].previousNodeId).toBeNull()
   })
 
@@ -121,9 +121,19 @@ describe('pendingWindow', () => {
 })
 
 describe('liveBackups', () => {
-  it('offers only live nodes that are not the primary', () => {
-    expect(liveBackups(overviewBefore).map((n) => n.nodeId)).toEqual([2, 3, 4, 5])
-    expect(liveBackups(overviewTakeoverPending).map((n) => n.nodeId)).toEqual([3, 4, 5])   // node 1 crashed, 2 primary
+  it('offers only live nodes that are not the primary (before any election no node holds a role, so every live node)', () => {
+    expect(liveBackups(overviewBefore).map((n) => n.nodeId)).toEqual([1, 2, 3, 4, 5])
+    expect(liveBackups(overviewTakeoverPending).map((n) => n.nodeId)).toEqual([1, 2, 3])   // node 5 crashed, 4 primary
     expect(liveBackups(null)).toEqual([])
+  })
+})
+
+describe('primaryLine', () => {
+  it('names the elected leader, or no leader yet, or every node crashed (never "lowest live")', () => {
+    expect(primaryLine(overviewAfterAsync)).toBe('The primary is node 5, the leader elected by Experiment 4.')
+    expect(primaryLine(overviewBefore))
+      .toBe('No leader yet: the next write asks Experiment 4 to elect one, and that node becomes the primary.')
+    const allDown = { ...copy(overviewBefore), nodes: overviewBefore.nodes.map((n) => ({ ...n, nodeStatus: 'CRASHED' })) }
+    expect(primaryLine(allDown)).toBe('Every node is crashed, so there is no primary.')
   })
 })

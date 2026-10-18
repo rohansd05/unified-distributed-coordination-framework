@@ -4,6 +4,7 @@ import com.udcf.modules.matrix.dto.MatrixOverviewDto;
 import com.udcf.modules.matrix.dto.MatrixRunCommand;
 import com.udcf.modules.matrix.dto.MatrixRunDto;
 import com.udcf.modules.matrix.dto.MatrixSeriesDto;
+import com.udcf.modules.mpi.NoLeaderException;
 import com.udcf.modules.rmi.InvalidCallException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -23,9 +24,10 @@ import java.util.List;
  * HTTP error. A run is synchronous and can take up to the overview's worstCaseRunMillis.
  *
  * <p>Errors are ProblemDetail bodies. From the shared GlobalExceptionHandler: 404 for an unknown root node,
- * 409 "Node down" for a crashed requested root, 409 "Node state conflict" when every node is crashed, 409
+ * 409 "Node down" for a crashed root, 409 "Node state conflict" when every node is crashed, 409
  * "Module busy". From this controller, in the shared shape: 400 "Invalid request parameters" with every
- * offending field under {@code errors}, 404 "Unknown run". An unreadable body or a non-numeric id gets
+ * offending field under {@code errors}, 404 "Unknown run", 409 "No leader" ({@code reason: NO_LEADER}) when no
+ * root was requested and no leader could be elected. An unreadable body or a non-numeric id gets
  * Spring's default 400, without {@code errors}.</p>
  */
 @RestController
@@ -95,6 +97,16 @@ public class MatrixController {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
         problem.setTitle(INVALID_PARAMETERS_TITLE);
         problem.setProperty("errors", e.errors());
+        return problem;
+    }
+
+    /** No leader could be elected, so a run without a requested root has no root (never another node). */
+    @ExceptionHandler(NoLeaderException.class)
+    public ProblemDetail noLeader(NoLeaderException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problem.setTitle("No leader");
+        problem.setProperty("moduleId", MatrixModule.ID);
+        problem.setProperty("reason", "NO_LEADER");
         return problem;
     }
 }

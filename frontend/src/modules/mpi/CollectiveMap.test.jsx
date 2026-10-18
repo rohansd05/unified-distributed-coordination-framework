@@ -3,6 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import overviewBefore from '@/test/fixtures/mpi/overview-before-start.json'
 import overviewAfter from '@/test/fixtures/mpi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/mpi/overview-node-crashed.json'
+import overviewLeader from '@/test/fixtures/mpi/overview-leader.json'
 import broadcast from '@/test/fixtures/mpi/collective-broadcast.json'
 import gather from '@/test/fixtures/mpi/collective-gather.json'
 import partial from '@/test/fixtures/mpi/collective-partial.json'
@@ -15,13 +16,20 @@ const copy = (value) => JSON.parse(JSON.stringify(value))
 const arrows = () => screen.queryAllByTestId('fan-arrow')
 
 describe('CollectiveMap', () => {
-  it('before any collective, centres the default root, draws no arrows and says so', () => {
+  it('before any collective and before any election: no default root, no arrows, and says the first collective elects one', () => {
     render(<CollectiveMap overview={overviewBefore} collective={null} />)
     expect(arrows()).toHaveLength(0)
-    expect(screen.getByTestId('map-node-1').getAttribute('data-root')).toBe('true')
-    expect(screen.getByTestId('map-node-1').textContent).toContain('default root')
     expect(screen.getByTestId('map-node-2').getAttribute('data-state')).toBe('not-started')
-    expect(screen.getByTestId('map-sentence').textContent).toBe('No collective yet. The default root is node 1.')
+    expect(screen.getByTestId('map-sentence').textContent)
+      .toBe('No collective yet, and no leader yet: the first collective asks Experiment 4 to elect one, and it becomes the root.')
+  })
+
+  it('with a leader and no collective shown, centres the leader as the default root, marked leader (real overview)', () => {
+    render(<CollectiveMap overview={overviewLeader} collective={null} />)
+    expect(arrows()).toHaveLength(0)
+    expect(screen.getByTestId('map-node-5').getAttribute('data-root')).toBe('true')
+    expect(screen.getByTestId('map-node-5').textContent).toContain('default root, leader')
+    expect(screen.getByTestId('map-sentence').textContent).toBe('No collective yet. The default root is node 5, the leader elected by Experiment 4.')
   })
 
   it('draws a broadcast outward, one solid arrow per rank, in rank order', () => {
@@ -62,13 +70,6 @@ describe('CollectiveMap', () => {
     const arrow = arrows().find((a) => a.getAttribute('data-status') === 'NOT_ATTEMPTED')
     expect(arrow.querySelector('path').getAttribute('stroke-dasharray')).toBe('2 4')
     expect(arrow.textContent).toBe('not attempted')
-  })
-
-  it('synthetic: shows the leader marker (no capture has a leader)', () => {
-    const overview = copy(overviewAfter)
-    overview.participants[0].leader = true   // changed: was false
-    render(<CollectiveMap overview={overview} collective={null} />)
-    expect(screen.getByTestId('map-node-1').textContent).toContain('default root, leader')
   })
 
   it('shows the Simulated badge only for co-hosting, and (synthetic) none without it', () => {

@@ -2,6 +2,8 @@ package com.udcf.modules.matrix;
 
 import com.udcf.core.cluster.Cluster;
 import com.udcf.core.cluster.ClusterProperties;
+import com.udcf.core.cluster.LeaderElector;
+import com.udcf.core.cluster.RoleProvider;
 import com.udcf.core.cluster.NodeDownException;
 import com.udcf.core.cluster.UnknownNodeException;
 import com.udcf.core.events.ClusterEvent;
@@ -78,6 +80,7 @@ class MatrixModuleTest {
     private SimpleMeterRegistry registry;
     private InMemoryMatrixNodes nodes;
     private List<String> steps;
+    private RoleProvider roles;
     private MatrixModule module;
 
     @BeforeEach
@@ -91,12 +94,15 @@ class MatrixModuleTest {
         doAnswer(invocation -> steps.add("ensureStarted")).when(rmi).ensureStarted();
         registry = new SimpleMeterRegistry();
         nodes = MatrixTestResults.nodes();
+        roles = new RoleProvider(cluster, (LeaderElector) null);   // no election module: no leader means 409 at once
+        cluster.assignLeader(1);
         module = newModule(20, node -> steps.add("prepare " + node.id()), MatrixTestResults.stepping());
     }
 
     @AfterEach
     void tearDown() {
         module.close();
+        roles.close();
         cluster.close();
         bus.close();
     }
@@ -104,7 +110,7 @@ class MatrixModuleTest {
     private MatrixModule newModule(int historySize, Consumer<com.udcf.core.cluster.ClusterNode> prepare, LongSupplier time) {
         return new MatrixModule(cluster, bus, MatrixTestResults.MATRIX, MatrixTestResults.RUN, new MatrixModuleProperties(historySize),
                 MatrixTestResults.MPI, rmi, RmiTestSupport.PROPERTIES, RmiTestSupport.TRANSPORT, registry,
-                Clock.fixed(NOW, ZoneOffset.UTC),
+                Clock.fixed(NOW, ZoneOffset.UTC), roles,
                 new MatrixModule.Seams(nodes, nodes, node -> nodes.executor(node.id()), prepare, time, () -> 8));
     }
 
@@ -147,7 +153,7 @@ class MatrixModuleTest {
         assertThat(dto.seed()).isEqualTo(1);
         assertThat(dto.startedAt()).isEqualTo(NOW);
         assertThat(dto.rootNodeId()).isEqualTo(1);
-        assertThat(dto.rootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
+        assertThat(dto.rootSource()).isEqualTo(RootSource.LEADER);
         assertThat(dto.rankNodeIds()).containsExactly(1, 2, 3);
         assertThat(dto.verification().passed()).isTrue();
         assertThat(dto.verification().mismatchedElements()).isZero();
@@ -174,7 +180,7 @@ class MatrixModuleTest {
     }
 
     @Test
-    @DisplayName("default root: the live leader (LEADER); after it crashes, the lowest live id, the crashed node skipped")
+    @DisplayName("default root: the leader (LEADER); after it crashes and node 2 is elected, node 2, the crashed node skipped")
     void defaultRoot() {
         cluster.assignLeader(3);
         MatrixRunDto led = module.run(size(12));
@@ -183,12 +189,28 @@ class MatrixModuleTest {
         assertThat(led.rootRank()).isEqualTo(2);
 
         cluster.crash(3);
-        MatrixRunDto lowest = module.run(size(12));
-        assertThat(lowest.rootNodeId()).isEqualTo(1);
-        assertThat(lowest.rootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
-        assertThat(lowest.skippedNodeIds()).containsExactly(3);
-        assertThat(lowest.rankNodeIds()).containsExactly(1, 2);
-        assertThat(lowest.outcome()).isEqualTo(CollectiveOutcome.COMPLETE);
+        cluster.assignLeader(2);
+        MatrixRunDto next = module.run(size(12));
+        assertThat(next.rootNodeId()).isEqualTo(2);
+        assertThat(next.rootSource()).isEqualTo(RootSource.LEADER);
+        assertThat(next.skippedNodeIds()).containsExactly(3);
+        assertThat(next.rankNodeIds()).containsExactly(1, 2);
+        assertThat(next.outcome()).isEqualTo(CollectiveOutcome.COMPLETE);
+    }
+
+    @Test
+    @DisplayName("no leader could be elected: NoLeaderException (409 NO_LEADER) before the guard; no run id, nothing started")
+    void noLeader() {
+        cluster.assignLeader(null);
+
+        assertThatThrownBy(() -> module.run(size(12))).isInstanceOf(com.udcf.modules.mpi.NoLeaderException.class)
+                .hasMessageStartingWith("No leader could be elected, so a matrix run");
+        assertThat(steps).isEmpty();
+        assertThat(module.history()).isEmpty();
+        assertThat(module.overview().defaultRootNodeId()).isNull();
+        assertThat(module.overview().defaultRootSource()).isNull();
+        cluster.assignLeader(1);
+        assertThat(module.run(size(12)).runId()).isEqualTo(1);   // the refused run reserved no id
     }
 
     @Test
@@ -402,7 +424,7 @@ class MatrixModuleTest {
             assertThat(node.rmiState()).isEqualTo(RmiNodeState.NOT_STARTED);
         }
         assertThat(overview.defaultRootNodeId()).isEqualTo(1);
-        assertThat(overview.defaultRootSource()).isEqualTo(RootSource.LOWEST_LIVE_ID);
+        assertThat(overview.defaultRootSource()).isEqualTo(RootSource.LEADER);
         assertThat(overview.minimumSizeNow()).isEqualTo(3);
         assertThat(overview.processors()).isEqualTo(8);
         assertThat(overview.speedupCeiling()).isEqualTo(3);
@@ -447,9 +469,9 @@ class MatrixModuleTest {
         assertThat(events("MATRIX_RUN_STARTED")).singleElement().satisfies(e -> {
             assertThat(e.nodeId()).isEqualTo(1);
             assertThat(e.data()).containsEntry("runId", 1L).containsEntry("size", 12).containsEntry("seed", 42L)
-                    .containsEntry("rootSource", "LOWEST_LIVE_ID").containsEntry("liveNodeIds", List.of(1, 2, 3));
+                    .containsEntry("rootSource", "LEADER").containsEntry("liveNodeIds", List.of(1, 2, 3));
             assertThat(e.message()).isEqualTo("Node 1 started matrix run 1 of size 12 over the live nodes [1, 2, 3] "
-                    + "(root: the lowest live node id)");
+                    + "(root: the leader elected by Experiment 4)");
         });
         assertThat(events("MATRIX_RUN_FINISHED")).singleElement().satisfies(e -> {
             assertThat(e.nodeId()).isEqualTo(1);
