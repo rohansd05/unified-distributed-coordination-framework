@@ -17,6 +17,7 @@ import { mpiApi } from '@/modules/mpi/mpiApi'
 import { matrixApi } from '@/modules/matrix/matrixApi'
 import { faultToleranceApi } from '@/modules/faulttolerance/faultToleranceApi'
 import faultToleranceOverviewBefore from '@/test/fixtures/faulttolerance/overview-before-start.json'
+import { scenariosApi } from '@/components/scenarios/scenariosApi'
 
 // Every page here renders with its real default api, so mock the calls the pages make on
 // mount: no test may reach the network, whether or not a backend happens to be running.
@@ -49,6 +50,8 @@ beforeEach(() => {
   vi.spyOn(matrixApi, 'start').mockResolvedValue(null)
   vi.spyOn(matrixApi, 'getRuns').mockResolvedValue(null)
   vi.spyOn(matrixApi, 'getSeries').mockResolvedValue(null)
+  vi.spyOn(scenariosApi, 'getScenarios').mockResolvedValue([])
+  vi.spyOn(scenariosApi, 'getLatestRun').mockResolvedValue(null)
 })
 
 afterEach(() => {
