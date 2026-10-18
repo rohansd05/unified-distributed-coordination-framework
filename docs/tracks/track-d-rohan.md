@@ -195,6 +195,7 @@
 
 - [x] 9A.0 — docs: R19, the Phase 9A plan (README section 11), CLAUDE.md. Needs: none.
 - [x] 9A.4 — Experiment 3 Berkeley time daemon and Experiment 7 coordinator from the shared role provider; `TODO(L1)` selectors removed; fixtures; page hints. Needs: 9A.1.
+- [x] 9A.5 — Timeline page `/timeline` (reassigned from Jai for the 2026-10-23 demo). Needs: 9A.0.
 - [ ] 9A.9 — demo package: `scripts/start-all.ps1`, `scripts/stop-all.ps1`, `docs/demo/udcf-demo.md`, refreshed public lite deployment. Needs: 9A.7, 9A.8.
 
 ### 9A.4: the time daemon and the MapReduce coordinator follow the elected leader (link L1)
@@ -433,6 +434,38 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - The capture block was amended by Rohan with `Reset-Cluster` (waits for no BUSY module, retries on 409) after the first run stopped at the third reset with 409.
 - Every node down on Experiment 3 now answers 409 `NO_LEADER` after the election bound instead of the old unhandled 500 (approved).
 
+### 9A.5 (fast mode)
+
+**What changed:** the `/timeline` stub became the Timeline page. Frontend only; no backend change, no fixture recaptured.
+- History from the existing `GET /api/events?limit=500` (`EventController`; no new endpoint), reloaded on every STOMP (re)connect and merged; live from `/topic/events`. Deduplicated by `sequence`, nothing older than the latest `CLUSTER_RESET`, at most 2000 events kept (the oldest by sequence go first).
+- Order `(lamportTime, nodeId)`, ties by bus sequence, or "arrival order (bus sequence)". A note on the page says why the bus sequence, not Lamport order, guarantees "after LEADER_CHANGED".
+- Hand-drawn SVG: a cluster lane (node 0) plus one lane per node from `useCluster` (dashed and "(down)" for a crashed node). Positions are ranks in the chosen order, not a time scale. The latest 120 events show there; the list beneath has all of them. Shapes plus a text legend, so colour is never the only signal. Clicking a marker or row shows every field and the `data` JSON.
+- Readable sentences for LEADER_CHANGED, TIME_DAEMON_CHANGED, COORDINATOR_CHANGED, MPI_ROOT_CHANGED, BERKELEY_ROUND_ABORTED, PRIMARY_PROMOTED, PRIMARY_SELECTED, REPLICATION_ROLES_CHANGED, HANDOVER_STARTED, NODE_CRASHED, NODE_RECOVERED, CLUSTER_RESET and the six scenario types. An unknown type shows its message (or its raw type) and never throws.
+- Leader chain: the latest LEADER_CHANGED with a leader (or a selected one), plus every role change after it by bus sequence, before the next LEADER_CHANGED, that hands a role to the same node. It is ringed and linked on the lanes, marked in the list and summed up in one line. A vacancy (leader null) shows no chain.
+- Scenario runs show as bands from SCENARIO_STARTED to SCENARIO_FINISHED (matched on `data.runId` when present). Pause live, clear view (client side only, with "Show cleared events"), a calm `role="status"` banner while STOMP is `reconnecting` or `error`, and empty states for no events, cleared and no match.
+- Files: `frontend/src/components/timeline/{timelineModel.js, useTimelineEvents.js, TimelineLanes.jsx}` plus tests; `frontend/src/pages/TimelinePage.jsx` (stub replaced) plus `TimelinePage.test.jsx`. The route and the sidebar entry already existed, so they were not changed.
+
+**Interfaces for other tracks (deep links, 9A.6 / 9A.7 / 9A.8):** `/timeline?modules=<id>,<id>&nodes=<n>,<n>&q=<text>&order=arrival`. `modules` takes module ids (`clocksync`, `cluster`, `scenario`, ...), `nodes` takes node ids (0 = cluster), `q` is a case-insensitive text search over type, message and sentence, and `order=arrival` selects the bus-sequence order (the default is Lamport order). Unknown values are ignored. Build links from literals only (routes.jsx security rule).
+
+**Scenario events (assumed shape, for Swanand, 9A.6):** the engine does not exist yet. The page reads, when present: `data.runId` (pairs STARTED with FINISHED), a scenario name from `scenarioTitle` / `title` / `scenarioName` / `scenarioId`, a step from `stepIndex` / `step` and `stepTitle` / `title` / `stepName` / `stepId`, and an outcome from `outcome` / `result` / `status`. Anything missing falls back to the event's message.
+
+**Known issues:**
+- No real LEADER_CHANGED -> role-change capture with TIME_DAEMON_CHANGED, COORDINATOR_CHANGED or MPI_ROOT_CHANGED exists in the fixtures; the chain is tested on hand-built events with the 9A.4 payload shapes. The sentences are also checked against two real logs (`election/events-cluster.json`, `faulttolerance/events.json`).
+- The lanes use rank positions, so the gap between two markers means nothing about elapsed time.
+- 2000 events in the list render without virtualisation; fine for the demo, not measured beyond that.
+- Main chunk 859.75 kB in this Windows build. The 834.05 kB 9A.4 figure predates the 9A.2 and 9A.3 merges, so not all of the growth is this step's; no pre-change build was run.
+
+**Gaps in other tracks:**
+- Jai (9A.7): `frontend/src/pages/ScenariosPage.jsx:11` still says "Arrives in Phase 9A (Experiments 2–8); extended in Phase 13" (rule: nothing may say "Phase 13").
+- Swanand (9A.6): please confirm or adjust the scenario payload fields above; until then, bands and step sentences rely on the fallbacks.
+
+**Smoke check (running app, /timeline):**
+1. Open /timeline after a reset: the cluster and node lanes show, with the CLUSTER_RESET event in the list. A legend sits under the lanes.
+2. Run a Berkeley round on Experiment 3 and a job on Experiment 7, then crash the leader on Cluster: within about 10 s, "Node N became leader" appears, followed by the time daemon and coordinator changes for the same node. The leader-chain line names them, and they are ringed on the lanes.
+3. Switch to "Arrival order (bus sequence)": the URL gains `?order=arrival` and the role changes sit after LEADER_CHANGED in the list.
+4. Click the "Exp 3: Clock Synchronization" and "Node 4" chips: only matching events stay and the URL shows `modules=clocksync&nodes=4`. Reload the page: the same filters still apply.
+5. Click Pause live and recover a node: the list doesn't change and the button reads "Resume live (n waiting)". Resume: the events appear. Click Clear view: "View cleared", and the next event appears alone.
+
 ---
 
 ## Progress log
@@ -453,3 +486,4 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-16 9A.0 done: Phase 13 merged into Phase 9A (R19, HANDOFF v1.4); Phase 9A steps 9A.0–9A.9 in README section 11; CLAUDE.md Current Position updated.
 - 2026-10-17 9A.4 done: the Berkeley time daemon (Experiment 3) and the MapReduce coordinator (Experiment 7) are the leader elected by Experiment 4 (`RoleProvider.ensureLeader()` on the request thread, 409 `NO_LEADER` when none; reads use `leaderId()` and never elect); both module-local selectors and every `TODO(L1)` removed; `TIME_DAEMON_CHANGED` / `COORDINATOR_CHANGED` published exactly once per new leader (CAS plus a short lock, after `LEADER_CHANGED`, before the next STARTED); daemon crash mid-round ends as `BERKELEY_ROUND_ABORTED` with `abortedRound` on the overview and a calm page notice; coordinator crash mid-run ends FAILED with a plain reason; served notes and page texts name the elected leader; 409 "No leader" shown as a calm warning; 30 fixtures recaptured by Rohan (full Experiment 3 sequence + new 409, 15 role-bearing Experiment 7 files) and two labelled synthetic fixtures; backend 1925 tests (0 failures, 1 skipped; baseline 1912 - 6 + 19; the 10 new and changed clocksync/mapreduce classes 3 runs, 108 tests each, all green; both packages after the recapture 272 tests, all green), frontend 1250 tests in 128 files (baseline 1244 + 6), lint and build exit 0; Windows only, Linux and the manual checklist not yet run; deviations: baseline 1915 corrected to 1912 (stale surefire report), `abortedRound` with `BerkeleyRoundAbortedException` and `AbortedRoundDto` (R4), the lock beyond R2, extra tests (+6 / +5), synthetic MapReduce 409 fixture, capture block amended with Reset-Cluster.
 - 2026-10-18 9A.4 Linux (Docker), run by Rohan on a clean clone of 37f87ae: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1925 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the ten clocksync/mapreduce classes x3 (108 tests each, 0 failures); frontend on node:22: npm ci, vitest (128 files, 1250 tests), lint and build exit 0, main chunk 834.05 kB. Manual checklist run the same day: 11 of 12 PASS, step 10 differs (not a defect).
+- 2026-10-18 9A.5 done: Timeline page /timeline: all modules' events from GET /api/events?limit=500 plus /topic/events, deduplicated by sequence, capped at 2000; Lamport order with bus-sequence tie-break or arrival order; cluster lane plus node lanes in SVG with the event list and details; readable sentences for the role-change, crash/recover and scenario types; leader-chain highlight; scenario bands; module/node/text filters in the URL; pause, clear view, disconnected banner; no backend change; frontend 1294 tests in 131 files (baseline 1262 in 128, +32), lint clean, build OK; fast mode: no Docker run; CI is the Linux gate
