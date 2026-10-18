@@ -110,7 +110,7 @@ export function FaultTolerancePage({ experiment, api = faultToleranceApi }) {
 
   const visualisation = hasData ? (
     <div className="space-y-5">
-      <ReplicaRail status={status} run={run} settings={settings} notes={notes} />
+      <ReplicaRail status={status} run={run} settings={settings} />
       <FailoverTimeline run={run} settings={settings} glossary={overview.glossary} />
       <SplitBrainPanel splitBrain={status.splitBrain} />
     </div>

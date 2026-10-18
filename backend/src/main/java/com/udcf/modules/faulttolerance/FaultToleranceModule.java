@@ -613,9 +613,7 @@ public class FaultToleranceModule implements ExperimentModule, AutoCloseable {
                         + "the leader changes while the primary is still up, the new leader first copies the primary's "
                         + "store, then takes over at a higher epoch.",
                 "Backups refuse any update stamped with an older epoch than the newest they know, so a returning "
-                        + "old primary cannot overwrite newer data even if it misbehaves.",
-                "Until Phase 9A this experiment and Experiment 5 share each node's replication service, so a "
-                        + "write on the Experiment 5 page can move the primary.");
+                        + "old primary cannot overwrite newer data even if it misbehaves.");
     }
 
     private FaultToleranceConflictException noServingPrimary() {

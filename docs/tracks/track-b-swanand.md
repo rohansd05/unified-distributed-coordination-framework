@@ -42,11 +42,118 @@
 ### Steps
 
 - [x] 9A.1 — Shared role provider under `com.udcf.core` (`core/cluster/RoleProvider`): LEADER from the election, PRIMARY and BACKUP join `NodeRole`; Experiment 8 promotes the elected leader (`FailoverRoleSelector` removed, `EpochAuthority.onLeaderElected` fed from leader changes, a planned-handover target resynchronised first); L2 verified: one FailureDetector suspect signal drives the Experiment 4 re-election and the Experiment 8 failover. Needs: 9A.0.
-- [ ] 9A.6 — `com.udcf.scenario`: scenario engine, API and narration; scenarios "The leader dies mid-write", "A slow node under load" and "Split-brain that never happens"; the leader-crash end-to-end test. Needs: 9A.3, 9A.4.
+- [x] 9A.6 — `com.udcf.scenario`: scenario engine, API and narration; scenarios "The leader dies mid-write", "A slow node under load" and "Split-brain that never happens"; the leader-crash end-to-end test. Needs: 9A.3, 9A.4.
 
 ---
 
 ## Interfaces for other tracks
+
+### 9A.6 APIs: the scenario engine (`com.udcf.scenario`), for 9A.7 (Jai), 9A.5 (timeline) and 9A.9
+
+JSON blocks below are **shape examples with illustrative values, not captures**. Errors are the shared ProblemDetail (`status`, `title`, `detail`, `instance`).
+
+**Endpoints** (`/api/scenarios`)
+
+| Verb, path | Success | Errors |
+|---|---|---|
+| `GET /api/scenarios` | 200 every scenario in `order`, with its steps' narration | - |
+| `POST /api/scenarios/{id}/runs` | 202 `{runId, scenarioId}`; the run starts in the background with a clean cluster reset | 404 `{title: "Unknown scenario", scenarioId}`; 409 `{title: "Scenario busy", reason: "SCENARIO_BUSY", runId}` (the run in progress) |
+| `GET /api/scenarios/runs/latest` | 200 the most recently started run (running or finished); 204 if none is kept | - |
+| `GET /api/scenarios/runs/{runId}` | 200 one kept run (the last 10 are kept) | 404 `{title: "Unknown scenario run", runId}`; 400 non-numeric id |
+
+```json
+GET /api/scenarios
+[{"id": "leader-dies-mid-write", "title": "The leader dies mid-write",
+  "summary": "Updates are being written to the leader when it crashes. ...",
+  "modules": ["election", "replication", "faulttolerance"],
+  "steps": [{"index": 1, "narration": "We start Experiment 8 and send it a steady stream of synchronous updates. ..."},
+            {"index": 2, "narration": "We crash the leader, which is also the primary, while updates are still being written."}]}]
+
+POST /api/scenarios/leader-dies-mid-write/runs   -> 202
+{"runId": 3, "scenarioId": "leader-dies-mid-write"}
+
+GET /api/scenarios/runs/latest
+{"runId": 3, "scenarioId": "leader-dies-mid-write", "state": "FAILED",
+ "startedAt": "2026-10-18T12:00:00Z", "finishedAt": "2026-10-18T12:00:14Z",
+ "verdict": "Failed at step 6: Node 4 lacks 1 of 9 confirmed updates.",
+ "endState": {"description": "Nodes 1, 2, 3 and 4 are up; node 5 is down. Node 4 is the leader and the replication primary. The update stream is stopped after 40 updates (39 confirmed).",
+              "leaderId": 4, "primaryId": 4,
+              "nodes": [{"nodeId": 1, "status": "UP", "roles": ["BACKUP"]}, {"nodeId": 5, "status": "CRASHED", "roles": []}]},
+ "steps": [{"index": 2, "narration": "We crash the leader, ...", "state": "PASSED", "startedAt": "2026-10-18T12:00:02Z",
+            "durationMs": 12, "facts": {"crashedNodeId": 5, "crashedEpoch": 2, "acknowledgedBeforeCrash": 7, "crashedSequence": 140},
+            "message": "Node 5 went down on every protocol at epoch 2, after 7 confirmed updates."},
+           {"index": 7, "narration": "...", "state": "SKIPPED", "startedAt": null, "durationMs": null, "facts": {},
+            "message": "Skipped: step 6 failed."}]}
+```
+
+- Run `state`: `RUNNING`, `PASSED`, `FAILED`; `finishedAt`, `verdict` and `endState` are null while RUNNING. A run never stays RUNNING: any error ends it FAILED.
+- Step `state`: `PENDING`, `RUNNING`, `PASSED`, `FAILED`, `SKIPPED`. `index` is **1-based**. `startedAt` is null while PENDING and for SKIPPED; `durationMs` is null until the step ends and for SKIPPED; `message` is null while PENDING or RUNNING; `facts` is `{}` if none.
+- `narration` is static and has no numbers. Every number is in `message` and `facts`, from observation.
+- `endState` is read from the cluster when the run ends (no automatic reset). Its description includes the scenario's cleanup sentence.
+- If the cluster could not be reset first (a module stayed BUSY for `reset-timeout-millis`), the run is FAILED, every step SKIPPED, and the verdict starts "Failed before the first step: ...".
+- There is no cancel. A run of "Split-brain that never happens" takes about half a minute.
+
+**Events** (module `scenario`, node 0, one tick of the cluster clock; on `/topic/events` and `/topic/modules/scenario`)
+
+| Type | Data | Message |
+|---|---|---|
+| `SCENARIO_STARTED` | `runId, scenarioId, title, steps` (count) | "Scenario started: <title>" |
+| `STEP_STARTED` | `runId, scenarioId, stepIndex, narration` | "Step 2 of 6: <narration>" |
+| `STEP_PASSED` / `STEP_FAILED` | `runId, scenarioId, stepIndex, durationMs, facts` | "Step 2 passed: <message>" / "Step 6 failed: <message>" |
+| `STEP_SKIPPED` | `runId, scenarioId, stepIndex` | "Step 7 skipped: step 6 failed" |
+| `SCENARIO_FINISHED` | `runId, scenarioId, title, outcome` (`PASSED`/`FAILED`), `verdict` | the verdict |
+
+`SCENARIO_STARTED` follows the run's own `CLUSTER_RESET`. When the reset fails, only `SCENARIO_FINISHED` is published.
+
+**Add a scenario (recipe for Jai, add-only)**
+
+```java
+@Component
+public class MatrixLeaderCrashScenario implements Scenario {
+    private final FailoverSteps failover;          // optional: reusable Experiment 8 steps (below)
+    private final MatrixModule matrix;
+    private final List<ScenarioStep> steps;
+
+    public MatrixLeaderCrashScenario(FailoverSteps failover, MatrixModule matrix) {
+        this.failover = failover;
+        this.matrix = matrix;
+        this.steps = List.of(
+                ScenarioStep.of("We start a matrix multiply rooted at the elected leader.", this::startRun),
+                ScenarioStep.of("We crash the leader while the multiply runs.", this::crashLeader));
+    }
+
+    private String startRun(StepContext step) throws InterruptedException {
+        long anchor = step.anchor("run");                 // the bus sequence just BEFORE the action
+        var run = matrix.startRun(...);                   // call the module bean, never HTTP
+        ClusterEvent started = step.awaitEvent(anchor, "matrix", "RUN_STARTED", e -> true, "the run to start");
+        step.fact("rootNodeId", started.nodeId());        // observed values only
+        step.memory().remember("root", started.nodeId()); // shared with later steps
+        return "Node " + started.nodeId() + " is the root.";   // the step's message, from observation
+    }
+    // id(), title(), summary(), modules(), order() (scenarios use 10, 20, 30; take 40 and 50), steps(),
+    // cleanup(RunMemory) (optional, always runs in a finally, returns one sentence for endState or null)
+}
+```
+
+- `StepContext`:
+  - `anchor(name)` / `anchorOf(name)`: wait for consequences of an action from its anchor, not from your step's start. Events of one action can arrive while an earlier step still waits.
+  - `awaitEvent(after, module, type, match, what)` and `awaitEvent(after, module, predicate, what)`: bus subscription plus polling fallback; the earliest match by sequence wins.
+  - `awaitState(supplier, done, what)`: polling.
+  - `requireOrder(earlierName, earlier, laterName, later)`: checks bus order and records both sequences as facts.
+  - `fact(key, value)`, `memory()` (`remember`, `recall`, `find`), and `throw step.fail("observed message")`.
+- Every wait shares the step's deadline: `udcf.scenario.step-deadline-millis` (30000), or `new ScenarioStep(narration, Duration, body)`. A timeout fails the step with "Waited N s for <what>, but it did not happen." A cluster reset by someone else fails the waiting step.
+- Steps run on the daemon thread `udcf-scenario-runner`, never a listener or dispatcher, so module actions that call `RoleProvider.ensureLeader()` are allowed. Never reset the cluster in a step: the engine does it before every run.
+- Helpers: `Narration.nodes(ids)` ("nodes 1 and 2"), `Narration.millis(x)`, `EventData.integer/longValue/decimal/is(event, key, ...)`.
+
+**`FailoverSteps`** (`com.udcf.scenario.scenarios`, a Spring `@Component`; inject it). These are the Experiment 8 steps, each as a step with default narration and as a public body you can wrap with your own narration:
+
+| Step / body | What it does |
+|---|---|
+| `startSynchronousStream()` / `startStream(step)` | synchronous stream at Experiment 8's default rate; waits for the leader to be promoted and 3 confirmed updates; remembers `LEADER`, `EPOCH` |
+| `crashLeader()` / `crash(step)` | `FaultToleranceModule.crashPrimary()`, which crashes the whole node (`Cluster.crash`); anchor `CRASH` |
+| `detection()`, `election()`, `promotion()`, `serviceRestored()` | `FAILURE_DETECTED`, `LEADER_CHANGED` (remembers `NEW_LEADER`, `LEADER_CHANGED`), `PRIMARY_PROMOTED` at a higher epoch after the election (remembers `NEW_EPOCH`), `SERVICE_RESTORED` plus `DATA_LOSS_MEASURED` with 0 lost |
+| `crashLeaderAndFailOver()` / `crashAndFailOver(step)` | crash, election, promotion and restored service in one step |
+| `stopStream(memory)` | cleanup: stops the stream; returns the end-state sentence |
 
 ### 9A.1 APIs: the shared role provider (link L1), for 9A.3 (Jai) and 9A.4 (Rohan)
 
@@ -599,6 +706,175 @@ Run by Swanand on 2026-10-17 against the real backend; all 13 steps passed; brow
 
 ---
 
+## 9A.6 (fast mode)
+
+**What changed.**
+- **New package `com.udcf.scenario`:**
+  - The engine: `Scenario`, `ScenarioStep`, `StepContext`, `RunMemory`, `ScenarioEngine`, `ScenarioRun`.
+  - The API: `ScenarioController`.
+  - Helpers and configuration: `Narration`, `EventData`, `ScenarioProperties`.
+  - Exceptions: `StepFailedException`, `ScenarioBusyException`, `UnknownScenarioException`, `UnknownScenarioRunException`.
+  - DTOs in `dto/`.
+  - In `scenarios/`: `FailoverSteps`, the three scenarios and `SplitBrainSampler`.
+- **How a run works:**
+  - One run at a time, on the daemon thread `udcf-scenario-runner`. The last 10 runs are kept in memory.
+  - It starts with a clean cluster reset, retried while a module is BUSY.
+  - Each step acts on module beans (never HTTP to itself), then waits for its expectation by bus subscription with a 250 ms polling fallback, under the step's deadline.
+  - A failed step makes the remaining steps SKIPPED and the run FAILED.
+  - The cleanup always runs, in a finally.
+  - The end state is read from the cluster, and there is no automatic reset afterwards.
+- **R1:** consequences of an action are awaited from the action's anchor, the bus sequence just before it, not from the waiting step's start. Order is checked by bus sequence (`requireOrder`), and both sequence numbers go into the facts.
+- **R3:** scenario a crashes the leader through `FaultToleranceModule.crashPrimary()`, which calls `FailoverCluster.crashPrimary()` -> `Cluster.crash(primary)` (`FailoverCluster.java:204`). That crashes the whole node on every protocol, so Experiment 4 elects a new leader. The step first checks that the crashed node is the leader that step 1 recorded.
+- **Note 8 removed:** Experiment 8's served note 8 ("Until Phase 9A ... a write on the Experiment 5 page can move the primary") was obsolete after 9A.3. It is removed from `FaultToleranceModule.notes`, and the Experiment 8 page no longer shows the `exp5-note` line (`ReplicaRail.jsx`, `FaultTolerancePage.jsx`, `NOTE` in `faultToleranceModel.js`). The four `overview-*.json` fixtures are recaptured by the block below.
+- **Configuration:** a new `udcf.scenario` block in `application.yml` (`history-limit` 10, `reset-timeout-millis` 20000, `step-deadline-millis` 30000, `poll-interval-millis` 250, `slow-node.work-units` 900). `application-public.yml` sets `slow-node.work-units` 400, which keeps a comparison within its load balancing limits: 5 x 60 x 400 = 120000.
+- **Observed on real sockets** (`ScenariosEndToEndTest`, Windows, this session):
+  - "The leader dies mid-write": node 1 detected the crash after 2796 ms of silence; node 4 was elected (event 542) and promoted at epoch 3 (event 559); the outage was 3578 ms and 0 of 5 confirmed updates were lost.
+  - "Split-brain that never happens": node 5 demoted at epoch 3, resynchronised from node 4, was re-elected, and node 4 was fenced before node 5 became primary at epoch 4. The sampler took 49 checks over 5298 ms, saw at most 1 primary and 0 violations.
+  - "A slow node under load": round robin took 129 ms, weighted round robin 67 ms, least connections 48 ms and least response time 84 ms. Round robin sent 12 of 60 requests to node 3; least connections sent it 4.
+
+**Interfaces for other tracks:** see "9A.6 APIs" under Interfaces for other tracks (endpoints, run shape, events, the add-a-scenario recipe, `FailoverSteps`).
+
+**Tests** (32 new):
+- `ScenarioEngineTest` (17): deadline, busy, failure leads to SKIPPED, cleanup after a failure and after an exception, an anchor accepting an event published before the waiting step (R1), subscription wake-up, polling fallback, a cluster reset by someone else, reset retry and reset timeout, history, end state.
+- `NarrationTest` (3), `EventDataTest` (2), `SplitBrainSamplerTest` (2).
+- `ScenarioControllerTest` (4): MockMvc with every status and body shape; narration contains no numbers apart from lab names.
+- `ScenariosEndToEndTest` (3): each scenario once on real sockets. For scenario c the test accepts PASSED, or FAILED only on the measured step; either way it checks the four makespans and the per-strategy requests to the slow node (R4).
+- `LeaderCrashEndToEndTest` (1): Experiments 3, 7, 9 and 8 used, the leader node crashed; `TIME_DAEMON_CHANGED`, `COORDINATOR_CHANGED`, `MPI_ROOT_CHANGED`, `PRIMARY_PROMOTED` and `REPLICATION_ROLES_CHANGED` all name the new leader and all come after its `LEADER_CHANGED` by bus sequence. Each change event appears exactly once, and the next round and collective use the new leader.
+
+**Test ports** (a search of the test sources found these decades free before this step; nothing else uses them):
+
+| Class | Bound | Bases only (never bound) |
+|---|---|---|
+| `ScenariosEndToEndTest` | election 26661-26665, replication 26671-26675, requests 26681-26685 | RMI 26690, clock 26260, MapReduce 26270 |
+| `LeaderCrashEndToEndTest` | RMI 26861-26865, clock 26871-26875, election 26881-26885, replication 26891-26895, MapReduce 26161-26165 | requests 26170 |
+| `ScenarioControllerTest`, `ScenarioEngineTest` | nothing | the `ScenariosEndToEndTest` bases, as numbers |
+
+Still free in the Track B block: 26280-26299, 26456-26459, 26496-26499, 26556-26559, 26596-26599, 26756-26759, 26791-26800.
+
+**Known issues.**
+- **Waits versus module calls:** the step deadline bounds waits, not the module calls themselves. For example, `crashPrimary` joins the node's service threads, at worst 55 s (E8c Known issues). A run still ends, and the slow step's `durationMs` shows it.
+- **Resets from elsewhere:** the engine is not an `ExperimentModule`, so a cluster reset from the Cluster page during a run is not refused. The waiting step then fails with "The cluster was reset during the scenario (event N), so the scenario cannot continue." and the run is FAILED.
+- **Sampler reads are not atomic:** the split-brain sampler uses Experiment 8's own check, which reads each node's role in turn (9A.1 Known issues (c)). In principle a read that spans the handover fence could report a stale primary for one sample; the fence comes first and the catch-up sits in between, and this was never seen.
+- **Scenario c is measured:** on a heavily loaded machine round robin may not finish last. The step then fails honestly with the measured makespans.
+- **Runs are in memory only** and are lost on a backend restart. There is no cancel (ruling (a)).
+- **The `facts` object** in `STEP_PASSED` and `STEP_FAILED` event data is nested. The event export for MapReduce (L5) does not export `data` (only `latencyMillis`), so it is unaffected.
+- **Contract tests until the recapture (resolved):** before the four overview fixtures were recaptured, `contract.test.js` failed its four "seven notes" cases on purpose (the stale fixtures still carried note 8). The recapture came after the first commit; afterwards all 1294 frontend tests passed (reported by Swanand).
+
+**Gaps for owners.**
+- **Rohan (app shell, Steps 2.2 and 2.3):** `frontend/src/components/layout/AppLayout.test.jsx` makes real XHR requests that jsdom cannot connect. They print 38 `Error: AggregateError` stack traces (jsdom `xhr-utils.js:62`, `dispatchError`) to stderr during `npm test`. Every test still passes. Found with a sequential verbose run (`npx vitest run --reporter=verbose --no-file-parallelism`): all 38 traces print right after that file's last test and before the next file. Not fixed.
+- Nidhi's 9A.2 listed no gaps for Track B. Her optional note on the unused `lamportTime` counter in `BullyAlgorithm` and `RingAlgorithm` is left as it is (E4a unchanged, ruling (g)).
+
+**Fixture capture** (the four Experiment 8 overview files; run once against a freshly started backend, then close the terminal):
+
+<details>
+<summary>The 9A.6 capture block</summary>
+
+```powershell
+# 9A.6 fixture recapture: the four Experiment 8 overview files (served note 8 removed), with the 9A.1 steps.
+# Needs the backend running on 8080 (cd backend; .\mvnw.cmd spring-boot:run). Writes files with curl.exe -o.
+$Api  = 'http://localhost:8080'
+$Ft   = "$Api/api/modules/faulttolerance"
+$Fx   = 'C:\Users\rohan\Desktop\DC\PROGRAM\unified-distributed-coordination-framework\frontend\src\test\fixtures\faulttolerance'
+$Body = Join-Path $env:TEMP 'udcf-9a6-stream.json'
+$Rows = New-Object System.Collections.Generic.List[object]
+
+function Wait-Until([scriptblock]$Condition, [int]$Seconds, [string]$What) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        try { if (& $Condition) { Write-Host "  ok: $What"; return $true } } catch { }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host "  TIMEOUT after $Seconds s: $What" -ForegroundColor Red
+    return $false
+}
+
+function Reset-Cluster {
+    $null = Wait-Until { $busy = @((Invoke-RestMethod "$Api/api/modules") | Where-Object { $_.status -eq 'BUSY' } | ForEach-Object { $_.id }); $busy.Count -eq 0 } 30 'no module is BUSY'
+    for ($try = 1; $try -le 20; $try++) {
+        $code = & curl.exe -s -o NUL -w '%{http_code}' -X POST "$Api/api/cluster/reset"
+        if ($code -eq '204') { Write-Host "  reset: 204 (try $try)"; return $true }
+        Write-Host "  reset: $code (try $try), retrying"
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host '  reset failed 20 times' -ForegroundColor Red
+    return $false
+}
+
+function Post([string]$Url, [string]$Json) {
+    if ($Json) {
+        [IO.File]::WriteAllText($Body, $Json)
+        $code = & curl.exe -s -o NUL -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "@$Body" $Url
+    } else {
+        $code = & curl.exe -s -o NUL -w '%{http_code}' -X POST $Url
+    }
+    Write-Host "  POST $Url -> $code"
+    return $code
+}
+
+function Capture([string]$Name) {
+    $path = Join-Path $Fx $Name
+    $code = & curl.exe -s -o $path -w '%{http_code}' $Ft
+    $bytes = (Get-Item $path).Length
+    $text = [IO.File]::ReadAllText($path)
+    $notes = -1
+    try { $notes = @(($text | ConvertFrom-Json).notes).Count } catch { }
+    $ok = ($code -eq '200') -and ($notes -eq 7) -and ($text -notmatch 'Until Phase 9A') -and ($bytes -gt 0)
+    $Rows.Add([pscustomobject]@{ File = $Name; HTTP = $code; Bytes = $bytes; Notes = $notes; OK = $ok })
+    Write-Host "  captured $Name ($code, $bytes bytes, $notes notes)"
+}
+
+$healthy = $false
+try { $health = Invoke-RestMethod "$Api/api/system/health"; $healthy = $true; Write-Host "Backend health: $($health.status)" }
+catch { Write-Host "Backend not reachable at $Api. Start it first: cd backend; .\mvnw.cmd spring-boot:run" -ForegroundColor Red }
+
+if ($healthy) {
+    Write-Host '1. Clean slate, before start'
+    $null = Reset-Cluster
+    Capture 'overview-before-start.json'
+
+    Write-Host '2. Start Experiment 8'
+    $null = Post "$Ft/start" $null
+    $null = Wait-Until { $s = Invoke-RestMethod "$Ft/status"; $s.currentPrimaryId -eq 5 -and @($s.nodes | Where-Object { $_.rejoin -ne 'READY' }).Count -eq 0 } 30 'node 5 serves and every node is READY'
+    Capture 'overview-after-start.json'
+
+    Write-Host '3. Stream, crash, recover, handover'
+    $null = Post "$Ft/stream/start" '{"mode":"SYNCHRONOUS","ratePerSecond":4}'
+    $null = Wait-Until { (Invoke-RestMethod "$Ft/status").stream.acknowledged -ge 10 } 30 '10 updates acknowledged'
+    $null = Post "$Ft/crash-primary" $null
+    $null = Wait-Until { $null -ne (Invoke-RestMethod "$Ft/runs/latest").dataLoss } 60 'the failover run has its data loss'
+    $null = Post "$Ft/recover" $null
+    $null = Wait-Until { $null -ne (Invoke-RestMethod "$Ft/runs/latest").measurements.recoveryMillis } 60 'the recovery is measured'
+    $null = Wait-Until { $s = Invoke-RestMethod "$Ft/status"; $s.currentPrimaryId -eq 5 -and $s.primaryEpoch -eq 4 } 60 'node 5 is primary at epoch 4'
+    $code = & curl.exe -s -o NUL -w '%{http_code}' -X POST "$Ft/stream/stop"
+    Write-Host "  POST $Ft/stream/stop -> $code"
+    $null = Wait-Until { $null -eq (Invoke-RestMethod "$Ft/status").stream.inFlightSequence } 30 'no update in flight'
+    Capture 'overview-after-runs.json'
+
+    Write-Host '4. Clean slate again'
+    $null = Reset-Cluster
+    Capture 'overview-after-reset.json'
+
+    Remove-Item $Body -ErrorAction SilentlyContinue
+    $Rows | Format-Table File, HTTP, Bytes, Notes, OK -AutoSize
+}
+```
+
+</details>
+
+**Smoke check** (running app; Windows PowerShell 5.1, against `http://localhost:8080`; no git; the commands are in the final report of 9A.6):
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 1 | List the scenarios (`Invoke-RestMethod "$Api/api/scenarios"`) | 3 rows: `leader-dies-mid-write` (6 steps), `split-brain-never-happens` (7), `slow-node-under-load` (3) | |
+| 2 | Start "The leader dies mid-write" (`POST .../leader-dies-mid-write/runs`) | `runId` and `scenarioId` (202) | |
+| 3 | Poll `GET .../runs/latest` every 2 s until it is not RUNNING; print each step's state and message, and the verdict | 6 steps PASSED with observed messages (node 5 crashed, node 4 elected and primary at epoch 3, "0 of N confirmed updates were lost"); "Passed: all 6 steps met their expectations."; end state "Nodes 1, 2, 3 and 4 are up; node 5 is down. Node 4 is the leader and the replication primary. The update stream is stopped ..." | |
+| 4 | Open `http://localhost:5173/timeline` | The Scenarios lane shows "Scenario started" ... "Scenario finished: passed", interleaved with the leader change, the promotion and the other modules' events | |
+| 5 | Open `http://localhost:5173/experiments/8-faulttolerance` | "How it works" lists 7 notes; nothing on the page says "Until Phase 9A" (no note under the replica rail) | |
+
+Smoke check run by Swanand on 2026-10-19: steps 1 to 3 passed (3 scenarios listed with 6, 7 and 3 steps; run 1 "The leader dies mid-write" PASSED, 6 of 6 steps: node 5 crashed at epoch 2, node 1 detected it after 2791 ms, node 4 elected (event 612) and primary at epoch 3 (event 629), outage 3566 ms, 0 of 5 confirmed updates lost); steps 4 and 5 (Timeline page, Experiment 8 page) not yet reported.
+
+---
+
 ## Deliberate differences from the legacy code
 
 - **Legacy deviation (Lower-ID Coordinator Acceptance):** When a Bully node receives a `COORDINATOR` announcement, it unconditionally accepts it, even if the announcing node has a lower ID than itself. This faithfully ports a quirk from the legacy `exp04-election` demo.
@@ -808,6 +1084,13 @@ Run by Swanand on 2026-10-17 against the real backend; all 13 steps passed; brow
 - 9A.1: `LeaderFailoverIntegrationTest`'s update stream pauses 50 ms between updates: unpaced, Experiment 5's about 10 events per update overflowed the fixture's 5000-event buffer and evicted the events the test checks.
 - 9A.1: `RoleProviderTest` has 12 tests, not the planned 13: the concurrent "never two primaries" sampler was dropped, because a reader that reads node roles one node after another cannot see an atomic snapshot (Known issues (c)); the revoke-before-grant rule and a direct switch are checked instead.
 - 9A.1: the worst-case failover is detection + election + one promotion = 10300 ms, locally and in the public profile (approved, R7); before, detection + 2 x promotion = 11200 ms.
+- 9A.6: step indexes are 1-based (`index` in the API, `stepIndex` in events), so a verdict reads "Failed at step 4" as the audience counts.
+- 9A.6: the clean-slate reset is not a numbered step. It runs before `SCENARIO_STARTED`; when it fails, every step is SKIPPED and only `SCENARIO_FINISHED` is published.
+- 9A.6: `SCENARIO_FINISHED` is published before the run reads as finished, so a client that sees the end also finds the event on the bus.
+- 9A.6: `endState` is an object `{description, leaderId, primaryId, nodes[{nodeId, status, roles}]}`, not only a sentence. The addendum asked only that it "states" the cluster state; the fields make it usable by the 9A.7 page.
+- 9A.6: `FailoverSteps` is a public Spring `@Component` (not package-private), so Jai's 9A.7 scenarios can reuse the Experiment 8 steps add-only.
+- 9A.6: "never two primaries" is sampled through Experiment 8's own check (`currentState().splitBrain()`, by each node's acting replication role and epoch) every 100 ms, not through the cluster roles. Those are read node by node and can show a revoke-before-grant switch non-atomically (9A.1 Known issues (c)).
+- 9A.6: the public profile runs "A slow node under load" with 400 work units, not 900, because of its load balancing limits (`max-work-units` 500, `max-total-work` 120000).
 - 9A.1: in the frontend tests, the "demoted" state is now taken from the E8c captures `status-after-demotion.json` and `run-sync-recovered.json` (with the stream stopped, built inline and labelled synthetic), because the 9A.1 capture `overview-after-runs.json` shows the state after the handover (node 5 primary again at epoch 4).
 
 ---
@@ -873,3 +1156,4 @@ Run by Swanand on 2026-10-17 against the real backend; all 13 steps passed; brow
 - 2026-10-16 E8d Linux check: clean clone of 8b67a21 on Node 22 in Docker, npm ci, vitest (118 files, 1108 tests), lint and build all exit 0; main chunk 782.67 kB. GitHub CI is still the Linux gate.
 - 2026-10-17 9A.1 done: shared `RoleProvider` in `core/cluster` (LEADER from Experiment 4 only; PRIMARY and BACKUP; ordered leader listeners on `udcf-roles-dispatcher`; `ensureLeader` with a REQUESTED Bully round, 409 `NO_LEADER` when none; `REPLICATION_ROLES_CHANGED`), Experiment 8 promotes the elected leader (selector removed) and hands over to a recovered leader after its resync, L2 verified on real sockets, worst case 10300 ms, four overview fixtures recaptured by Swanand; backend 1912 tests (baseline 1893 - 3 + 22; 0 failures, 1 skipped; `RoleProviderTest`, `ElectionModuleTest`, `FailoverClusterTest`, `LeaderFailoverIntegrationTest`, `FaultToleranceEndToEndTest` 3 runs, 54 tests each, all green), frontend 1244 tests (lint and build exit 0); Windows only, Linux and the manual checklist not yet run; deviations: see the 9A.1 entries under Deviations.
 - 2026-10-17 9A.1 Linux (Docker), run by Swanand on a clean clone of 9fe7a82: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1912 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the five 9A.1 classes x3 (54 tests each, 0 failures); ./mvnw not used because its SHA-256 check failed inside eclipse-temurin:21-jdk although the downloaded distribution matched the pinned hash (wrapper quirk, no repository change); frontend on node:22: npm ci, vitest (128 files, 1244 tests), lint and build exit 0, main chunk 833.08 kB.
+- 2026-10-18 9A.6 done: scenario engine `com.udcf.scenario` (one run at a time on `udcf-scenario-runner`, clean reset with BUSY retry, steps with deadlines observed by bus subscription plus 250 ms polling from action anchors, FAILED then SKIPPED, cleanup in a finally, end state from the cluster, last 10 runs), `/api/scenarios` API and six `scenario` events, scenarios "The leader dies mid-write", "Split-brain that never happens" and "A slow node under load" (all PASSED on real sockets here), the leader-crash end-to-end test (time daemon, coordinator, MPI root, replication primary all follow LEADER_CHANGED by bus sequence), Experiment 8 note 8 removed; backend 1971 tests (baseline 1939 + 32; 0 failures, 1 skipped), frontend 1294 tests passed after the fixture recapture, which came after the first commit (reported by Swanand; before it 1290 of 1294, the 4 failures being the stale overview fixtures' note count), lint 0 problems, build exit 0 (main chunk 859.48 kB); fast mode: no Docker run; CI is the Linux gate.

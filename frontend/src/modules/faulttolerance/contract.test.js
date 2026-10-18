@@ -86,12 +86,13 @@ describe('faulttolerance contract fixtures', () => {
     expect([...offsets].sort((a, b) => a - b)).toEqual(offsets)
   })
 
-  it.each(real.overviews)('%s: settings, the eight glossary ids and the eight notes', (_, overview) => {
+  it.each(real.overviews)('%s: settings, the eight glossary ids and the seven notes', (_, overview) => {
     expect(keys(overview.settings)).toEqual([...SETTINGS_FIELDS].sort())
     expect(overview.glossary.map((g) => g.id)).toEqual(GLOSSARY_IDS)
     overview.glossary.forEach((g) => expect(['measured', 'derived']).toContain(g.kind))
-    expect(overview.notes).toHaveLength(8)
-    expect(overview.notes[NOTE.exp5Interference]).toMatch(/^Until Phase 9A this experiment and Experiment 5 share/)
+    expect(overview.notes).toHaveLength(7)
+    expect(overview.notes.join(' ')).not.toMatch(/Until Phase 9A/)   // note 8 is obsolete since 9A.3
+    expect(overview.notes[NOTE.epochFence]).toMatch(/^Backups refuse any update stamped with an older epoch/)
     expect(overview.notes[NOTE.asyncWindow]).toMatch(/^In asynchronous mode/)
   })
 
