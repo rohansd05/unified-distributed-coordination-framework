@@ -562,6 +562,32 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 4. Leave one site tab open for 20 min, then check Render > Events -> no spin-down in that window, and the next request answers in under 2 s.
 5. On the site, Cluster: crash node 3 -> within about 10 s node 2 shows LEADER; Timeline in arrival order shows the role changes after LEADER_CHANGED.
 
+- [x] 16.2 — measured public deployment recorded, cold-start wording "1 to 2 minutes", `JAVA_TOOL_OPTIONS` in `render.yaml`. Needs: 16.1.
+
+### 16.2 (fast mode)
+
+**What changed:**
+- `docs/deploy/public-deploy.md`: section 6 "Measured" is filled from Rohan's Render run of 2026-10-19 (JVM start 78.004 s, health from cold 94.59 s, warm 0.15 s, 29 of 29 checks OK, 5 of 5 scenarios via the script, leader node 3; memory peak not available on the free tier's Metrics page). New "Known behaviour on the free tier" list and the decision: option (a), the free tier, with the laptop as fallback. Section 2 says the dashboard is the source of truth for environment variables; section 5 says 1 to 2 minutes; section 1 records keep-awake as observed.
+- `render.yaml`: one entry, `JAVA_TOOL_OPTIONS` = `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k` (not secret). `SPRING_PROFILES_ACTIVE: public` was already there; `UDCF_ALLOWED_ORIGINS` stays `sync: false` with no value. Parsed with the installed js-yaml: 3 envVars as expected.
+- `frontend/src/components/layout/WakingBanner.jsx` (Nidhi's 14.1, copy change only, Nidhi informed): "This takes about a minute." -> "This takes 1 to 2 minutes."; the assertion in `AppLayout.test.jsx:230` matches.
+
+**Interfaces for other tracks:** none new. The public site's cold start is 1 to 2 minutes; after a wake-up the top bar shows "Leader: None elected" until the first action that needs a leader.
+
+**Known issues:**
+- "A slow node under load" failed once from the UI at step 3 (round robin 2400 ms was not last: weighted round robin 2006 ms, least connections 2595 ms, least response time 2398 ms). On one shared 0.1 CPU the CPU, not the SLOW node's threads, is the bottleneck. The script run passed (17.2 s).
+- Memory peak on Render is unknown: the free service shows no memory metrics. No OOM, Killed or exit lines in the logs.
+- `docs/deploy/smoke-public.ps1:77` (comment) and `docs/HANDOFF.md:641` still say "about a minute"; not in this step's file list.
+
+**Gaps for owners:**
+- **Swanand (Track B):** calibrate `udcf.scenario.slow-node.work-units` (public: 400) for 3 nodes on one 0.1 CPU, or make step 3 robust to a shared-CPU bottleneck; no step for it is recorded in `track-b-swanand.md` yet.
+
+**Smoke check (Rohan):**
+1. Stop the local backend and run the frontend (`cd frontend; npm run dev`) -> the waking banner reads "... This takes 1 to 2 minutes."
+2. `render.yaml` parses -> after the merge, Render shows no Blueprint error (the agent's js-yaml parse printed 3 envVars).
+3. `docs/deploy/public-deploy.md` section 6 -> no "pending" left in the Measured table.
+
+**Smoke check result (Rohan, 2026-10-20):** 3/3 passed.
+
 ---
 
 ## Progress log
@@ -587,3 +613,4 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-19 9A.9b done: demo script docs/demo/udcf-demo.md (summary, T-30 checklist with role warm-up, nine-part run order with the five scenarios and their real step counts 6/7/3/7/5, 15-minute budget and cut order, recovery table, Q&A crib, three-command card, known limitations); CLAUDE.md Current Position (Phase 9A complete for the 2026-10-23 demo, public lite redeploy to Phase 16, next phase 14) and Layout (reset-cluster.ps1); Status column in the 9A tables of README section 11 and HANDOFF section 11; HANDOFF Appendix A layout; documentation only, no suites run; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 16.1 done: backend/Dockerfile builds on maven:3.9.9-eclipse-temurin-21 (mvn -B -DskipTests package; no ./mvnw) and no longer hard-codes JAVA_TOOL_OPTIONS (Render setting, recommended -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k); application-public.yml header comment only; docs/deploy/public-deploy.md (Render free and Vercel Hobby limits checked by web search 2026-10-19 with links, dashboard settings, environment variables, redeploy, logs, keep-awake, public-profile table, measured table pending) and docs/deploy/smoke-public.ps1 (PS 5.1 parse clean, ASCII only, error paths checked offline; not run against Render here); three-node sweep: nothing breaks, gaps for Nidhi, Swanand, Jai recorded; backend 1976 tests in 261 classes, 0 failures, 0 errors, 1 skipped (surefire reports of this run; no Java file changed); no frontend change; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 16.1b done: smoke-public.ps1 check "Exp 3 Berkeley round" answered 415 because PS 5.1 Invoke-WebRequest sends Content-Type application/x-www-form-urlencoded on a body-less POST and the endpoint has @RequestBody(required = false), which only skips the body when no Content-Type is sent; the check now sends {} as application/json (what the frontend sends; no module start needed, the threshold falls back to the configured default); the other six body-less POSTs (rmi/mpi/matrix/faulttolerance start, scenario runs, cluster reset) take no @RequestBody, so no change; PS 5.1.26100 parse clean; no backend or frontend change; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-20 16.2 done: docs/deploy/public-deploy.md section 6 filled from Rohan's Render run of 2026-10-19 (JVM start 78.004 s, health from cold 94.59 s, warm 0.15 s, 29 of 29 checks, 5 of 5 scenarios via the script, leader node 3, memory peak not available), known free-tier behaviour, decision option (a) with the laptop as fallback, dashboard as source of truth; render.yaml adds JAVA_TOOL_OPTIONS (js-yaml parse OK); waking banner says "1 to 2 minutes" (Nidhi's 14.1, copy only) with its test; frontend 1377 tests in 141 files, lint clean, build OK; no backend change; fast mode: no Docker run; CI is the Linux gate

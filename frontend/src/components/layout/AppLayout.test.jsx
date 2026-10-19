@@ -227,7 +227,7 @@ describe('AppLayout while the backend wakes from a cold start (14.1)', () => {
 
     const banner = screen.getByTestId('waking-banner')
     expect(within(banner).getByRole('status').textContent).toBe(
-      'The backend is waking up — free hosting sleeps after 15 minutes without visitors. This takes about a minute.')
+      'The backend is waking up — free hosting sleeps after 15 minutes without visitors. This takes 1 to 2 minutes.')
     expect(screen.getByTestId('waking-elapsed').textContent).toBe('12 s')
     act(() => { vi.advanceTimersByTime(1000) })
     expect(screen.getByTestId('waking-elapsed').textContent).toBe('13 s')

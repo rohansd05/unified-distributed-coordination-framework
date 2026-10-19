@@ -28,8 +28,8 @@ Render directly for REST and WebSocket; Vercel only serves files (HANDOFF 10.2).
 - The WebSocket rule makes an open page keep the service awake: the STOMP client sends a heartbeat
   every 10 s (`frontend/src/services/stomp/StompProvider.jsx:28`, `heartbeatOutgoing: 10000`; the
   broker agrees 10 s in `backend/src/main/java/com/udcf/web/WebSocketConfig.java:61`). That is an
-  inbound WebSocket message every 10 s. This is inferred from Render's documented rule; confirm it
-  with smoke check 4 in the track file.
+  inbound WebSocket message every 10 s. Observed on 2026-10-19: no spin-down with a tab open
+  (section 6).
 
 ---
 
@@ -58,10 +58,16 @@ into the repository.
 |---|---|---|
 | `SPRING_PROFILES_ACTIVE` | `public` | loads `application-public.yml` (3 nodes, smaller limits) |
 | `UDCF_ALLOWED_ORIGINS` | the Vercel production origin, `https://<project>.vercel.app` (no trailing slash; comma-separated if more than one) | CORS for `/api/**` and the allowed origins of `/ws`. Preview URLs are refused on purpose. |
-| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k` (recommended) | JVM memory for 512 MB: heap at most about 358 MB, leaving room for metaspace, thread stacks and the socket buffers of 3 nodes; Serial GC has no extra GC threads and the smallest footprint on 0.1 CPU; 512 KB thread stacks. The JVM prints "Picked up JAVA_TOOL_OPTIONS: ..." as the first log line, which proves it was read. |
+| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k` (set and confirmed in the logs on 2026-10-19) | JVM memory for 512 MB: heap at most about 358 MB, leaving room for metaspace, thread stacks and the socket buffers of 3 nodes; Serial GC has no extra GC threads and the smallest footprint on 0.1 CPU; 512 KB thread stacks. The JVM prints "Picked up JAVA_TOOL_OPTIONS: ..." as the first log line, which proves it was read. |
 | `PORT` | do not set | Render sets it; the backend listens on `${PORT:8080}` |
 | `UDCF_CLUSTER_SIZE` | do not set | not referenced by name, but Spring's relaxed binding maps it onto `udcf.cluster.size` and it would override the profile's 3 |
 | `LOGGING_LEVEL_COM_UDCF` | unset; `DEBUG` only while troubleshooting | log level of `com.udcf` (relaxed binding of `logging.level.com.udcf`). The `LOG_LEVEL_UDCF` name in `.env.example` is not read by the backend. |
+
+**The dashboard is the source of truth.** `render.yaml` lists the two non-secret values
+(`SPRING_PROFILES_ACTIVE`, `JAVA_TOOL_OPTIONS`, since 16.2) so they are written down, and declares
+`UDCF_ALLOWED_ORIGINS` with `sync: false` (no value in the repository). The service was created in
+the dashboard (step 2.5); if it is not linked to the Blueprint, Render does not read `render.yaml`
+at all. If the two ever differ, the dashboard value is what runs: fix `render.yaml` to match it.
 
 The Dockerfile (16.1) no longer sets `JAVA_TOOL_OPTIONS`; it builds with `maven:3.9.9-eclipse-temurin-21`
 (`mvn -B -DskipTests package`, because the wrapper's checksum check fails inside Docker, as in
@@ -149,8 +155,8 @@ is static. Browser problems (CORS, WebSocket) show in the browser's developer to
 
 ## 5. Before a demo on the public site
 
-1. **T-10:** open the Vercel URL. The first request wakes Render (about a minute; the top bar shows
-   the backend as unreachable or reconnecting until it is up). Keep that tab open: its WebSocket
+1. **T-10:** open the Vercel URL. The first request wakes Render (1 to 2 minutes, measured 94.59 s;
+   the waking banner shows until it is up). Keep that tab open: its WebSocket
    heartbeat keeps the service awake (section 1).
 2. **T-5:** Overview shows 3 nodes up. Do the warm-up from `docs/demo/udcf-demo.md` section b
    (Exp 3 round, Exp 7 run, Exp 9 collective, Start experiment 8); expect "leader: node 3".
@@ -175,13 +181,41 @@ experiment 8, an MPI broadcast, a 25 x 25 matrix run), then starts every scenari
 `GET /api/scenarios` and polls it to the end. It ends with the verdicts and a table: check, HTTP
 code, seconds, OK.
 
-**Measured** (to be filled from Rohan's run; nothing below is measured yet):
+**Measured** (Render free tier, profile `public`, Rohan's run of 2026-10-19):
 
 | Check | Result |
 |---|---|
-| Cold start (health from cold) | _pending_ |
-| Warm health | _pending_ |
-| Ten experiment actions OK | _pending_ / 13 checks |
-| Scenarios passed | _pending_ / 5 |
-| Slowest scenario | _pending_ |
-| Stayed awake with a page open for 20 min | _pending_ |
+| Build and deploy | 3 min 27 s |
+| JVM flags | log: "Picked up JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k" |
+| Profile | log: "The following 1 profile is active: "public"" |
+| JVM start | "Started UdcfBackendApplication in 78.004 seconds (process running for 86.986)" |
+| Cold start (health from cold, script) | 94.59 s (1 try) |
+| Warm health | 0.15 s |
+| All checks (script) | 29 of 29 OK |
+| First leader | node 3 |
+| Scenarios passed (script) | 5 of 5: leader-dies-mid-write 6.1 s; split-brain-never-happens 5.8 s; slow-node-under-load 17.2 s; mapreduce-incident 5.0 s; matrix-leader-crash 4.9 s |
+| Slowest scenario | slow-node-under-load, 17.2 s |
+| Scenarios from the UI | leader-dies-mid-write PASSED in 7.2 s; slow-node-under-load once FAILED honestly at step 3 (below) |
+| Ten experiments from the deployed site | all worked |
+| Leader stability while idle | no leader change without a crash |
+| Memory peak | not available: Render's Metrics page shows no memory data for this free service. The logs have no OutOfMemoryError, Killed or exit lines; Events shows no restarts other than deploys. |
+| Stayed awake with a page open | yes: no spin-down seen with a tab open; no OOM in the logs |
+
+The honest UI failure of "A slow node under load", step 3 (round robin is expected to be last):
+round robin 2400 ms, weighted round robin 2006 ms, least connections 2595 ms, least response time
+2398 ms. Round robin was not last, so the step failed as designed.
+
+### Known behaviour on the free tier
+
+- **Cold start about 1.5 minutes.** The JVM start alone takes about 78 s at 0.1 CPU; health
+  answered after 94.59 s. The waking banner says "1 to 2 minutes".
+- **"Leader: None elected" until the first action.** After a wake-up the top bar shows no leader:
+  elections start on demand (reads never elect). The first action that needs a leader elects node 3.
+- **"A slow node under load" can fail honestly.** The three nodes share one 0.1 CPU, so the shared
+  CPU, not the SLOW node's threads, becomes the bottleneck, and every strategy slows down alike.
+  Swanand is calibrating it (no step recorded yet in `docs/tracks/track-b-swanand.md`).
+- **Open the site at least 10 minutes before a demo and keep one tab open.** The tab's WebSocket
+  heartbeat keeps the service awake (section 1).
+
+**Decision (2026-10-19):** option (a), the free tier, with the laptop (`docs/demo/udcf-demo.md`) as
+the fallback.
