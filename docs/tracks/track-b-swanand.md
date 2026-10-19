@@ -928,6 +928,8 @@ Smoke check run by Swanand on 2026-10-19: steps 1 to 3 passed (3 scenarios liste
 | 4 | On the Cluster page, crash the leader node | Within about 10 s: Node status shows that node Down; "Elections won per node" gains a bar or count for the new leader; "Elections won by trigger" steps up with `LEADER_FAILURE`; Election duration shows a value | |
 | 5 | `powershell -ExecutionPolicy Bypass -File scripts\compose-down.ps1`, then `docker ps` | "Done: no UDCF containers are left."; `docker ps` lists no `udcf-` containers | |
 
+Smoke check run by Swanand on 2026-10-20: 5/5 passed.
+
 ---
 
 ## Monitoring
