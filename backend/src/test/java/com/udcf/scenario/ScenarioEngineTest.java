@@ -205,7 +205,8 @@ class ScenarioEngineTest {
 
         assertThat(run.state()).isEqualTo(RunState.FAILED);
         assertThat(run.steps().get(0).message()).matches("Waited \\d+\\.\\d s for the marker, but it did not happen\\.");
-        assertThat(run.steps().get(0).durationMs()).isGreaterThanOrEqualTo(300);
+        // StepContext truncates nanoseconds to whole milliseconds, so a 300 ms deadline may read as 299 ms.
+        assertThat(run.steps().get(0).durationMs()).isGreaterThanOrEqualTo(300 - 5);
     }
 
     @Test

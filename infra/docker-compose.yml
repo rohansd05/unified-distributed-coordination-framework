@@ -1,0 +1,65 @@
+# UDCF full local system (docs/HANDOFF.md 10.1): backend, frontend, Prometheus, Grafana.
+# From the repository root: scripts\compose-up.ps1 (or: docker compose -f infra/docker-compose.yml up -d --build)
+# Relative paths resolve against this folder (infra/).
+
+name: udcf
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      # Default (five-node) cluster; the local profile exposes /actuator/prometheus.
+      SPRING_PROFILES_ACTIVE: local
+      # The browser reaches the backend only through the frontend's nginx proxy on port 5173.
+      UDCF_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../infra/frontend.Dockerfile
+      args:
+        # Same origin as the page: nginx proxies /api and /ws to the backend.
+        VITE_API_BASE_URL: http://localhost:5173
+        VITE_WS_URL: ws://localhost:5173/ws
+        VITE_GRAFANA_URL: http://localhost:3000/d/udcf-cluster/udcf-cluster
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - backend
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      # Local demo only: anyone on this machine can view dashboards without logging in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change_me_locally}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/udcf.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"

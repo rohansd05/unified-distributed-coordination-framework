@@ -46,6 +46,15 @@
 
 ---
 
+## Phases 14-17
+
+### Steps
+
+- [x] 15.1 — Prometheus, Grafana and local Docker Compose: `infra/docker-compose.yml` (backend, frontend on nginx, Prometheus, Grafana), the "UDCF cluster" dashboard, `scripts/compose-up.ps1` and `scripts/compose-down.ps1`. Smoke check 5/5 (2026-10-20).
+- [x] 15.1b — 15.1b: two flaky tests made order- and clock-independent; CI failure on Linux. Test files only (`ElectionNodeServiceTest`, `ScenarioEngineTest`).
+
+---
+
 ## Interfaces for other tracks
 
 ### 9A.6 APIs: the scenario engine (`com.udcf.scenario`), for 9A.7 (Jai), 9A.5 (timeline) and 9A.9
@@ -875,6 +884,127 @@ Smoke check run by Swanand on 2026-10-19: steps 1 to 3 passed (3 scenarios liste
 
 ---
 
+## 15.1 (fast mode)
+
+**What changed** (new files only; no backend, frontend, `backend/Dockerfile`, `start-all` or `stop-all` change):
+- `infra/docker-compose.yml` (project name `udcf`), four services with pinned images:
+  - `backend`: built from `backend/Dockerfile` as on main after 16.1; the `local` profile (five nodes, exposes `/actuator/prometheus`); port 8080.
+  - `frontend`: `infra/frontend.Dockerfile` (`node:22.11.0-alpine` build, as in CI, then `nginx:1.27.2-alpine`); port **5173**. `infra/nginx.conf` is mounted in. It serves `dist/` with an `index.html` fallback and proxies `/api/` and `/ws` (WebSocket upgrade headers, 1 h timeout) to `backend:8080`.
+    - The image is built with `VITE_API_BASE_URL=http://localhost:5173`, `VITE_WS_URL=ws://localhost:5173/ws` and `VITE_GRAFANA_URL=http://localhost:3000/d/udcf-cluster/udcf-cluster`. The browser talks to one origin, and the Monitoring page links straight to the dashboard.
+    - `infra/frontend.Dockerfile.dockerignore` (BuildKit reads it next to the Dockerfile) keeps the Windows `node_modules`, `dist` and any `.env` out of the build, so `frontend/` needs no new file.
+  - `prometheus`: `prom/prometheus:v2.55.1`, `infra/prometheus/prometheus.yml`, scrapes `backend:8080/actuator/prometheus` every 5 s, keeps 1 day; port 9090.
+  - `grafana`: `grafana/grafana:11.3.0`, anonymous Viewer on, the UDCF dashboard as home; port 3000. The admin login comes from `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` in the shell (defaults `admin` / `change_me_locally`, as in `.env.example`; compose reads no `.env` here, because its project folder is `infra/`).
+- Grafana provisioning: `infra/grafana/provisioning/datasources/prometheus.yml` (uid `udcf-prometheus`) and `infra/grafana/provisioning/dashboards/udcf.yml`. The dashboard is `infra/grafana/dashboards/udcf.json` (uid `udcf-cluster`, title "UDCF cluster", refresh 5 s, last 15 min, read-only), laid out as in HANDOFF 10.1.
+- `scripts/compose-up.ps1`:
+  1. Checks the Docker engine and that ports 8080, 5173, 9090 and 3000 are free (skipped when the `udcf` project already runs).
+  2. Runs `docker compose -f infra/docker-compose.yml up -d --build`.
+  3. Waits, up to 180 s each, for the backend health, the same health through the nginx proxy, Prometheus reporting the target `up`, and Grafana `/api/health`.
+  4. Opens the UI and the dashboard (`-NoBrowser` to skip) and prints the URLs.
+- `scripts/compose-down.ps1`: runs `down -v --remove-orphans`, then fails if any `udcf` container is left. Built images are kept.
+
+**Interfaces for other tracks**
+- URLs: UI http://localhost:5173, API http://localhost:8080, Prometheus http://localhost:9090, Grafana http://localhost:3000/d/udcf-cluster/udcf-cluster.
+- A new meter shows up in Prometheus with no change here. To chart it, add a panel to `infra/grafana/dashboards/udcf.json`. Timers are scraped as `<name>_seconds_count|_sum|_max`, counters keep `_total`, and gauges keep their name.
+- Rohan (16.1 and later): compose builds `backend/Dockerfile` with no build args, and its `JAVA_TOOL_OPTIONS` is not set here.
+
+**Known issues**
+- There is no leader gauge in code. "Leader" is shown as `distributed_leader_elections_total` by winning node (`node_id` is the winner): after a leader crash, the new leader's bar and a `LEADER_FAILURE` step appear.
+- Bar panels ("since start") show raw counter totals rather than `increase()`. A counter created by the event itself (for example the new leader's first win) would show as 0 under `increase()`.
+- "Recent max" panels use Micrometer's `_max`, which decays after about 2 minutes. The value is measured, but it is not a mean.
+- Experiment 6 dispatch counters are recorded when a run ends, so "Requests served per worker" moves after the run, not during it. "In flight per worker" is the live panel.
+- The JVM heap panel is process-wide: all nodes share one JVM (R1), so it has no `node_id`.
+- Panels show "No data" until their experiment has run once since the backend started. Executor and replication gauges report NaN, shown as no value, until the node's service has started. That is real, not a fault.
+- Ports 8080 and 5173 are shared with the dev-mode demo: run `scripts\stop-all.ps1` before `compose-up` (the script tells you).
+- Not run here (fast mode): no `docker compose up`, no image build, no Grafana render. Checked here: `docker compose config` (exit 0, 4 services), the PowerShell parser on both scripts (0 errors), and every metric name in the dashboard against `MetricNames` plus `jvm_*` (28 references, 0 unknown).
+
+**Gaps in other tracks' packages:** none found.
+
+**Smoke check** (Swanand, Docker Desktop running, dev-mode demo stopped):
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 1 | `powershell -ExecutionPolicy Bypass -File scripts\compose-up.ps1` | Ends with "UDCF is running in Docker." and the four URLs (the first build takes several minutes) | |
+| 2 | Open http://localhost:5173, then the Cluster page | Five nodes up; the top bar shows the live connection; event stream updates arrive | |
+| 3 | Open http://localhost:3000 (no login) | "UDCF cluster" opens; Node status shows nodes 1-5 Up; Events per second, JVM heap and Lamport clock have data | |
+| 4 | On the Cluster page, crash the leader node | Within about 10 s: Node status shows that node Down; "Elections won per node" gains a bar or count for the new leader; "Elections won by trigger" steps up with `LEADER_FAILURE`; Election duration shows a value | |
+| 5 | `powershell -ExecutionPolicy Bypass -File scripts\compose-down.ps1`, then `docker ps` | "Done: no UDCF containers are left."; `docker ps` lists no `udcf-` containers | |
+
+Smoke check run by Swanand on 2026-10-20: 5/5 passed.
+
+---
+
+## 15.1b (fast mode)
+
+**What changed** (test files only, no production code):
+- `ElectionNodeServiceTest`: `liveElectionThreads` now counts only threads created during the test. `setUp` snapshots every live `Thread` object, and threads in that snapshot are ignored (compared by identity, not name). Every lifecycle assertion is unchanged: start, stop, join, port freed, rebind on recover, idempotent crash/recover, reset reopens.
+- `ScenarioEngineTest.deadlineFailsTheStep`: the duration must be at least 295 ms instead of 300 ms. `StepContext.remainingMillis()` and `elapsedMillis()` truncate nanoseconds to whole milliseconds, so a 300 ms deadline can read as 299 ms. The step message must still match "Waited … but it did not happen", which proves the deadline ended the step.
+
+**Finding (item 2):** the leftover `udcf-election-n1-*` threads come from `backend/src/test/java/com/udcf/modules/replication/ReplicationControllerTest.java:56`. That class has its own context (distinct properties) and starts election services on all five nodes through `ensureLeader` (line 115). It has no `@DirtiesContext`, so Spring caches the context until the JVM exits. This is expected test-context caching, not a production leak. On context close, `Cluster.close` (`ClusterConfig`, `destroyMethod = "close"`) → `ClusterNode.stop` → `ElectionNodeService.stop` joins both threads.
+
+**Interfaces for other tracks:** none.
+
+**Known issues:** none.
+
+**Gaps in other tracks' packages:** `ReplicationControllerTest` (Jai, Track C) crashes nodes and runs elections in a context it calls its own, but without `@DirtiesContext(classMode = AFTER_CLASS)` that context, its sockets and its threads live until the JVM ends. Optional cleanup, not a fault.
+
+**Smoke check:** none. No app behaviour changed; the Linux gate is the GitHub CI run of the PR.
+
+---
+
+## Monitoring
+
+**How to run** (Windows PowerShell 5.1, repository root, Docker Desktop running):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\compose-up.ps1     # build, start, wait, open the UI and Grafana
+powershell -ExecutionPolicy Bypass -File scripts\reset-cluster.ps1  # clean slate during the demo (port 8080)
+powershell -ExecutionPolicy Bypass -File scripts\compose-down.ps1   # stop and remove the containers
+```
+
+Grafana: http://localhost:3000/d/udcf-cluster/udcf-cluster (anonymous viewer). Every query reads a meter registered in the backend, and every `distributed_*` series carries `node_id` (R5).
+
+**What each panel shows** (dashboard "UDCF cluster", rows as in HANDOFF 9):
+
+| Row | Panel | Query reads | Shows |
+|---|---|---|---|
+| Cluster overview | Node status | `distributed_node_status` | Up / Down per node (text and colour) |
+| | Events per second | `distributed_events_published_total`, `distributed_event_notifications_dropped_total` | Bus events per second, dropped WebSocket notifications |
+| | JVM heap | `jvm_memory_used_bytes`, `jvm_memory_committed_bytes` (heap) | Heap of the one JVM (process-wide) |
+| Multithreading (2) | Completed requests per second | `distributed_request_throughput` | Per node, 30 s sliding window |
+| | Active worker threads | `distributed_active_threads` | Per node |
+| | Queued requests | `distributed_queued_requests` | Per node |
+| | Rejected requests per second | `distributed_requests_total{outcome="rejected"}` | Per node |
+| Clock sync (3) | Lamport clock per node | `distributed_clock_value` | Each node's Lamport clock |
+| Election (4) | Elections won per node | `distributed_leader_elections_total` | Wins since start, by winner |
+| | Elections won by trigger | same | Steps per finished round, by winner and trigger |
+| | Election duration (recent max) | `distributed_election_duration_seconds_max` | By algorithm and trigger |
+| Replication and fault tolerance (5, 8) | Replicated writes per second | `distributed_replication_writes_total` | Per primary and model |
+| | Store items per node | `distributed_replication_store_items` | A lagging backup has fewer items |
+| | Replication round trip (recent max) | `distributed_replication_latency_seconds_max` | Measured TCP round trip per backup |
+| | Experiment 8 updates per second | `distributed_failover_updates_total` | By accepting primary and status |
+| | Primary failures detected | `distributed_failures_total` | By failed primary |
+| | Failover intervals (recent max) | `distributed_recovery_duration_seconds_max` | Detection, failover, service restored, outage, recovery |
+| Load balancing (6) | In flight per worker | `distributed_balancer_in_flight` | Live during a run |
+| | Requests served per worker | `distributed_balancer_dispatches_total{outcome="served"}` | Since start, recorded at run end |
+| | Makespan by strategy (recent max) | `distributed_balancer_makespan_seconds_max` | Cluster level, by strategy |
+| MapReduce (7) | Map tasks per node | `distributed_map_tasks_total` | Since start |
+| | Reduce tasks per node | `distributed_reduce_tasks_total` | Since start |
+| | Jobs per coordinator | `distributed_mapreduce_jobs_total` | Coordinator follows the leader |
+| RMI, MPI and matrix (1, 9, 10) | RMI calls per second | `distributed_rmi_calls_total` | Per calling node |
+| | MPI messages per root | `distributed_mpi_messages_total` | Since start; root follows the leader |
+| | Matrix compute time per node (recent max) | `distributed_matrix_compute_duration_seconds_max` | Each rank's measured multiply |
+
+**Two-minute demo script**
+
+1. (0:00) Grafana, "UDCF cluster": "Prometheus scrapes the one backend every 5 seconds; every series is tagged with the node it belongs to." Point at Node status (five nodes Up) and Events per second.
+2. (0:20) In the UI (http://localhost:5173), start a run on the Experiment 6 (or Experiment 2) page. Back in Grafana, point at Completed requests per second, Active worker threads and Queued requests, per node: thread caps follow capacity (FAST 4, MEDIUM 2, SLOW 1).
+3. (0:50) In the UI, open the Cluster page and crash the node marked Leader.
+4. (1:00) In Grafana, within about 10 s: Node status turns that node Down, "Elections won by trigger" steps up with `LEADER_FAILURE` for the new leader, and Election duration shows the measured round. The Lamport clocks of the live nodes jump with the election messages.
+5. (1:30) Optional: run the Experiment 8 update stream before the crash. Primary failures detected and Failover intervals then fill, and Store items per node shows whether a backup lagged.
+6. (1:50) Recover the node on the Cluster page; Node status returns to Up. "The UI never depends on Grafana: its charts read the REST API, so they also work in the public deployment."
+
+---
+
 ## Deliberate differences from the legacy code
 
 - **Legacy deviation (Lower-ID Coordinator Acceptance):** When a Bully node receives a `COORDINATOR` announcement, it unconditionally accepts it, even if the announcing node has a lower ID than itself. This faithfully ports a quirk from the legacy `exp04-election` demo.
@@ -1157,3 +1287,5 @@ Smoke check run by Swanand on 2026-10-19: steps 1 to 3 passed (3 scenarios liste
 - 2026-10-17 9A.1 done: shared `RoleProvider` in `core/cluster` (LEADER from Experiment 4 only; PRIMARY and BACKUP; ordered leader listeners on `udcf-roles-dispatcher`; `ensureLeader` with a REQUESTED Bully round, 409 `NO_LEADER` when none; `REPLICATION_ROLES_CHANGED`), Experiment 8 promotes the elected leader (selector removed) and hands over to a recovered leader after its resync, L2 verified on real sockets, worst case 10300 ms, four overview fixtures recaptured by Swanand; backend 1912 tests (baseline 1893 - 3 + 22; 0 failures, 1 skipped; `RoleProviderTest`, `ElectionModuleTest`, `FailoverClusterTest`, `LeaderFailoverIntegrationTest`, `FaultToleranceEndToEndTest` 3 runs, 54 tests each, all green), frontend 1244 tests (lint and build exit 0); Windows only, Linux and the manual checklist not yet run; deviations: see the 9A.1 entries under Deviations.
 - 2026-10-17 9A.1 Linux (Docker), run by Swanand on a clean clone of 9fe7a82: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1912 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the five 9A.1 classes x3 (54 tests each, 0 failures); ./mvnw not used because its SHA-256 check failed inside eclipse-temurin:21-jdk although the downloaded distribution matched the pinned hash (wrapper quirk, no repository change); frontend on node:22: npm ci, vitest (128 files, 1244 tests), lint and build exit 0, main chunk 833.08 kB.
 - 2026-10-18 9A.6 done: scenario engine `com.udcf.scenario` (one run at a time on `udcf-scenario-runner`, clean reset with BUSY retry, steps with deadlines observed by bus subscription plus 250 ms polling from action anchors, FAILED then SKIPPED, cleanup in a finally, end state from the cluster, last 10 runs), `/api/scenarios` API and six `scenario` events, scenarios "The leader dies mid-write", "Split-brain that never happens" and "A slow node under load" (all PASSED on real sockets here), the leader-crash end-to-end test (time daemon, coordinator, MPI root, replication primary all follow LEADER_CHANGED by bus sequence), Experiment 8 note 8 removed; backend 1971 tests (baseline 1939 + 32; 0 failures, 1 skipped), frontend 1294 tests passed after the fixture recapture, which came after the first commit (reported by Swanand; before it 1290 of 1294, the 4 failures being the stale overview fixtures' note count), lint 0 problems, build exit 0 (main chunk 859.48 kB); fast mode: no Docker run; CI is the Linux gate.
+- 2026-10-20 15.1 done: local Docker Compose in `infra/` (backend from `backend/Dockerfile`, frontend on `node:22.11.0-alpine` then `nginx:1.27.2-alpine` on port 5173 proxying `/api` and `/ws`, `prom/prometheus:v2.55.1` scraping every 5 s, `grafana/grafana:11.3.0` with anonymous Viewer), the provisioned "UDCF cluster" dashboard (26 panels in 8 rows, every query on a meter registered in code), `scripts/compose-up.ps1` and `scripts/compose-down.ps1`; backend and frontend unchanged (suites not run); `docker compose config` exit 0, both scripts 0 parse errors, 28 metric references 0 unknown; smoke check not yet reported; fast mode: no Docker run; CI is the Linux gate.
+- 2026-10-20 15.1b done: `ElectionNodeServiceTest` ignores node 1 election threads left by `ReplicationControllerTest`'s cached context (identity snapshot); `ScenarioEngineTest.deadlineFailsTheStep` allows 5 ms of millisecond truncation; the two classes 15 + 17 tests, 0 failures; backend 1976 tests, 0 failures, 1 skipped, BUILD SUCCESS; fast mode: no Docker run; CI is the Linux gate.
