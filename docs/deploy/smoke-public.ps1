@@ -74,7 +74,7 @@ function Test-Action([string]$Label, [string]$Method, [string]$Path, $Body, [int
 
 Write-Host "UDCF public smoke run against $Api  ($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))"
 
-# 1. Health from cold: retry until UP (a free Render service takes about a minute to spin up).
+# 1. Health from cold: retry until UP (a free Render service takes 1 to 2 minutes (measured 94.6 s) to spin up).
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $h = $null; $tries = 0
 while ($sw.Elapsed.TotalSeconds -lt 240) {

@@ -588,6 +588,34 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 
 **Smoke check result (Rohan, 2026-10-20):** 3/3 passed.
 
+- [x] 17.3 — demo script for the deployed site (laptop as fallback), README "Live demo", leftover cold-start wording. Needs: 16.2, 15.1, 17.1.
+
+### 17.3 (fast mode)
+
+**What changed** (documentation only):
+- `docs/demo/udcf-demo.md` rewritten around the deployed site: a site-versus-laptop table (3 nodes, leader 3 then 2; laptop 5 nodes, leader 5 then 4); section b now on the site (T-15 open the site and keep one tab open, T-12 dry run, T-10 reset from the Overview button, T-5 warm-up starting with a Bully election on Exp 4, T-3 check "leader: node 3" and every role "node 3 matches"); section c the same nine parts and speakers with site node numbers, and what to say when "A slow node under load" fails on the shared 0.1 CPU (no 16.3 in Swanand's track file, so it is not called reliable); e) Recovery for the site (waking banner, 409, refresh on CORS/WebSocket errors, then the laptop); new f) examiner table, one action per experiment with labels read from the page code; g) Fallback (start-all, about 2 minutes, 5 nodes, switch after 3 minutes or repeated errors); h) Monitoring from the laptop with Compose (Swanand's 15.1, merged, smoke 5/5), dashboard "UDCF cluster" and its panels. Recovery kept as section e because `docs/demo/viva-script.md:181` refers to it.
+- `README.md`: "Live demo" section only (public URL, 3 nodes, 1 to 2 minutes measured 94.6 s, "Leader: None elected" until the first action, link to the quick start).
+- `docs/deploy/smoke-public.ps1:77` (comment) and `docs/HANDOFF.md:641`: "about a minute" -> "1 to 2 minutes (measured 94.6 s)". The smoke script still parses (0 errors).
+
+**Checked on the live site (read-only, 2026-10-20):** top bar Mode "public", "Leader: None elected", "Nodes up 3/3"; Overview "Every experiment runs on the same 3 nodes." No action was clicked.
+
+**Interfaces for other tracks:** none (documentation).
+
+**Known issues:**
+- Durations in the run order are still estimates; failover time on the site was not measured.
+- "A slow node under load" remains unreliable on the site until Swanand records a calibration.
+
+**Gaps for owners:**
+- **Swanand (Track B):** still no step recorded for calibrating "A slow node under load" on the site (public `slow-node.work-units` 400).
+- **Jai (Track C):** `docs/demo/viva-script.md:16` says "Do sections b) ... from T-30 to T-15: start the app"; section b now prepares the deployed site and the laptop start is in section g.
+
+**Smoke check (Rohan):**
+1. Follow section b on the live site exactly -> every step works as written; Overview shows "leader: node 3" and every role "node 3 matches".
+2. Three rows of the examiner table (section f) on the site -> each shows what the table says.
+3. README on GitHub -> "Live demo" renders and the link opens the site.
+4. Fallback steps (section g) on the laptop -> "UDCF demo is running.", five nodes, Bully elects node 5.
+5. `powershell -NoProfile -Command "[System.Management.Automation.Language.Parser]::ParseFile('docs/deploy/smoke-public.ps1',[ref]$null,[ref]$null) | Out-Null; 'ok'"` -> prints `ok`.
+
 ---
 
 ## Progress log
@@ -614,3 +642,4 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-19 16.1 done: backend/Dockerfile builds on maven:3.9.9-eclipse-temurin-21 (mvn -B -DskipTests package; no ./mvnw) and no longer hard-codes JAVA_TOOL_OPTIONS (Render setting, recommended -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k); application-public.yml header comment only; docs/deploy/public-deploy.md (Render free and Vercel Hobby limits checked by web search 2026-10-19 with links, dashboard settings, environment variables, redeploy, logs, keep-awake, public-profile table, measured table pending) and docs/deploy/smoke-public.ps1 (PS 5.1 parse clean, ASCII only, error paths checked offline; not run against Render here); three-node sweep: nothing breaks, gaps for Nidhi, Swanand, Jai recorded; backend 1976 tests in 261 classes, 0 failures, 0 errors, 1 skipped (surefire reports of this run; no Java file changed); no frontend change; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 16.1b done: smoke-public.ps1 check "Exp 3 Berkeley round" answered 415 because PS 5.1 Invoke-WebRequest sends Content-Type application/x-www-form-urlencoded on a body-less POST and the endpoint has @RequestBody(required = false), which only skips the body when no Content-Type is sent; the check now sends {} as application/json (what the frontend sends; no module start needed, the threshold falls back to the configured default); the other six body-less POSTs (rmi/mpi/matrix/faulttolerance start, scenario runs, cluster reset) take no @RequestBody, so no change; PS 5.1.26100 parse clean; no backend or frontend change; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-20 16.2 done: docs/deploy/public-deploy.md section 6 filled from Rohan's Render run of 2026-10-19 (JVM start 78.004 s, health from cold 94.59 s, warm 0.15 s, 29 of 29 checks, 5 of 5 scenarios via the script, leader node 3, memory peak not available), known free-tier behaviour, decision option (a) with the laptop as fallback, dashboard as source of truth; render.yaml adds JAVA_TOOL_OPTIONS (js-yaml parse OK); waking banner says "1 to 2 minutes" (Nidhi's 14.1, copy only) with its test; frontend 1377 tests in 141 files, lint clean, build OK; no backend change; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-20 17.3 done: docs/demo/udcf-demo.md rewritten for the deployed site as the main run (3 nodes, leader 3 then 2, T-15 open and keep one tab, T-5 Bully warm-up, slow-node wording for the shared 0.1 CPU), laptop fallback (start-all, 5 nodes, leader 5 then 4), Monitoring from Compose, examiner table for the ten experiments, recovery for the site; README "Live demo"; "about a minute" -> "1 to 2 minutes (measured 94.6 s)" in smoke-public.ps1:77 and HANDOFF.md:641 (smoke script 0 parse errors); documentation only, no suites run; fast mode: no Docker run; CI is the Linux gate
