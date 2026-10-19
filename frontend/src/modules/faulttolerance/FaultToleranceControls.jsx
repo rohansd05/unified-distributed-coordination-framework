@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SimulatedBadge } from '@/components/experiment/SimulatedBadge'
+import { ProblemAlert } from '@/components/ProblemAlert'
 import { cn } from '@/lib/utils'
 import { FIELD_LABELS } from './faultToleranceApi'
 import { words } from './faultToleranceModel'
@@ -18,32 +19,12 @@ function ResetLink() {
   )
 }
 
-/**
- * Experiment 8's problems as the page tells them (E8d Q4: module-specific; Experiments 1 and 9
- * keep their own private copies). Busy, a known conflict and a timeout are calm (warning
- * style); anything else is an error. Field errors are listed by field name.
- */
-function ProblemAlert({ problem, alertRef }) {
-  if (!problem) return null
-  const calm = problem.kind === 'busy' || problem.kind === 'conflict' || problem.kind === 'timeout'
+/** Experiment 8's problems: the shared ProblemAlert, with the page's field names and the reset link. */
+function FaultProblem({ problem, alertRef }) {
   return (
-    <div ref={alertRef} tabIndex={-1} role="alert" data-testid="action-error" data-kind={problem.kind}
-      data-reason={problem.reason ?? undefined}
-      className={cn('rounded-md border p-3 text-sm focus:outline-none',
-        calm ? 'border-warning/60 bg-warning/10' : 'border-destructive/40 bg-destructive/10')}>
-      <p className={cn('font-medium', !calm && 'text-destructive')}>{problem.message}</p>
-      {problem.kind === 'busy' && problem.actionInProgress && (
-        <p className="mt-1 text-muted-foreground">Running now: {problem.actionInProgress}</p>
-      )}
-      {problem.fieldErrors && (
-        <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-          {Object.entries(problem.fieldErrors).map(([field, text]) => (
-            <li key={field}>{FIELD_LABELS[field] ?? field}: {text}</li>
-          ))}
-        </ul>
-      )}
-      {problem.resetLink && <p className="mt-1"><ResetLink /></p>}
-    </div>
+    <ProblemAlert problem={problem} alertRef={alertRef} fieldLabels={FIELD_LABELS}>
+      {problem?.resetLink && <p className="mt-1"><ResetLink /></p>}
+    </ProblemAlert>
   )
 }
 
@@ -111,7 +92,7 @@ export function FaultToleranceControls({ status, settings, controls, state, situ
           Buttons stay disabled until the backend has finished the request.
         </p>
       )}
-      <ProblemAlert problem={problem} alertRef={alertRef} />
+      <FaultProblem problem={problem} alertRef={alertRef} />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,16rem)]">
         <Group title="Experiment">

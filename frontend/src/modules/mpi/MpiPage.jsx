@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExperimentLayout } from '@/components/experiment/ExperimentLayout'
 import { MetricCard } from '@/components/experiment/MetricCard'
+import { ProblemAlert } from '@/components/ProblemAlert'
 import { Button } from '@/components/ui/button'
 import { useCluster } from '@/hooks/useCluster'
 import { useStomp } from '@/hooks/useStomp'
@@ -28,34 +29,6 @@ const HOW_IT_WORKS = [
 function metric(text, exact, reason) {
   if (text === null || text === undefined) return <NotAvailable reason={reason} />
   return <span title={exact ?? undefined}>{text}</span>
-}
-
-/** Copied from the Experiment 1 page (RmiPage); a shared component is a later refactor. */
-function ProblemAlert({ problem, alertRef }) {
-  if (!problem) return null
-  if (problem.kind === 'no-leader') {
-    return (
-      <div ref={alertRef} tabIndex={-1} role="status" data-testid="action-error" data-kind={problem.kind}
-        className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm focus:outline-none">
-        <p className="font-medium text-warning">No leader</p>
-        <p className="mt-1 text-foreground/90">{problem.message}</p>
-      </div>
-    )
-  }
-  return (
-    <div ref={alertRef} tabIndex={-1} role="alert" data-testid="action-error" data-kind={problem.kind}
-      className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm focus:outline-none">
-      <p className="font-medium text-destructive">{problem.message}</p>
-      {problem.kind === 'busy' && problem.actionInProgress && (
-        <p className="mt-1 text-muted-foreground">Running now: {problem.actionInProgress}</p>
-      )}
-      {problem.fieldErrors && (
-        <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-          {Object.entries(problem.fieldErrors).map(([field, text]) => <li key={field}>{field}: {text}</li>)}
-        </ul>
-      )}
-    </div>
-  )
 }
 
 function verificationText(collective) {

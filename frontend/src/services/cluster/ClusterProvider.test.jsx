@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ClusterProvider } from './ClusterProvider'
+import { ClusterProvider, WAKE_RETRY_MS, WAKE_SLOW_MS } from './ClusterProvider'
 import { useCluster } from '@/hooks/useCluster'
 import { StompContext } from '@/services/stomp/StompContext'
 
@@ -63,6 +63,7 @@ describe('ClusterProvider', () => {
 
   it('fills info, cluster, and modules on initial fetch', async () => {
     const fakeApi = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'UP' }),
       getSystemInfo: vi.fn().mockResolvedValue({ mode: 'local', uptimeSeconds: 10 }),
       getCluster: vi.fn().mockResolvedValue({ size: 5, upCount: 5, nodes: [] }),
       getModules: vi.fn().mockResolvedValue([{ id: 'election', status: 'IDLE' }]),
@@ -88,6 +89,7 @@ describe('ClusterProvider', () => {
     vi.useFakeTimers()
 
     const fakeApi = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'UP' }),
       getSystemInfo: vi.fn().mockResolvedValue({ mode: 'local' }),
       getCluster: vi.fn().mockResolvedValue({ size: 5, upCount: 5, nodes: [] }),
       getModules: vi.fn().mockResolvedValue([]),
@@ -139,6 +141,7 @@ describe('ClusterProvider', () => {
 
   it('re-fetches cluster and modules on STOMP reconnect', async () => {
     const fakeApi = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'UP' }),
       getSystemInfo: vi.fn().mockResolvedValue({ mode: 'local' }),
       getCluster: vi.fn().mockResolvedValue({ size: 5, upCount: 5, nodes: [] }),
       getModules: vi.fn().mockResolvedValue([]),
@@ -175,6 +178,7 @@ describe('ClusterProvider', () => {
 
   it('sets error state without crashing when fetch fails', async () => {
     const fakeApi = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'UP' }),
       getSystemInfo: vi.fn().mockRejectedValue(new Error('Backend unreachable')),
       getCluster: vi.fn().mockRejectedValue(new Error('Backend unreachable')),
       getModules: vi.fn().mockRejectedValue(new Error('Backend unreachable')),
@@ -189,5 +193,95 @@ describe('ClusterProvider', () => {
     )
 
     expect(await screen.findByText(/Error: Backend unreachable/)).toBeTruthy()
+  })
+})
+
+describe('ClusterProvider cold start (14.1)', () => {
+  function WakeConsumer() {
+    const { wakingSince } = useCluster()
+    return <div data-testid="waking">{wakingSince === null ? 'awake' : 'waking'}</div>
+  }
+
+  function renderWith(getHealth) {
+    const fakeApi = {
+      getHealth,
+      getSystemInfo: vi.fn().mockResolvedValue({ mode: 'public' }),
+      getCluster: vi.fn().mockResolvedValue({ size: 5, upCount: 5, nodes: [] }),
+      getModules: vi.fn().mockResolvedValue([]),
+    }
+    render(
+      <FakeStompProvider>
+        <ClusterProvider api={fakeApi}>
+          <WakeConsumer />
+        </ClusterProvider>
+      </FakeStompProvider>,
+    )
+    return fakeApi
+  }
+
+  const waking = () => screen.getByTestId('waking').textContent
+
+  async function advance(ms) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms)
+      for (let i = 0; i < 5; i += 1) await Promise.resolve()
+    })
+  }
+
+  beforeEach(() => {
+    stompListeners = {}
+    connectCallbacks = []
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
+
+  it('a backend that answers at once never shows the waking state', async () => {
+    const api = renderWith(vi.fn().mockResolvedValue({ status: 'UP' }))
+    await advance(0)
+    await advance(WAKE_SLOW_MS * 3)
+    expect(waking()).toBe('awake')
+    expect(api.getHealth).toHaveBeenCalledTimes(1)
+    expect(api.getSystemInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('a health check slower than 3 s marks waking, then clears it and reloads the data when it answers', async () => {
+    let answer
+    const api = renderWith(vi.fn(() => new Promise((resolve) => { answer = resolve })))
+    await advance(WAKE_SLOW_MS - 1)
+    expect(waking()).toBe('awake')
+    await advance(1)
+    expect(waking()).toBe('waking')
+
+    await act(async () => answer({ status: 'UP' }))
+    await advance(0)
+    expect(waking()).toBe('awake')
+    expect(api.getSystemInfo).toHaveBeenCalledTimes(2)
+    expect(api.getCluster).toHaveBeenCalledTimes(2)
+  })
+
+  it('a failing health check marks waking at once and retries every 3 s until the backend answers', async () => {
+    const down = new Error('Backend unreachable')
+    const api = renderWith(vi.fn().mockRejectedValueOnce(down).mockRejectedValueOnce(down).mockResolvedValue({ status: 'UP' }))
+    await advance(0)
+    expect(waking()).toBe('waking')
+    expect(api.getHealth).toHaveBeenCalledTimes(1)
+
+    await advance(WAKE_RETRY_MS - 1)
+    expect(api.getHealth).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.getHealth).toHaveBeenCalledTimes(2)
+    expect(waking()).toBe('waking')
+
+    await advance(WAKE_RETRY_MS)
+    expect(api.getHealth).toHaveBeenCalledTimes(3)
+    expect(waking()).toBe('awake')
+    expect(api.getModules).toHaveBeenCalledTimes(2)
+
+    await advance(WAKE_RETRY_MS * 3)
+    expect(api.getHealth).toHaveBeenCalledTimes(3)
   })
 })

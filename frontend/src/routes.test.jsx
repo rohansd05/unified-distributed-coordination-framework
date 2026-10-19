@@ -3,7 +3,7 @@ import { cleanup, screen } from '@testing-library/react'
 import { EXPERIMENTS } from '@/lib/experiments'
 import { api } from '@/services/api'
 import { multithreadingApi } from '@/modules/multithreading/multithreadingApi'
-import { renderRoute } from '@/test/renderRoute'
+import { LAZY_TIMEOUT_MS, renderRoute } from '@/test/renderRoute'
 import overviewBefore from '@/test/fixtures/multithreading/overview-before.json'
 import { loadBalancingApi } from '@/modules/loadbalancing/loadBalancingApi'
 import loadBalancingOverviewBefore from '@/test/fixtures/loadbalancing/overview-before.json'
@@ -60,8 +60,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function heading() {
-  return screen.getByRole('heading', { level: 1 }).textContent
+// Experiment pages, Timeline and Scenarios are lazy chunks (14.1), so wait for the page's h1.
+async function heading() {
+  return (await screen.findByRole('heading', { level: 1 }, { timeout: LAZY_TIMEOUT_MS })).textContent
 }
 
 describe('routes', () => {
@@ -71,38 +72,38 @@ describe('routes', () => {
     ['/scenarios', 'Scenarios'],
     ['/timeline', 'Timeline'],
     ['/about', 'About'],
-  ])('%s renders the %s page', (path, title) => {
+  ])('%s renders the %s page', async (path, title) => {
     renderRoute(path)
-    expect(heading()).toBe(title)
+    expect(await heading()).toBe(title)
   })
 
-  it.each(EXPERIMENTS.map((e) => [e.slug, e.title]))('/experiments/%s renders "%s"', (slug, title) => {
+  it.each(EXPERIMENTS.map((e) => [e.slug, e.title]))('/experiments/%s renders "%s"', async (slug, title) => {
     renderRoute(`/experiments/${slug}`)
-    expect(heading()).toBe(title)
+    expect(await heading()).toBe(title)
   })
 
   it('/experiments/7-mapreduce renders the MapReduce page with its concept', async () => {
     renderRoute('/experiments/7-mapreduce')
-    expect(heading()).toBe('MapReduce')
+    expect(await heading()).toBe('MapReduce')
     expect(await screen.findByText('Split one big job across the workers, then combine their partial answers into one exact result.')).toBeTruthy()
   })
 
-  it.each(['/experiments/99-nope', '/does-not-exist'])('%s renders NotFound', (path) => {
+  it.each(['/experiments/99-nope', '/does-not-exist'])('%s renders NotFound', async (path) => {
     renderRoute(path)
-    expect(heading()).toBe('Page not found')
+    expect(await heading()).toBe('Page not found')
     expect(screen.getByRole('link', { name: 'Back to Overview' }).getAttribute('href')).toBe('/')
   })
 
-  it('/monitoring renders when VITE_GRAFANA_URL is set', () => {
+  it('/monitoring renders when VITE_GRAFANA_URL is set', async () => {
     vi.stubEnv('VITE_GRAFANA_URL', 'http://localhost:3000')
     renderRoute('/monitoring')
-    expect(heading()).toBe('Monitoring')
+    expect(await heading()).toBe('Monitoring')
   })
 
-  it('/monitoring renders NotFound when VITE_GRAFANA_URL is empty', () => {
+  it('/monitoring renders NotFound when VITE_GRAFANA_URL is empty', async () => {
     vi.stubEnv('VITE_GRAFANA_URL', '')
     renderRoute('/monitoring')
-    expect(heading()).toBe('Page not found')
+    expect(await heading()).toBe('Page not found')
   })
 
   it('prints no React Router future-flag warning', () => {

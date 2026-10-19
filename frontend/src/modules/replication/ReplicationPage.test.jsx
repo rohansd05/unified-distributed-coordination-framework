@@ -5,7 +5,7 @@ import * as useStompModule from '@/hooks/useStomp'
 import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import { ApiError } from '@/services/api'
 import { findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewBefore from '@/test/fixtures/replication/overview-before.json'
 import overviewAfterAsync from '@/test/fixtures/replication/overview-after-async.json'
 import overviewTakeoverPending from '@/test/fixtures/replication/overview-takeover-pending.json'
@@ -82,7 +82,7 @@ const ALLOWED_ABBREVIATIONS = new Set(['TCP', 'ID'])
 
 describe('ReplicationPage', () => {
   it('is registered for the replication module and uses the shared layout with the concept and the explanation', async () => {
-    expect(modulePages.replication).toBe(ReplicationPage)
+    expect((await pageLoaders.replication()).Page).toBe(ReplicationPage)
     await renderPage(makeApi())
 
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Consistency and Replication')

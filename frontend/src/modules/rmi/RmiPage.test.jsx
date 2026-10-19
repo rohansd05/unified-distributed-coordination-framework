@@ -6,7 +6,7 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useToastModule from '@/hooks/use-toast'
 import { ApiError } from '@/services/api'
 import { findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewAfter from '@/test/fixtures/rmi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/rmi/overview-node-crashed.json'
 import startFixture from '@/test/fixtures/rmi/start.json'
@@ -87,7 +87,7 @@ const ALLOWED_ABBREVIATIONS = new Set(['RMI', 'SHA', 'UTF', 'DGC', 'UTC'])
 
 describe('RmiPage: layout and states', () => {
   it('is registered for the rmi module and uses the shared layout with the concept and the explanation', async () => {
-    expect(modulePages.rmi).toBe(RmiPage)
+    expect((await pageLoaders.rmi()).Page).toBe(RmiPage)
     await renderPage(makeApi())
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Client-Server via Java RMI')
     expect(screen.getByText(experiment.concept)).toBeTruthy()

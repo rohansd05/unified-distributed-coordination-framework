@@ -3,8 +3,11 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { EXPERIMENTS } from '@/lib/experiments'
 import { renderRoute } from '@/test/renderRoute'
+import { silenceXhr } from '@/test/silentXhr'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { ClusterContext } from '@/services/cluster/ClusterContext'
+
+silenceXhr()
 
 afterEach(() => {
   cleanup()

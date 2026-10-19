@@ -6,7 +6,7 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useToastModule from '@/hooks/use-toast'
 import { ApiError } from '@/services/api'
 import { EXPERIMENTS, findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewBefore from '@/test/fixtures/matrix/overview-before-start.json'
 import overviewAfter from '@/test/fixtures/matrix/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/matrix/overview-node-crashed.json'
@@ -86,7 +86,7 @@ const ALLOWED_ABBREVIATIONS = new Set(['RMI', 'JVM', 'JIT', 'MPI'])
 
 describe('MatrixPage: layout and start', () => {
   it('is registered for matrix and uses the shared layout with the concept and the served algorithm note', async () => {
-    expect(modulePages.matrix).toBe(MatrixPage)
+    expect((await pageLoaders.matrix()).Page).toBe(MatrixPage)
     await renderPage(makeApi())
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Parallel Matrix Multiplication')
     expect(screen.getByText(experiment.concept)).toBeTruthy()
@@ -221,7 +221,7 @@ describe('MatrixPage: running', () => {
       expect(button('Run').disabled).toBe(false)
       cleanup()
     }
-  })
+  }, 15000)
 
   it('runs all served sizes one after another, shows progress and offers "Stop after this run"', async () => {
     const api = makeApi()

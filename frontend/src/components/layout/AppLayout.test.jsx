@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, screen, within } from '@testing-library/react'
-import { renderRoute } from '@/test/renderRoute'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { PROVIDER_FUTURE, ROUTER_FUTURE, routes } from '@/routes'
+import { ClusterContext } from '@/services/cluster/ClusterContext'
+import { LAZY_TIMEOUT_MS, renderRoute } from '@/test/renderRoute'
+import { silenceXhr } from '@/test/silentXhr'
 import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useMultithreadingModule from '@/modules/multithreading/useMultithreading'
 import overviewAfter from '@/test/fixtures/multithreading/overview-after-batch.json'
+
+/*
+ * The pages render with their real api clients and no backend. A silent XMLHttpRequest keeps
+ * every request pending, so jsdom never prints connection-refused (AggregateError) traces.
+ */
+silenceXhr()
 
 afterEach(cleanup)
 
@@ -170,13 +180,14 @@ describe('AppLayout keeps the document from scrolling', () => {
     expect(main.classList.contains('overflow-y-auto')).toBe(true)
   })
 
-  it('every visually hidden element and live region of a module page is rendered inside main', () => {
+  it('every visually hidden element and live region of a module page is rendered inside main', async () => {
     vi.spyOn(useMultithreadingModule, 'useMultithreading').mockReturnValue({
       overview: overviewAfter, requests: [], throughput: [], loading: false, error: null, active: false, refresh: vi.fn(),
     })
     vi.spyOn(useModuleEventsModule, 'useModuleEvents').mockReturnValue({ events: [], loading: false, error: null })
 
     renderRoute('/experiments/2-multithreading')
+    await screen.findByTestId('experiment-layout', {}, { timeout: LAZY_TIMEOUT_MS })
     const main = document.getElementById('content')
     const shell = screen.getByTestId('app-shell')
     const live = shell.querySelector('[aria-live="polite"]')
@@ -190,5 +201,51 @@ describe('AppLayout keeps the document from scrolling', () => {
     for (const element of pageHidden) {
       expect(main.contains(element), element.outerHTML.slice(0, 80)).toBe(true)
     }
+  })
+})
+
+describe('AppLayout while the backend wakes from a cold start (14.1)', () => {
+  const NOW = 1_700_000_000_000
+
+  function renderWaking(wakingSince) {
+    const value = (since) => ({ info: null, cluster: null, modules: null, loading: false, error: new Error('down'), wakingSince: since, refresh: vi.fn() })
+    const router = createMemoryRouter(routes, { initialEntries: ['/'], future: ROUTER_FUTURE })
+    const tree = (since) => (
+      <ClusterContext.Provider value={value(since)}>
+        <RouterProvider router={router} future={PROVIDER_FUTURE} />
+      </ClusterContext.Provider>
+    )
+    const view = render(tree(wakingSince))
+    return { awake: () => view.rerender(tree(null)) }
+  }
+
+  afterEach(() => vi.useRealTimers())
+
+  it('shows a calm banner with elapsed seconds, holds the page, and never says "unreachable"', () => {
+    vi.useFakeTimers({ now: NOW })
+    renderWaking(NOW - 12_000)
+
+    const banner = screen.getByTestId('waking-banner')
+    expect(within(banner).getByRole('status').textContent).toBe(
+      'The backend is waking up — free hosting sleeps after 15 minutes without visitors. This takes about a minute.')
+    expect(screen.getByTestId('waking-elapsed').textContent).toBe('12 s')
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(screen.getByTestId('waking-elapsed').textContent).toBe('13 s')
+
+    expect(screen.getByTestId('waking-placeholder')).toBeTruthy()
+    expect(screen.queryByTestId('overview-error')).toBeNull()
+    expect(screen.getByText('Connection', { selector: 'dt' }).nextElementSibling.textContent).toBe('Waking up…')
+    expect(document.body.textContent).not.toMatch(/unreachable/i)
+    expect(banner.className).not.toMatch(/destructive/)
+  })
+
+  it('hides the banner and mounts the page once the backend answers', () => {
+    const { awake } = renderWaking(Date.now())
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+
+    awake()
+
+    expect(screen.queryByTestId('waking-banner')).toBeNull()
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Overview')
   })
 })

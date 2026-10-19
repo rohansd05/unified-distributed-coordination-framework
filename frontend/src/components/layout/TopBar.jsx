@@ -12,7 +12,7 @@ import { isLeader } from '@/lib/clusterStatus'
  */
 export function TopBar({ menuOpen, onToggleMenu, menuButtonRef }) {
   const { status } = useStomp()
-  const { info, cluster, loading, error } = useCluster()
+  const { info, cluster, loading, error, wakingSince } = useCluster()
 
   let connectionText = 'Connecting…'
   let dotClass = 'bg-muted-foreground'
@@ -36,6 +36,12 @@ export function TopBar({ menuOpen, onToggleMenu, menuButtonRef }) {
   if (error && status !== 'connected') {
     connectionText = 'Backend unreachable'
     dotClass = 'bg-destructive'
+  }
+
+  // A cold start is expected on free hosting: say so calmly, never "unreachable" in red.
+  if (wakingSince != null) {
+    connectionText = 'Waking up…'
+    dotClass = 'bg-warning'
   }
 
   const modeDisplay = loading || !info?.mode ? '—' : info.mode

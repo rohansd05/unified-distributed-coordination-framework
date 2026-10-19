@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExperimentLayout } from '@/components/experiment/ExperimentLayout'
 import { MetricCard } from '@/components/experiment/MetricCard'
+import { ProblemAlert } from '@/components/ProblemAlert'
 import { Button } from '@/components/ui/button'
 import { useStomp } from '@/hooks/useStomp'
 import { useToast } from '@/hooks/use-toast'
@@ -28,31 +29,19 @@ const HOW_IT_WORKS = [
 const EXPERIMENT_TWO = EXPERIMENTS.find((experiment) => experiment.id === 'multithreading')
 const linkClass = 'font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
-/** Copied from the Experiment 9 page (MpiPage); a shared component is a later refactor. */
-function ProblemAlert({ problem, alertRef }) {
-  if (!problem) return null
+/** The shared ProblemAlert, plus Experiment 10's notes for "no live node" and a timeout. */
+function MatrixProblem({ problem, alertRef }) {
   return (
-    <div ref={alertRef} tabIndex={-1} role={problem.kind === 'no-leader' ? 'status' : 'alert'} data-testid="action-error"
-      data-kind={problem.kind} className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm focus:outline-none">
-      {problem.kind === 'no-leader' && <p className="font-medium text-warning">No leader</p>}
-      <p className="font-medium">{problem.message}</p>
-      {problem.kind === 'busy' && problem.actionInProgress && (
-        <p className="mt-1 text-muted-foreground">Running now: {problem.actionInProgress}</p>
-      )}
-      {problem.kind === 'state-conflict' && problem.nodeId === 0 && (
+    <ProblemAlert problem={problem} alertRef={alertRef}>
+      {problem?.kind === 'state-conflict' && problem.nodeId === 0 && (
         <p className="mt-1 text-muted-foreground">
           No node is live, so nothing can be the root. Recover a node on the <Link to="/cluster" className={linkClass}>Cluster page</Link>.
         </p>
       )}
-      {problem.kind === 'timeout' && (
+      {problem?.kind === 'timeout' && (
         <p className="mt-1 text-muted-foreground">The run may still be going on the backend; this page checks until the module is idle again.</p>
       )}
-      {problem.fieldErrors && (
-        <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-          {Object.entries(problem.fieldErrors).map(([field, text]) => <li key={field}>{field}: {text}</li>)}
-        </ul>
-      )}
-    </div>
+    </ProblemAlert>
   )
 }
 
@@ -207,7 +196,7 @@ export function MatrixPage({ experiment, api = matrixApi }) {
             stopRequested={data.stopRequested} serverErrors={problem?.fieldErrors}
             onRun={(size, rootNode) => data.run(size, rootNode)} onRunAll={(rootNode) => data.runAll(rootNode)}
             onStop={data.stopAfterCurrent} />
-          <ProblemAlert problem={problem} alertRef={errorRef} />
+          <MatrixProblem problem={problem} alertRef={errorRef} />
           {data.runAllNote && <p role="status" data-testid="run-all-note" className="text-sm">{data.runAllNote}</p>}
           <p className="text-xs text-muted-foreground">
             To crash or recover a node, use the <Link to="/cluster" className={linkClass}>Cluster page</Link>: it affects every experiment on that node.

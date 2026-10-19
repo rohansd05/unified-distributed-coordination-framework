@@ -7,6 +7,7 @@ const DEFAULT_CLUSTER_CONTEXT = {
   modules: null,
   loading: true,
   error: null,
+  wakingSince: null,
   refresh: () => {},
 }
 
