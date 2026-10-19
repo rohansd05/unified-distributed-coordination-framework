@@ -523,6 +523,47 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 
 ---
 
+## Phases 14-17
+
+- [x] 16.1 — deployment test of the current main on Render and Vercel: Dockerfile on the Maven image, JVM flags from `JAVA_TOOL_OPTIONS`, `docs/deploy/public-deploy.md`, `docs/deploy/smoke-public.ps1`, three-node sweep. Needs: 9A.9.
+
+### 16.1 (fast mode)
+
+**What changed:**
+- `backend/Dockerfile`: the build stage is `FROM maven:3.9.9-eclipse-temurin-21` with `mvn -B -q dependency:go-offline` and `mvn -B -DskipTests package` (no `./mvnw`, no `unzip`, no `chmod`; the wrapper's checksum check fails inside Docker, 9A.1). Runtime stage unchanged (`eclipse-temurin:21-jre`, user 10001, same jar). The hard-coded `ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -Xss512k"` is removed; a comment points to the host setting. Not built here (fast mode: no Docker run); Render's build is the first build.
+- `backend/src/main/resources/application-public.yml`: header comment only (JVM flags come from `JAVA_TOOL_OPTIONS`, not the Dockerfile). No value changed: the sweep found nothing in the public profile that needs a new value for 3 nodes.
+- New `docs/deploy/public-deploy.md`: limits checked by web search on 2026-10-19 with links (Render free: 512 MB, 0.1 CPU, spin-down after 15 min without inbound HTTP or inbound WebSocket messages, about one minute to spin up, 750 h/month; Vercel Hobby: non-commercial, 100 GB transfer, 100 deployments/day, no Git-organization repositories); Render and Vercel settings by dashboard name; every environment variable; the full public-profile table with owners; redeploy, logs, keep-awake and the T-10 routine; the measured table (pending).
+- New `docs/deploy/smoke-public.ps1` (`-Api <url>`): cold health timing, modules, a reset (wait until nothing is BUSY, 409 retry 20 x 500 ms), 13 checks across the ten experiments, every scenario polled to the end, verdicts and a check / HTTP / seconds / OK table. Checked here: PS 5.1.26100 parse clean, 0 non-ASCII bytes, `Invoke-Api` / `Wait-NotBusy` / `Add-Result` against an unreachable URL (HTTP 0, no exception, a FAIL row). Not run against Render here.
+
+**Recommended `JAVA_TOOL_OPTIONS` (Render):** `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k`. Not measured on Render yet.
+
+**Three-node sweep (main code, main config, frontend/src; tests and fixtures excluded):** nothing breaks. `ClusterProperties.java:28` allows 2–9 nodes; scenarios find the leader, live nodes and the SLOW node at run time (`SlowNodeUnderLoadScenario.java:108` by capacity); no quorum or majority logic exists; `MatrixLimits.java:95` needs N >= live nodes (3); the load-balancing startup check is met exactly (5 x 60 x 400 = 120000). With 3 nodes the first leader is node 3 (also the SLOW node), and node 2 after a crash.
+
+**Interfaces for other tracks:** the public site uses 3 nodes, leader node 3. Any text or default that names node 4 or 5 is wrong there. `docs/deploy/smoke-public.ps1` can be rerun by anyone after a merge.
+
+**Known issues:**
+- The keep-awake claim (an open page's STOMP heartbeat every 10 s, `StompProvider.jsx:28`, counts as inbound WebSocket traffic) follows Render's documented rule; not yet observed. Smoke check 4 tests it.
+- `UDCF_CLUSTER_SIZE` (in `.env.example`) is not referenced by name, but relaxed binding maps it onto `udcf.cluster.size`; setting it on Render would override the profile's 3. `LOG_LEVEL_UDCF` is not read at all (`LOGGING_LEVEL_COM_UDCF` is). Both are documented in the deploy doc; `.env.example` was not touched (rule: no .env files).
+- `render.yaml` still has no `JAVA_TOOL_OPTIONS` entry; set it in the dashboard (`render.yaml` was not in this step's file list).
+- `docs/demo/udcf-demo.md` describes the 5-node laptop demo ("node 5", "five nodes"); on the public site read node 3 for node 5 and node 2 for node 4. Not changed in this step (not in the file list).
+- `udcf.scenario.slow-node.work-units: 400` was not calibrated on 3 nodes at 0.1 CPU; the scenario is measured and may fail honestly.
+
+### Gaps for owners
+
+- **Nidhi (Track A, 9A.8 Overview map):** `frontend/src/components/integration/IntegrationSection.jsx:40` says "Every experiment runs on the same five nodes."; the public site has 3. The map itself already uses `nodes.length` (`IntegrationMap.jsx:160`, `:176`).
+- **Swanand (Track B):** stale five-node comments in `application.yml:97` (election, "2 of 5 nodes alive") and `:161` (Exp 8 stream, "10 events per update on 5 nodes"); `:210` the slow-node work-unit probe was measured on 5 nodes (the value is in Swanand's scenario block).
+- **Jai (Track C):** five-node examples in comments and test-facing labels only: `MapReduceIncidentScenario.java:325`, `RankAssignment.java:15`, `frontend/src/components/scenarios/scenarioModel.js:51` ("Node 5 went down"), `frontend/src/modules/replication/labels.js:85` ("Node 4 is crashed"). Harmless if they are examples; please check that none of them is shown as a fact on screen.
+- **Rohan (own, later step):** `application.yml:85-90` keeps drift entries for nodes 4 and 5 (unused with 3 nodes, fine); a size above 5 would fail at module start with "No drift configuration found for node 6" (`ClockSyncProperties.java:76`). `render.yaml`: add `JAVA_TOOL_OPTIONS`. `docs/demo/udcf-demo.md`: a public-site variant of the node numbers.
+
+**Smoke check (Rohan; dashboards plus a PowerShell window):**
+1. Render: set `JAVA_TOOL_OPTIONS` as in the deploy doc and deploy the merged main -> the build log shows `maven:3.9.9-eclipse-temurin-21` and "BUILD SUCCESS"; the first runtime log line reads "Picked up JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"; the service turns Live.
+2. Vercel: redeploy production with `VITE_API_BASE_URL` / `VITE_WS_URL` -> the site opens, the top bar shows a live connection and Overview shows 3 nodes up.
+3. After at least 15 min with no tab open, run `docs\deploy\smoke-public.ps1 -Api <render url>` -> "Health from cold" is OK (note its seconds); the final line reads "n of n checks OK"; paste the tables back.
+4. Leave one site tab open for 20 min, then check Render > Events -> no spin-down in that window, and the next request answers in under 2 s.
+5. On the site, Cluster: crash node 3 -> within about 10 s node 2 shows LEADER; Timeline in arrival order shows the role changes after LEADER_CHANGED.
+
+---
+
 ## Progress log
 
 - 2026-10-07 track file created.
@@ -544,3 +585,5 @@ Run by Rohan on 2026-10-18 against the real backend; 11 of 12 steps passed and s
 - 2026-10-18 9A.5 done: Timeline page /timeline: all modules' events from GET /api/events?limit=500 plus /topic/events, deduplicated by sequence, capped at 2000; Lamport order with bus-sequence tie-break or arrival order; cluster lane plus node lanes in SVG with the event list and details; readable sentences for the role-change, crash/recover and scenario types; leader-chain highlight; scenario bands; module/node/text filters in the URL; pause, clear view, disconnected banner; no backend change; frontend 1294 tests in 131 files (baseline 1262 in 128, +32), lint clean, build OK; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 9A.9a done: demo scripts scripts/start-all.ps1 (Java 21 / Node 22 / free-port checks, hidden backend and frontend with logs in %TEMP%\udcf-demo, PIDs with start times in pids.json, 120 s readiness waits, browser unless -NoBrowser), scripts/stop-all.ps1 (taskkill /T /F on the saved PIDs when the start time matches, then any listener on 8080/5173; idempotent) and scripts/reset-cluster.ps1 (waits for no BUSY module, POST reset with up to 40 tries on 409); checked here: PS 5.1 parse clean, ASCII only, version detection, mocked busy list, unreachable-API and nothing-running paths; start-all end to end not run here (Rohan's smoke check); no backend or frontend change, so no suites run; fast mode: no Docker run; CI is the Linux gate
 - 2026-10-19 9A.9b done: demo script docs/demo/udcf-demo.md (summary, T-30 checklist with role warm-up, nine-part run order with the five scenarios and their real step counts 6/7/3/7/5, 15-minute budget and cut order, recovery table, Q&A crib, three-command card, known limitations); CLAUDE.md Current Position (Phase 9A complete for the 2026-10-23 demo, public lite redeploy to Phase 16, next phase 14) and Layout (reset-cluster.ps1); Status column in the 9A tables of README section 11 and HANDOFF section 11; HANDOFF Appendix A layout; documentation only, no suites run; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-19 16.1 done: backend/Dockerfile builds on maven:3.9.9-eclipse-temurin-21 (mvn -B -DskipTests package; no ./mvnw) and no longer hard-codes JAVA_TOOL_OPTIONS (Render setting, recommended -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k); application-public.yml header comment only; docs/deploy/public-deploy.md (Render free and Vercel Hobby limits checked by web search 2026-10-19 with links, dashboard settings, environment variables, redeploy, logs, keep-awake, public-profile table, measured table pending) and docs/deploy/smoke-public.ps1 (PS 5.1 parse clean, ASCII only, error paths checked offline; not run against Render here); three-node sweep: nothing breaks, gaps for Nidhi, Swanand, Jai recorded; backend 1976 tests in 261 classes, 0 failures, 0 errors, 1 skipped (surefire reports of this run; no Java file changed); no frontend change; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-19 16.1b done: smoke-public.ps1 check "Exp 3 Berkeley round" answered 415 because PS 5.1 Invoke-WebRequest sends Content-Type application/x-www-form-urlencoded on a body-less POST and the endpoint has @RequestBody(required = false), which only skips the body when no Content-Type is sent; the check now sends {} as application/json (what the frontend sends; no module start needed, the threshold falls back to the configured default); the other six body-less POSTs (rmi/mpi/matrix/faulttolerance start, scenario runs, cluster reset) take no @RequestBody, so no change; PS 5.1.26100 parse clean; no backend or frontend change; fast mode: no Docker run; CI is the Linux gate

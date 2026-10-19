@@ -1,4 +1,5 @@
-# Public lite deployment (Render free tier, docs/HANDOFF.md 6.10). JVM flags are set in the Dockerfile (Step 2.5).
+# Public lite deployment (Render free tier, docs/HANDOFF.md 6.10). JVM flags come from JAVA_TOOL_OPTIONS
+# on the host (16.1, docs/deploy/public-deploy.md).
 udcf:
   system:
     mode: public
