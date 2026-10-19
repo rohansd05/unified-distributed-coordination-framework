@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.IntUnaryOperator;
 
@@ -62,9 +63,12 @@ class ElectionNodeServiceTest {
     private Cluster cluster;
     private final List<ElectionNodeService> services = new ArrayList<>();
     private final List<RawPeer> rawPeers = new ArrayList<>();
+    private Set<Thread> foreignThreads;
 
     @BeforeEach
     void setUp() {
+        // Cached Spring contexts of other test classes may already run node 1's election threads (same names).
+        foreignThreads = Set.copyOf(Thread.getAllStackTraces().keySet());
         bus = new ClusterEventBus(new EventProperties(5000, 5000), Clock.systemUTC());
         cluster = new Cluster(CLUSTER, bus);
     }
@@ -98,10 +102,12 @@ class ElectionNodeServiceTest {
         return await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(50));
     }
 
-    private static List<String> liveElectionThreads(int nodeId) {
+    /** Live election threads of node {@code nodeId} created during this test (compared by identity). */
+    private List<String> liveElectionThreads(int nodeId) {
         String prefix = "udcf-election-n" + nodeId + "-";
         return Thread.getAllStackTraces().keySet().stream()
                 .filter(Thread::isAlive)
+                .filter(thread -> !foreignThreads.contains(thread))
                 .map(Thread::getName)
                 .filter(name -> name.startsWith(prefix))
                 .toList();

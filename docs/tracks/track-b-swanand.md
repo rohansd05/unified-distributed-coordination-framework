@@ -50,7 +50,8 @@
 
 ### Steps
 
-- [x] 15.1 — Prometheus, Grafana and local Docker Compose: `infra/docker-compose.yml` (backend, frontend on nginx, Prometheus, Grafana), the "UDCF cluster" dashboard, `scripts/compose-up.ps1` and `scripts/compose-down.ps1`. Smoke check not yet reported.
+- [x] 15.1 — Prometheus, Grafana and local Docker Compose: `infra/docker-compose.yml` (backend, frontend on nginx, Prometheus, Grafana), the "UDCF cluster" dashboard, `scripts/compose-up.ps1` and `scripts/compose-down.ps1`. Smoke check 5/5 (2026-10-20).
+- [x] 15.1b — 15.1b: two flaky tests made order- and clock-independent; CI failure on Linux. Test files only (`ElectionNodeServiceTest`, `ScenarioEngineTest`).
 
 ---
 
@@ -932,6 +933,24 @@ Smoke check run by Swanand on 2026-10-20: 5/5 passed.
 
 ---
 
+## 15.1b (fast mode)
+
+**What changed** (test files only, no production code):
+- `ElectionNodeServiceTest`: `liveElectionThreads` now counts only threads created during the test. `setUp` snapshots every live `Thread` object, and threads in that snapshot are ignored (compared by identity, not name). Every lifecycle assertion is unchanged: start, stop, join, port freed, rebind on recover, idempotent crash/recover, reset reopens.
+- `ScenarioEngineTest.deadlineFailsTheStep`: the duration must be at least 295 ms instead of 300 ms. `StepContext.remainingMillis()` and `elapsedMillis()` truncate nanoseconds to whole milliseconds, so a 300 ms deadline can read as 299 ms. The step message must still match "Waited … but it did not happen", which proves the deadline ended the step.
+
+**Finding (item 2):** the leftover `udcf-election-n1-*` threads come from `backend/src/test/java/com/udcf/modules/replication/ReplicationControllerTest.java:56`. That class has its own context (distinct properties) and starts election services on all five nodes through `ensureLeader` (line 115). It has no `@DirtiesContext`, so Spring caches the context until the JVM exits. This is expected test-context caching, not a production leak. On context close, `Cluster.close` (`ClusterConfig`, `destroyMethod = "close"`) → `ClusterNode.stop` → `ElectionNodeService.stop` joins both threads.
+
+**Interfaces for other tracks:** none.
+
+**Known issues:** none.
+
+**Gaps in other tracks' packages:** `ReplicationControllerTest` (Jai, Track C) crashes nodes and runs elections in a context it calls its own, but without `@DirtiesContext(classMode = AFTER_CLASS)` that context, its sockets and its threads live until the JVM ends. Optional cleanup, not a fault.
+
+**Smoke check:** none. No app behaviour changed; the Linux gate is the GitHub CI run of the PR.
+
+---
+
 ## Monitoring
 
 **How to run** (Windows PowerShell 5.1, repository root, Docker Desktop running):
@@ -1269,3 +1288,4 @@ Grafana: http://localhost:3000/d/udcf-cluster/udcf-cluster (anonymous viewer). E
 - 2026-10-17 9A.1 Linux (Docker), run by Swanand on a clean clone of 9fe7a82: backend with Maven 3.9.9 / Java 21.0.7 (maven:3.9.9-eclipse-temurin-21, --cpus=2) full suite 1912 tests, 0 failures, 1 skipped, BUILD SUCCESS, and the five 9A.1 classes x3 (54 tests each, 0 failures); ./mvnw not used because its SHA-256 check failed inside eclipse-temurin:21-jdk although the downloaded distribution matched the pinned hash (wrapper quirk, no repository change); frontend on node:22: npm ci, vitest (128 files, 1244 tests), lint and build exit 0, main chunk 833.08 kB.
 - 2026-10-18 9A.6 done: scenario engine `com.udcf.scenario` (one run at a time on `udcf-scenario-runner`, clean reset with BUSY retry, steps with deadlines observed by bus subscription plus 250 ms polling from action anchors, FAILED then SKIPPED, cleanup in a finally, end state from the cluster, last 10 runs), `/api/scenarios` API and six `scenario` events, scenarios "The leader dies mid-write", "Split-brain that never happens" and "A slow node under load" (all PASSED on real sockets here), the leader-crash end-to-end test (time daemon, coordinator, MPI root, replication primary all follow LEADER_CHANGED by bus sequence), Experiment 8 note 8 removed; backend 1971 tests (baseline 1939 + 32; 0 failures, 1 skipped), frontend 1294 tests passed after the fixture recapture, which came after the first commit (reported by Swanand; before it 1290 of 1294, the 4 failures being the stale overview fixtures' note count), lint 0 problems, build exit 0 (main chunk 859.48 kB); fast mode: no Docker run; CI is the Linux gate.
 - 2026-10-20 15.1 done: local Docker Compose in `infra/` (backend from `backend/Dockerfile`, frontend on `node:22.11.0-alpine` then `nginx:1.27.2-alpine` on port 5173 proxying `/api` and `/ws`, `prom/prometheus:v2.55.1` scraping every 5 s, `grafana/grafana:11.3.0` with anonymous Viewer), the provisioned "UDCF cluster" dashboard (26 panels in 8 rows, every query on a meter registered in code), `scripts/compose-up.ps1` and `scripts/compose-down.ps1`; backend and frontend unchanged (suites not run); `docker compose config` exit 0, both scripts 0 parse errors, 28 metric references 0 unknown; smoke check not yet reported; fast mode: no Docker run; CI is the Linux gate.
+- 2026-10-20 15.1b done: `ElectionNodeServiceTest` ignores node 1 election threads left by `ReplicationControllerTest`'s cached context (identity snapshot); `ScenarioEngineTest.deadlineFailsTheStep` allows 5 ms of millisecond truncation; the two classes 15 + 17 tests, 0 failures; backend 1976 tests, 0 failures, 1 skipped, BUILD SUCCESS; fast mode: no Docker run; CI is the Linux gate.
