@@ -618,6 +618,45 @@ Smoke check result (2026-10-19, run by Claude Code against the API of the runnin
 
 ---
 
+## Phases 14-17
+
+### Steps
+- [x] 17.1 — Project documentation for submission: `docs/experiments/` (ten pages), `docs/architecture/overview.md`, final `README.md` (except "Live demo", step 17.3), `docs/demo/viva-script.md`.
+
+### 17.1 (fast mode)
+
+**What changed.** Documentation only; no code, test or fixture changes.
+- Added `docs/experiments/exp01-rmi.md` … `exp10-matrix.md`, one structure each: Aim, Theory, How UDCF implements it, Links to other experiments, How to run it in the UI, What to observe, What is simulated, Tests that prove it, Viva questions (8 each). Facts were read from the code on this checkout (classes, ports from `application*.yml`, event types, button labels from the JSX, test class names).
+- Added `docs/architecture/overview.md`: one process and its nodes, REST and STOMP, the event bus and Lamport ordering, the role provider and the leader, the failure detector, a module table, a Mermaid diagram of L1-L6 with the test behind each link, the transport table with reasons, the scenario engine, local versus public profile, real versus simulated.
+- Rewrote `README.md`: what UDCF is, the ten experiments with links, requirements (Java 21, Node 22), quick start with `scripts\start-all.ps1`, `reset-cluster.ps1`, `stop-all.ps1` and the manual commands, tests and CI, repository layout, legacy demos, an empty "Live demo" heading for Rohan (17.3), and "Team".
+- Added `docs/demo/viva-script.md`: a 10-minute word-for-word walkthrough built from `docs/demo/udcf-demo.md` (Overview map, crash the leader, Timeline in arrival order, scenarios "The leader dies mid-write" and "Split-brain that never happens", honesty and close), stage directions in brackets, recovery pointers, and 15 likely examiner questions with short answers.
+
+**Interfaces for other tracks.** None (documentation). Rohan fills the README "Live demo" heading in 17.3.
+
+**Known issues.**
+- README "Team": the addendum asked for a placeholder, but the old README already listed the four names and roll numbers; they are kept (deleting them would lose data) with a comment that Rohan maintains them.
+- The viva script's timings are estimates; no rehearsal was timed in this session.
+- The docs describe the 450 ms asynchronous delay for Experiment 8, as the code uses `udcf.replication.async-delay-millis`; docs/HANDOFF.md 6.11 still says 220 ms (approved deviation recorded in track-b-swanand.md).
+- The Mermaid diagram was not rendered in this session; check it on GitHub after pushing.
+- Process: one fact-gathering subagent ran a single read-only `git ls-files frontend/.env` against the no-git rule (nothing changed), and noted that `frontend/.env` exists (key names only, no values read).
+
+**Gaps found in other tracks' packages** (reported, not fixed):
+- Rohan (Exp 3): `BerkeleyAveragingCoordinator` Javadoc (line 28) and the `NodeAdjustment` Javadoc say outliers get adjustment 0, but the code (line 95-101) gives every node, outliers included, an adjustment toward the target. The docs follow the code.
+- Rohan (Exp 3): frontend `modules/clocksync/labels.js` maps violation kinds `RECEIVE_NOT_AFTER_SEND` / `LOCAL_CLOCK_NOT_MONOTONIC`, but the backend enum `CausalViolation` uses `RECEIVE_ORDER` / `LOCAL_MONOTONICITY`, so the UI falls back to "Receive order" / "Local monotonicity".
+- Rohan (HANDOFF owner): docs/HANDOFF.md 6.11 says 220 ms for Exp 8, but the running value is 450 ms (Swanand's approved deviation).
+- Swanand (Exp 4): `ElectionEventType.WAITING_FOR_COORDINATOR` is declared and has text but no algorithm emits it.
+- Jai (own, Exp 5): `application.yml` comment still says the primary is "the lowest live node until Phase 9A (L1)", and the `ReplicationController` recover Javadoc says "a pending takeover runs here" while `ReplicationModule.recover` runs none. Comment-only; to fix in a later step.
+- Jai (own, Exp 10): `MatrixModule` Javadoc mentions "COMPUTE events" that do not exist. Comment-only.
+
+**Smoke check** (running app; result recorded below):
+1. Open `docs/experiments/exp04-election.md` and follow "How to run it in the UI" on http://localhost:5173 → every control named exists, and crashing node 5 makes node 4 leader with no further click.
+2. Same for `exp07-mapreduce.md` → the word-count crash run shows a retry arrow and the same result table as the run without the crash.
+3. Same for `exp10-matrix.md` → "Run all sizes (50, 100, 200, 316)" fills "Speedup by size".
+4. Click every link in `README.md` on GitHub → each opens (ten experiment pages, architecture, demo and viva scripts, HANDOFF, .env.example, legacy README).
+5. Open `docs/architecture/overview.md` on GitHub after pushing → the Mermaid diagram renders with links L1-L6.
+
+---
+
 ## Interfaces for other tracks
 
 ### E5a — replication store (`com.udcf.modules.replication`), for E5b (Track C) and Exp 8 (Track B)
@@ -3520,3 +3559,4 @@ Linux (Docker, --cpus=2), run by Jai: 227 replication and rmi tests x 5 runs plu
 - 2026-10-16 E10d Linux verification: clean clone of c1fafcf in Docker node:22 (Linux): npm ci, vitest (128 files, 1241 tests), eslint and vite build all exit 0; main chunk 832.82 kB (gzip 245.57 kB) on Linux against 833.65 kB on Windows; the chunk size stays a Phase 14 item.
 - 2026-10-18 9A.3 done: Experiment 5 primary, Experiment 9 MPI root and Experiment 10 root follow the leader elected by Experiment 4 through RoleProvider (link L1): ensureLeader on the request thread before the guard, 409 NO_LEADER when none, reads never elect; ReplicationRoleSelector, MpiRoleSelector and RootSource.LOWEST_LIVE_ID removed; Experiment 5 never moves the primary away from the leader (no change when it already acts as primary at any epoch; epochs never go down) and publishes PRIMARY/BACKUP after appointing; MPI_ROOT_CHANGED (9A.4 rule, first root after a reset silent); pages name the leader, calm 409 No leader; 88 fixtures recaptured by Jai's capture block plus 4 new leader captures; backend 1939 tests (baseline 1934; 0 failures, 1 skipped), frontend 1262 tests (baseline 1250), lint 0 problems, build exit 0 (main chunk 836.88 kB); fast mode: no Docker run; CI is the Linux gate.
 - 2026-10-19 9A.7 done: scenarios "Analyse the incident with MapReduce" (mapreduce-incident, 7 steps: first job on leader 5, crash, LEADER_CHANGED then COORDINATOR_CHANGED for node 4, one L5 export, Experiment 7 counts it by type and by node with node 4 coordinating, counts equal the export, top counts narrated) and "The leader dies during a matrix multiply" (matrix-leader-crash, 5 steps: largest size rooted at the leader, crash on MATRIX_RUN_STARTED, real first outcome reported with bus order, re-election, same multiply verifies from root 4), add-only in com.udcf.scenario.scenarios; Scenarios page /scenarios (rail of scenarios with Run, live step rail from /topic/events with 1 s poll fallback, verdict, end state, Timeline deep link, presenter view, calm 409); ScenarioControllerTest listing index moved for the two new scenarios (test only, for Swanand); backend 1976 tests (0 failures, 1 skipped; +5 new), frontend 1316 tests in 134 files (baseline 1294 in 131), lint exit 0, build OK (main chunk 877.77 kB); fast mode: no Docker run; CI is the Linux gate
+- 2026-10-20 17.1 done: project documentation for submission, docs only (no code, test or fixture change): docs/experiments/exp01-rmi.md to exp10-matrix.md (one structure, 8 viva questions each, facts read from the code), docs/architecture/overview.md (big picture, Mermaid diagram of L1-L6 with the test behind each link, transport table with reasons, scenario engine, local versus public), final README.md (Live demo heading left empty for 17.3; Team names kept), docs/demo/viva-script.md (10-minute walkthrough from udcf-demo.md, 15 examiner questions); no test suites run (no code changed); fast mode: no Docker run; CI is the Linux gate
