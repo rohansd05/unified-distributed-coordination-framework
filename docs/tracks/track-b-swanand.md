@@ -52,6 +52,7 @@
 
 - [x] 15.1 — Prometheus, Grafana and local Docker Compose: `infra/docker-compose.yml` (backend, frontend on nginx, Prometheus, Grafana), the "UDCF cluster" dashboard, `scripts/compose-up.ps1` and `scripts/compose-down.ps1`. Smoke check 5/5 (2026-10-20).
 - [x] 15.1b — 15.1b: two flaky tests made order- and clock-independent; CI failure on Linux. Test files only (`ElectionNodeServiceTest`, `ScenarioEngineTest`).
+- [x] 16.3 — "A slow node under load" on the public profile: measured in Docker, not reliable on a shared 0.1 CPU, scenario kept as it is and the reason documented (no code or config change).
 
 ---
 
@@ -951,6 +952,80 @@ Smoke check run by Swanand on 2026-10-20: 5/5 passed.
 
 ---
 
+## 16.3 (fast mode)
+
+**Outcome:** not reliable on the public profile within the 3-hour time box. The scenario and `application-public.yml` are unchanged (MUST 3). No code, config or test changed.
+
+**Method:** image `udcf-backend:16.3` built from `backend/Dockerfile`, run with `SPRING_PROFILES_ACTIVE=public`, `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k`, `-m 512m`, host port 26180. The scenario was run 10 times in a row through `POST /api/scenarios/slow-node-under-load/runs` with no browser attached (loop below). Candidate values were set as Spring environment overrides (`UDCF_SCENARIO_SLOWNODE_WORKUNITS`, `UDCF_LOADBALANCING_LIMITS_*`), so nothing was rebuilt.
+
+**Measured (2026-10-20; makespans in ms; RR, WRR, LC, LRT):**
+
+| Setup | Result | Notes |
+|---|---|---|
+| `--cpus 0.1`, 400 units (shipped) | 5/10 | 4 runs hit the 30 s step deadline ("Waited 30.x s for the comparison to finish"). 1 run could not reset because the previous comparison was still running. Round robin was last in all 5 runs that finished, by 8 % to 27 % (run 4: 6597 / 4600 / 6106 / 5101). Each phase took about 6 s, so this laptop's 0.1 CPU is about 2.5 times slower than Render's (2.4 s). Startup took 235 s. |
+| `--cpus 0.25`, 400 units (shipped) | 9/10 | Startup took 105 s, close to Render's 94.6 s, so this matches Render's speed. The failure was run 3: 4015 / 3590 / 3403 / **4089**, with least response time sending 12 of 60 requests to the slow node. The smallest passing margins were 9 % (run 7: 3315 vs 3002) and 8 % (run 9). |
+| `--cpus 0.25`, 500 units, max-total-work 150000 | 9/10 | Run 1, cold after boot, hit the 30 s deadline. Margins got thinner: run 5 was 2006 vs 1999 (0.35 %) and run 7 was 2005 vs 1995. |
+| `--cpus 0.1`, Exp 6 compare API, same total work in fewer, larger requests (30x800, 20x1200, 12x2000), 2 runs each | 2/6 round robin last | 20x1200 and 12x2000: least response time has too few requests to learn and sends 10 to 11 of 20 to the slow node, so it finishes after round robin. The two 60x400 runs right after boot sent **0** requests to the slow node: its replies exceeded the 10 s request timeout during JIT warm-up, and the circuit breaker excluded it. |
+
+**Why:** the work is pure SHA-256 (`TcpWorkerTransport.WORKLOAD = CPU_HASH`). With three nodes on one shared 0.1 CPU, one thread can saturate the CPU, so the SLOW node's single thread no longer limits anything. Each makespan is then roughly the batch's total CPU work, plus a fixed cost per request (TCP, events, STOMP). Only the work multiplier still separates the strategies. In theory round robin does about 27 % more work than weighted round robin, and about 20 % more than least response time when least response time sends 12 requests to the slow node. The noise is of the same size:
+- makespans land on the 100 ms CFS throttle period, about ±5 % per 2 s phase;
+- JIT and GC pauses;
+- background work (heartbeats, metrics) on the same CPU;
+- during a UI run, the STOMP traffic to the browser.
+
+Raising work units (allowed up to `max-work-units: 500`) did not widen the margin. Medians of 3 comparisons would take about 36 s on Render (3 x 12 s), over the 30 s budget, and need Experiment 6 changes outside this track. The expectation is not weakened (rule: never change the expectation).
+
+**For the demo:**
+- On the public site, run the scenario once beforehand: the first run after a wake-up is slowest (JIT warm-up).
+- If round robin does not finish last, the page shows the measured makespans and "The result is measured, not assumed". Present that honestly.
+- Or run this scenario on the laptop, where it passes.
+- Recorded in `docs/deploy/public-deploy.md` "Known behaviour".
+
+**Interfaces for other tracks:** none.
+
+**Known issues:** the first scenario run after a cold start can exceed the 30 s step deadline at 0.1 CPU.
+
+**Gaps in other tracks' packages:**
+- Experiment 6 (`com.udcf.modules.loadbalancing`, owner in docs/tracks/README.md): a comparison measures each strategy once, in a fixed order, so slow drift and the 100 ms throttle quantum land on single phases. Running the phases several times, interleaved, would be the real fix, but it costs time the 30 s step deadline does not have.
+- Experiment 6: on a cold 0.1 CPU JVM the slow node's replies can exceed `request-timeout-millis` (10 s), so the circuit breaker excludes it from a whole comparison (0 requests to node 3).
+
+**Loop** (PowerShell 5.1; `-Api` is the backend base URL, e.g. the Render URL or `http://localhost:8080`):
+
+```powershell
+param([string]$Api = 'http://localhost:26180', [int]$Runs = 10)
+try { $h = Invoke-RestMethod "$Api/api/system/health" -TimeoutSec 10 } catch { Write-Host "Backend not reachable at $Api"; exit 1 }
+Write-Host "Health: $($h.status)"
+$rows = @()
+for ($i = 1; $i -le $Runs; $i++) {
+    $accepted = $null
+    for ($try = 1; $try -le 40 -and -not $accepted; $try++) {
+        try { $accepted = Invoke-RestMethod -Method Post "$Api/api/scenarios/slow-node-under-load/runs" -TimeoutSec 10 }
+        catch { Start-Sleep -Milliseconds 500 }   # 409 while a module is still BUSY
+    }
+    if (-not $accepted) { Write-Host "Run $i could not start"; continue }
+    do { Start-Sleep -Milliseconds 500; $run = Invoke-RestMethod "$Api/api/scenarios/runs/$($accepted.runId)" -TimeoutSec 10 }
+    while ($run.state -eq 'RUNNING')
+    $m = $run.steps[1].facts.makespanMillis; $s = $run.steps[1].facts.requestsToSlowNode
+    $secs = if ($run.finishedAt) { [math]::Round(([datetime]$run.finishedAt - [datetime]$run.startedAt).TotalSeconds, 1) } else { '' }
+    $rows += [pscustomobject]@{ Run = $i; Verdict = $run.state; Seconds = $secs; Units = $run.steps[1].facts.workUnits
+        RR = [math]::Round($m.ROUND_ROBIN); WRR = [math]::Round($m.WEIGHTED_ROUND_ROBIN)
+        LC = [math]::Round($m.LEAST_CONNECTIONS); LRT = [math]::Round($m.LEAST_RESPONSE_TIME)
+        ToSlow = "$($s.ROUND_ROBIN)/$($s.WEIGHTED_ROUND_ROBIN)/$($s.LEAST_CONNECTIONS)/$($s.LEAST_RESPONSE_TIME)" }
+}
+$rows | Format-Table -AutoSize
+Write-Host "PASSED $(@($rows | Where-Object { $_.Verdict -eq 'PASSED' }).Count) / $($rows.Count)"
+```
+
+**Smoke check (16.3):**
+1. Open the public site, wait until the waking banner is gone. Expected: the top bar shows the cluster with 3 nodes.
+2. Save the loop above as `slow-node-loop.ps1` and run `powershell -ExecutionPolicy Bypass -File .\slow-node-loop.ps1 -Api <Render backend URL> -Runs 10`. Expected: 10 rows, each PASSED or FAILED with four makespans (a FAILED row with makespans of 0 means the 30 s deadline).
+3. Measured on Render (2026-10-20, warm, browser tab closed): 8/10 PASSED (before = after, nothing changed). The two failures: run 1, makespans RR 2390 / WRR 2002 / LC **2597** / LRT 2105 ms; run 2, makespans RR 2309 / WRR 2008 / LC 2102 / LRT **2398** ms. The first run after a cold start can hit the 30 s deadline, so run the scenario once before the demo.
+4. On the Scenarios page, run "A slow node under load" once. Expected: PASSED with "Round robin finished last after …", or FAILED at step 3 with "Round robin did not finish last this time" and the four makespans, never a hidden result.
+
+Smoke check result (2026-10-20, Swanand): one warm-up run from the Scenarios page, then the 10-run loop against https://udcf-backend.onrender.com with the browser tab closed: 8/10 PASSED.
+
+---
+
 ## Monitoring
 
 **How to run** (Windows PowerShell 5.1, repository root, Docker Desktop running):
@@ -1289,3 +1364,4 @@ Grafana: http://localhost:3000/d/udcf-cluster/udcf-cluster (anonymous viewer). E
 - 2026-10-18 9A.6 done: scenario engine `com.udcf.scenario` (one run at a time on `udcf-scenario-runner`, clean reset with BUSY retry, steps with deadlines observed by bus subscription plus 250 ms polling from action anchors, FAILED then SKIPPED, cleanup in a finally, end state from the cluster, last 10 runs), `/api/scenarios` API and six `scenario` events, scenarios "The leader dies mid-write", "Split-brain that never happens" and "A slow node under load" (all PASSED on real sockets here), the leader-crash end-to-end test (time daemon, coordinator, MPI root, replication primary all follow LEADER_CHANGED by bus sequence), Experiment 8 note 8 removed; backend 1971 tests (baseline 1939 + 32; 0 failures, 1 skipped), frontend 1294 tests passed after the fixture recapture, which came after the first commit (reported by Swanand; before it 1290 of 1294, the 4 failures being the stale overview fixtures' note count), lint 0 problems, build exit 0 (main chunk 859.48 kB); fast mode: no Docker run; CI is the Linux gate.
 - 2026-10-20 15.1 done: local Docker Compose in `infra/` (backend from `backend/Dockerfile`, frontend on `node:22.11.0-alpine` then `nginx:1.27.2-alpine` on port 5173 proxying `/api` and `/ws`, `prom/prometheus:v2.55.1` scraping every 5 s, `grafana/grafana:11.3.0` with anonymous Viewer), the provisioned "UDCF cluster" dashboard (26 panels in 8 rows, every query on a meter registered in code), `scripts/compose-up.ps1` and `scripts/compose-down.ps1`; backend and frontend unchanged (suites not run); `docker compose config` exit 0, both scripts 0 parse errors, 28 metric references 0 unknown; smoke check not yet reported; fast mode: no Docker run; CI is the Linux gate.
 - 2026-10-20 15.1b done: `ElectionNodeServiceTest` ignores node 1 election threads left by `ReplicationControllerTest`'s cached context (identity snapshot); `ScenarioEngineTest.deadlineFailsTheStep` allows 5 ms of millisecond truncation; the two classes 15 + 17 tests, 0 failures; backend 1976 tests, 0 failures, 1 skipped, BUILD SUCCESS; fast mode: no Docker run; CI is the Linux gate.
+- 2026-10-20 16.3 done (documented, not fixed): "A slow node under load" measured in Docker with the public profile at 512 MB. Results, 10 runs each: 0.1 CPU with 400 units 5/10 (4 deadline, 1 reset); 0.25 CPU (Render's speed) with 400 units 9/10; 0.25 CPU with 500 units 9/10, with thinner margins. No config reached 10/10, so the scenario and `application-public.yml` are unchanged and the reason is in `docs/deploy/public-deploy.md`. Backend and frontend unchanged (suites not run); fast mode: the step required Docker measurement runs, the image was used only for them; CI is the Linux gate.

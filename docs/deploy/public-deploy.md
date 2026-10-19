@@ -211,9 +211,30 @@ round robin 2400 ms, weighted round robin 2006 ms, least connections 2595 ms, le
   answered after 94.59 s. The waking banner says "1 to 2 minutes".
 - **"Leader: None elected" until the first action.** After a wake-up the top bar shows no leader:
   elections start on demand (reads never elect). The first action that needs a leader elects node 3.
-- **"A slow node under load" can fail honestly.** The three nodes share one 0.1 CPU, so the shared
-  CPU, not the SLOW node's threads, becomes the bottleneck, and every strategy slows down alike.
-  Swanand is calibrating it (no step recorded yet in `docs/tracks/track-b-swanand.md`).
+- **"A slow node under load" can fail honestly: 8/10 passed on Render.** The three nodes share one 0.1 CPU
+  and the work is pure SHA-256, so the shared CPU, not the SLOW node's single thread, is the
+  bottleneck. Each makespan is then roughly total CPU work, and only the 4x work multiplier still
+  separates the strategies. Round robin does about 20 to 27 % more work in theory, but the measured
+  margin is 0.35 to 27 %, because noise is of the same size: the 100 ms CPU-throttle quantum, JIT
+  and GC, and background work. Measured in Docker with the public profile and 512 MB, 10 runs each
+  (Step 16.3, 2026-10-20):
+  - Render (measured, warm, browser tab closed, 10 runs): 8/10 at the shipped 400 units. The
+    failures: RR 2390 / WRR 2002 / LC 2597 / LRT 2105 ms, and RR 2309 / WRR 2008 / LC 2102 /
+    LRT 2398 ms (least connections, then least response time, finished after round robin).
+  - `--cpus 0.25` (startup 105 s, close to Render's speed): 9/10 at the shipped 400 units. The
+    failure was least response time at 4089 ms vs round robin at 4015 ms.
+  - `--cpus 0.25` with 500 units: 9/10, with thinner margins (2006 vs 1999 ms).
+  - `--cpus 0.1` on a laptop, about 2.5 times slower than Render: 5/10, and 4 of the failures were
+    the 30 s step deadline.
+
+  The scenario is kept unchanged, and its expectation is not weakened. Before the demo:
+  - run it once to warm the JVM (the first run after a wake-up is the slowest and can hit the
+    deadline);
+  - if round robin is not last, present the measured makespans the page shows ("The result is
+    measured, not assumed");
+  - or run this scenario on the laptop.
+
+  Details and the 10-run loop: `docs/tracks/track-b-swanand.md`, section 16.3.
 - **Open the site at least 10 minutes before a demo and keep one tab open.** The tab's WebSocket
   heartbeat keeps the service awake (section 1).
 
