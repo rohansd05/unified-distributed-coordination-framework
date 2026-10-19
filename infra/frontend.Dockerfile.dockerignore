@@ -1,0 +1,11 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile, so frontend/ needs no .dockerignore.
+# Keeps the Windows node_modules, old builds and any .env out of the Linux build.
+node_modules
+dist
+coverage
+test-results
+playwright-report
+.vite
+.env
+.env.*
+*.log

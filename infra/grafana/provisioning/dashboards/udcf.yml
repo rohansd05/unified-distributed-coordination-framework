@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: udcf
+    folder: UDCF
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

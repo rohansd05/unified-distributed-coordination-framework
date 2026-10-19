@@ -1,0 +1,1498 @@
+{
+  "uid": "udcf-cluster",
+  "title": "UDCF cluster",
+  "description": "Live per-node metrics of the UDCF cluster, scraped from /actuator/prometheus every 5 s. Every distributed_* series carries node_id (R5).",
+  "tags": [
+    "udcf"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m"
+    ]
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Cluster overview",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "state-timeline",
+      "title": "Node status",
+      "description": "distributed_node_status per node: Up while the node runs, Down after a crash (visible within one 5 s scrape).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (node_id) (distributed_node_status)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Down",
+                  "color": "red",
+                  "index": 1
+                },
+                "1": {
+                  "text": "Up",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "rowHeight": 0.85,
+        "legend": {
+          "showLegend": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Events per second",
+      "description": "Cluster events published on the shared event bus per second, and WebSocket notifications dropped (cluster level, node_id 0).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum(rate(distributed_events_published_total[30s]))",
+          "legendFormat": "published",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum(rate(distributed_event_notifications_dropped_total[30s]))",
+          "legendFormat": "notifications dropped",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "JVM heap",
+      "description": "Heap of the one backend JVM that hosts every node (R1), so this panel is process-wide, not per node.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum(jvm_memory_used_bytes{area=\"heap\"})",
+          "legendFormat": "used",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum(jvm_memory_committed_bytes{area=\"heap\"})",
+          "legendFormat": "committed",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Multithreading (Experiment 2)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Completed requests per second",
+      "description": "Each node executor's completed requests per second over its 30 s sliding window; no value while the executor is not running.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_request_throughput",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Active worker threads",
+      "description": "Worker threads currently executing a request, per node (thread caps follow capacity: FAST 4, MEDIUM 2, SLOW 1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_active_threads",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Queued requests",
+      "description": "Requests waiting in each node's bounded executor queue; a full queue rejects new requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_queued_requests",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Rejected requests per second",
+      "description": "Submissions refused because the node's queue was full (distributed_requests_total, outcome rejected).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (rate(distributed_requests_total{outcome=\"rejected\"}[30s]))",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Clock sync (Experiment 3)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Lamport clock per node",
+      "description": "Each node's Lamport clock; a node jumps forward when it receives a message stamped with a higher clock.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_clock_value",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Election (Experiment 4)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "bargauge",
+      "title": "Elections won per node",
+      "description": "Elected rounds by the winning node since the backend started; after a leader crash the new leader gains one (trigger LEADER_FAILURE).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_leader_elections_total)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Elections won by trigger",
+      "description": "The same counter over time, by winner and trigger; a step up marks a finished election round.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 27
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id, trigger) (distributed_leader_elections_total)",
+          "legendFormat": "node {{node_id}} {{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Election duration (recent max)",
+      "description": "Longest measured round, from its start (or the failure detection) until every live node agreed, in a rolling window of about 2 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (algorithm, trigger) (distributed_election_duration_seconds_max)",
+          "legendFormat": "{{algorithm}} {{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Replication and fault tolerance (Experiments 5, 8)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Replicated writes per second",
+      "description": "Client writes accepted per primary node, by consistency model (Experiment 5).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id, model) (rate(distributed_replication_writes_total[30s]))",
+          "legendFormat": "primary {{node_id}} {{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "wps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Store items per node",
+      "description": "Items in each node's replicated store; a backup with fewer items than the primary is lagging behind it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_replication_store_items",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Replication round trip (recent max)",
+      "description": "Measured TCP round trip of acknowledged pushes per backup, never the simulated delay, in a rolling window of about 2 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (node_id) (distributed_replication_latency_seconds_max)",
+          "legendFormat": "backup {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Experiment 8 updates per second",
+      "description": "Update-stream updates by the primary that accepted them; node 0 with status gave_up means no primary accepted it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 44
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id, status) (rate(distributed_failover_updates_total[30s]))",
+          "legendFormat": "node {{node_id}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "bargauge",
+      "title": "Primary failures detected",
+      "description": "Experiment 8 primary failures detected since the backend started, by the failed primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 44
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_failures_total)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Failover intervals (recent max)",
+      "description": "Measured Experiment 8 intervals (detection, failover, service restored, outage, recovery), in a rolling window of about 2 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 44
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (interval) (distributed_recovery_duration_seconds_max)",
+          "legendFormat": "{{interval}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Load balancing (Experiment 6)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "In flight per worker",
+      "description": "Requests the balancer has in flight to each worker node, live during a run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 53
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "distributed_balancer_in_flight",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "bargauge",
+      "title": "Requests served per worker",
+      "description": "Requests each worker served since the backend started; recorded when a run ends.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 53
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_balancer_dispatches_total{outcome=\"served\"})",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Makespan by strategy (recent max)",
+      "description": "Measured makespan of load-balancing runs by strategy (cluster level), in a rolling window of about 2 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 53
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (strategy) (distributed_balancer_makespan_seconds_max)",
+          "legendFormat": "{{strategy}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "row",
+      "title": "MapReduce (Experiment 7)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "panels": []
+    },
+    {
+      "id": 28,
+      "type": "bargauge",
+      "title": "Map tasks per node",
+      "description": "Map tasks each worker node ran since the backend started.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 62
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_map_tasks_total)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 29,
+      "type": "bargauge",
+      "title": "Reduce tasks per node",
+      "description": "Reduce tasks each worker node ran since the backend started.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 62
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_reduce_tasks_total)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "bargauge",
+      "title": "Jobs per coordinator",
+      "description": "MapReduce runs by coordinator node; the coordinator follows the elected leader.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 62
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_mapreduce_jobs_total)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "row",
+      "title": "RMI, MPI and matrix (Experiments 1, 9, 10)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "panels": []
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "RMI calls per second",
+      "description": "Java RMI calls per calling node (Experiment 1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 71
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (rate(distributed_rmi_calls_total[30s]))",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "bargauge",
+      "title": "MPI messages per root",
+      "description": "Remote MPI transfers by the root node since the backend started; the root follows the elected leader (Experiment 9).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 71
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "sum by (node_id) (distributed_mpi_messages_total)",
+          "legendFormat": "root {{node_id}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Matrix compute time per node (recent max)",
+      "description": "Each rank's measured multiply on its node (Experiment 10), in a rolling window of about 2 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "udcf-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 71
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "udcf-prometheus"
+          },
+          "expr": "max by (node_id) (distributed_matrix_compute_duration_seconds_max)",
+          "legendFormat": "node {{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}
