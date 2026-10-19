@@ -25,7 +25,7 @@ export function WakingBanner({ since }) {
         ))}
       </span>
       <p role="status" className="min-w-0 flex-1">
-        The backend is waking up — free hosting sleeps after 15 minutes without visitors. This takes about a minute.
+        The backend is waking up — free hosting sleeps after 15 minutes without visitors. This takes 1 to 2 minutes.
       </p>
       <span data-testid="waking-elapsed" aria-hidden="true" className="shrink-0 font-mono text-muted-foreground">{seconds} s</span>
     </div>

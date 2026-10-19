@@ -14,6 +14,9 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: public
+      # Not a secret. Mirrors the dashboard value measured on 2026-10-19 (docs/deploy/public-deploy.md).
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k
       # Prompted in the Render Dashboard on service creation (sync: false).
       # Set in the dashboard to the exact Vercel production origin (https://<project>.vercel.app, no trailing slash).
       - key: UDCF_ALLOWED_ORIGINS
