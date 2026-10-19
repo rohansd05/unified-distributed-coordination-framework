@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, screen, within } from '@testing-library/react'
-import { renderRoute } from '@/test/renderRoute'
+import { LAZY_TIMEOUT_MS, renderRoute } from '@/test/renderRoute'
 import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useMultithreadingModule from '@/modules/multithreading/useMultithreading'
 import overviewBefore from '@/test/fixtures/multithreading/overview-before.json'
@@ -51,7 +51,7 @@ describe('ExperimentPage', () => {
 describe('ExperimentPage with a registered module page', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('renders the module page for /experiments/2-multithreading in the shared layout', () => {
+  it('renders the module page for /experiments/2-multithreading in the shared layout', async () => {
     vi.spyOn(useMultithreadingModule, 'useMultithreading').mockReturnValue({
       overview: overviewBefore, requests: [], throughput: [], loading: false, error: null, active: false, refresh: vi.fn(),
     })
@@ -59,7 +59,7 @@ describe('ExperimentPage with a registered module page', () => {
 
     renderRoute('/experiments/2-multithreading')
 
-    expect(content().getByTestId('experiment-layout')).toBeTruthy()
+    expect(await content().findByTestId('experiment-layout', {}, { timeout: LAZY_TIMEOUT_MS })).toBeTruthy()
     const headings = content().getAllByRole('heading')
       .filter((h) => h.tagName === 'H1' || h.tagName === 'H2')
       .map((h) => `${h.tagName} ${h.textContent}`)

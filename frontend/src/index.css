@@ -81,4 +81,11 @@ html,
   body {
     @apply bg-background font-sans text-foreground antialiased;
   }
+
+  /* 14.1: keyboard focus is visible everywhere. Controls with their own ring (focus-visible:outline-none
+     plus ring utilities) keep it, because utilities come after this base layer. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }

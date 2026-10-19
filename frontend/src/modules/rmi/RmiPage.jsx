@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExperimentLayout } from '@/components/experiment/ExperimentLayout'
 import { MetricCard } from '@/components/experiment/MetricCard'
+import { ProblemAlert } from '@/components/ProblemAlert'
 import { Button } from '@/components/ui/button'
 import { useCluster } from '@/hooks/useCluster'
 import { useStomp } from '@/hooks/useStomp'
@@ -28,24 +29,6 @@ const HOW_IT_WORKS = [
 function metric(text, exact, reason) {
   if (text === null || text === undefined) return <NotAvailable reason={reason} />
   return <span title={exact ?? undefined}>{text}</span>
-}
-
-function ProblemAlert({ problem, alertRef }) {
-  if (!problem) return null
-  return (
-    <div ref={alertRef} tabIndex={-1} role="alert" data-testid="action-error" data-kind={problem.kind}
-      className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm focus:outline-none">
-      <p className="font-medium text-destructive">{problem.message}</p>
-      {problem.kind === 'busy' && problem.actionInProgress && (
-        <p className="mt-1 text-muted-foreground">Running now: {problem.actionInProgress}</p>
-      )}
-      {problem.fieldErrors && (
-        <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-          {Object.entries(problem.fieldErrors).map(([field, text]) => <li key={field}>{field}: {text}</li>)}
-        </ul>
-      )}
-    </div>
-  )
 }
 
 /**

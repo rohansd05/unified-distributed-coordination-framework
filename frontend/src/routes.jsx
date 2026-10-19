@@ -1,3 +1,4 @@
+import { lazy } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { AboutPage } from '@/pages/AboutPage'
 import { ClusterPage } from '@/pages/ClusterPage'
@@ -5,8 +6,11 @@ import { ExperimentPage } from '@/pages/ExperimentPage'
 import { MonitoringPage } from '@/pages/MonitoringPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { OverviewPage } from '@/pages/OverviewPage'
-import { ScenariosPage } from '@/pages/ScenariosPage'
-import { TimelinePage } from '@/pages/TimelinePage'
+
+// Loaded on demand, one chunk each (14.1); AppLayout wraps every page in <Suspense>.
+// Experiment pages are split the same way in modules/registry.js.
+const ScenariosPage = lazy(() => import('@/pages/ScenariosPage').then((m) => ({ default: m.ScenariosPage })))
+const TimelinePage = lazy(() => import('@/pages/TimelinePage').then((m) => ({ default: m.TimelinePage })))
 
 /*
  * Security rule: never build a <Link to> or navigate() target from untrusted input

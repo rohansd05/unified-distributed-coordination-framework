@@ -170,6 +170,89 @@ steps 2-3 depend on, but it checks no part of the map.
 
 ---
 
+## Phases 14-17
+
+### Steps
+- [x] 14.1 — Phase 14 polish for the demo of the deployed site: cold-start banner, route-level code splitting,
+  one shared ProblemAlert, quiet AppLayout tests, first-visit guide, states, layout, accessibility and copy.
+
+### 14.1 (fast mode)
+
+**What changed.** Frontend only; no backend change, no new dependency, no fixture recaptured.
+- Cold start: `ClusterProvider` watches the first `/api/system/health` of a page load; slower than
+  `WAKE_SLOW_MS` (3 s) or failing -> `wakingSince` is set and health is retried every `WAKE_RETRY_MS` (3 s);
+  when it answers, `wakingSince` clears and the data is fetched again. `AppLayout` then shows `WakingBanner`
+  (calm, full width, elapsed seconds, the wording from the addendum) and holds the page behind a calm
+  placeholder, so no page shows a red error during the wait; the page mounts, and loads its data, when the
+  backend answers. TopBar says "Waking up…" (amber) instead of "Backend unreachable" (red) meanwhile.
+- Code splitting: `modules/registry.js` uses a lazy `import.meta.glob` (the folder name is the module id) and
+  exports `pageLoaders` (id -> loader of `{ id, Page }`) and `modulePages` (id -> `React.lazy` page); Timeline
+  and Scenarios are lazy in `routes.jsx`; `AppLayout` wraps the routed page in `<Suspense>` with a calm "Loading
+  the page…" status. Main chunk 909.67 kB -> 481.62 kB (build output); one chunk per experiment page (named
+  `index-*.js` after each module's index.jsx), `TimelinePage-*.js`, `ScenariosPage-*.js`.
+- `components/ProblemAlert.jsx` replaces the private copies in Experiments 1, 8, 9 and 10 (four, not the three
+  the addendum named): same texts, roles and `data-*` attributes; "No leader" is a status; busy, no leader, node
+  down, state conflict, conflict and timeout are calm (amber, info icon); other problems are errors (red, warning
+  icon); `fieldLabels` and `children` keep Experiment 8's field names and reset link and Experiment 10's notes.
+- Tests: `test/silentXhr.js` (`silenceXhr()`, a never-answering XMLHttpRequest) in AppLayout, Sidebar and the new
+  lazy-routes test, so they print no AggregateError traces; `LAZY_TIMEOUT_MS` (5 s) in `test/renderRoute.jsx` for
+  waits on a lazy page.
+- Overview: first-visit `StartHereGuide` (look at the map, open an experiment, run a scenario), dismissible,
+  remembered in localStorage under `udcf.startHere.dismissed` (read and write in try/catch; without storage it is
+  dismissed for the visit only); the backend error is calm (amber, `role="status"`); header and grid switch to two
+  columns at `lg` instead of `md`, so a 768 px tablet gets one column; focus ring on "View cluster details".
+- `index.css`: a base `:focus-visible` outline for every control without its own ring.
+- About: real content (architecture, the ten experiments as links, what is real and what is simulated) instead of
+  "Arrives in Phase 14"; Monitoring (only with `VITE_GRAFANA_URL`): a link to Grafana instead of "Arrives in Phase 15".
+- Copy: node counts come from the served cluster size (the public profile runs 3 nodes): the integration map
+  subtitle said "the same five nodes".
+
+**Changes on other tracks' pages and tests (presentation or test only).**
+- Experiment 1 (`modules/rmi/RmiPage.jsx`, Jai), Experiment 9 (`modules/mpi/MpiPage.jsx`, Jai), Experiment 10
+  (`modules/matrix/MatrixPage.jsx`, Jai), Experiment 8 (`modules/faulttolerance/FaultToleranceControls.jsx`,
+  Swanand): private ProblemAlert removed, the shared one used. Experiment 1's busy, node-down and state-conflict
+  alerts turn from red to amber; Experiment 10's 400 and 404 alerts from amber to red.
+- `ElectionPage.test.jsx` (Swanand), `FaultTolerancePage.test.jsx` (Swanand), `MatrixPage.test.jsx`, `MpiPage.test.jsx`,
+  `RmiPage.test.jsx` (Jai), `ReplicationPage.test.jsx` (Jai): the registration check reads
+  `(await pageLoaders.<id>()).Page` instead of `modulePages.<id>` (one line and the import each).
+- About and Monitoring pages (Rohan's gap from 9A.8, now closed): content replaces the placeholders.
+
+**Interfaces for other tracks.** `ProblemAlert({ problem, alertRef, fieldLabels, children })` for any module
+problem from a `describeProblem`; `useCluster().wakingSince` (null, or the start of a cold-start wait);
+`pageLoaders` in `modules/registry.js`; `silenceXhr()` and `LAZY_TIMEOUT_MS` for tests.
+
+**Known issues.**
+- `MatrixPage.test.jsx` "answers 404 and the three 409s calmly, with the page intact" (Jai) times out at 5 s in
+  the full parallel run: it renders the page five times in one test; alone 1557 ms; under a load of all module
+  tests 4698 ms with the old private alert and 5512 ms with the shared one (one sample each). It passed in the
+  baseline full run. Suggested fix for Jai: a 15 s timeout on that test.
+- No visual walk at 1366x768, 1920x1080 or 768 px by the agent (the app was not running; rule 9); the smoke check
+  covers it. Items 5 (states on every page) and 9 (copy review) were done for the shell, Overview, About,
+  Monitoring and the four pages above only; the other experiment pages keep their own error blocks.
+- `components/ComingSoon.jsx` is no longer used; left in place (ask before deleting).
+- Experiment chunks are named `index-*.js` in the network tab.
+
+**Follow-up (2026-10-19, approved by Rohan, Jai informed).** The MatrixPage test "answers 404 and the three 409s calmly, with the page intact" got a 15000 ms per-test timeout (only change in that file), and `components/ComingSoon.jsx` was deleted (nothing imported it, no test); both Known issues entries above are resolved.
+
+**Gaps for owners.**
+- Rohan: `src/modules/clocksync` tests print 17 jsdom AggregateError traces (real XHR to a missing backend);
+  `silenceXhr()` from `test/silentXhr.js` silences them.
+- Jai: the Matrix test timeout above.
+
+**Smoke check** (running app):
+1. Stop the backend, open the UI -> within 3 s the amber banner "The backend is waking up — …" with a seconds
+   counter, the top bar says "Waking up…", no red error; start the backend -> the banner goes and Overview loads.
+2. DevTools Network (JS), open Timeline, then an experiment page -> `TimelinePage-*.js`, then one `index-*.js`
+   chunk loads only when each page is first opened, after "Loading the page…".
+3. Fresh profile (or clear site data), open Overview -> "Start here" with three steps; dismiss it, reload -> it
+   stays dismissed.
+4. Tab through Overview and Experiment 4 -> every focused control shows a visible ring or outline.
+5. Window at 1366x768 (and a 768 px wide window) -> no page scrolls sideways; Overview shows one column at 768.
+
+Smoke check result (2026-10-19): 5/5 passed (reported by Nidhi in the running app).
+
+---
+
 ## Interfaces for other tracks
 
 - **Exp 2 engine (E2a), package `com.udcf.modules.multithreading`.** Plain classes, one set per
@@ -746,3 +829,9 @@ steps 2-3 depend on, but it checks no part of the map.
   /topic/events only; presentation fixes on Sidebar ("Planned" never shown), Timeline ("planned handover"),
   ExperimentPage fallback copy; frontend 1316 tests in 134 files -> 1357 in 137, lint clean, build OK (main
   chunk 909.67 kB); no backend change; fast mode: no Docker run; CI is the Linux gate
+- 2026-10-19 14.1 done: cold-start banner (health retried every 3 s, page held until the backend answers), lazy
+  routes (main chunk 909.67 kB -> 481.62 kB), shared ProblemAlert replacing four copies, silent XHR in the layout
+  tests, Overview "Start here" guide, calm Overview error, focus outline, tablet layout, About and Monitoring
+  content, live node counts; frontend 1357 tests in 137 files -> 1377 in 141, 1 failing (Jai's Matrix test, 5 s
+  timeout under load; see Known issues), lint clean, build OK; no backend change; fast mode: no Docker run; CI is
+  the Linux gate

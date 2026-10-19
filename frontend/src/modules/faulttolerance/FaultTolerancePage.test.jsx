@@ -6,7 +6,7 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useToastModule from '@/hooks/use-toast'
 import { ApiError } from '@/services/api'
 import { findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewBefore from '@/test/fixtures/faulttolerance/overview-before-start.json'
 import overviewAfterRuns from '@/test/fixtures/faulttolerance/overview-after-runs.json'
 import statusRunning from '@/test/fixtures/faulttolerance/status-stream-running.json'
@@ -97,7 +97,7 @@ function textNodes(root) {
 
 describe('FaultTolerancePage', () => {
   it('is registered for the faulttolerance module with the sections in the template order', async () => {
-    expect(modulePages.faulttolerance).toBe(FaultTolerancePage)
+    expect((await pageLoaders.faulttolerance()).Page).toBe(FaultTolerancePage)
     await renderPage(makeApi())
     const order = [...document.querySelectorAll('[data-testid^="section-"]')].map((s) => s.getAttribute('data-testid'))
     expect(order).toEqual(['section-how-it-works', 'section-controls', 'section-visualisation', 'section-measurements',

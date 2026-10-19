@@ -37,7 +37,7 @@ export function IntegrationSection({ cluster, events = [] }) {
           How the ten experiments work as one system
         </h2>
         <p className="text-sm text-muted-foreground">
-          Every experiment runs on the same five nodes. The arrows show where one experiment relies on another.
+          Every experiment runs on the same {cluster?.size ? `${cluster.size} nodes` : 'nodes'}. The arrows show where one experiment relies on another.
         </p>
       </div>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">

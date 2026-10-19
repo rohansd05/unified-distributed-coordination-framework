@@ -9,6 +9,7 @@ import { isNodeCrashed } from '@/lib/clusterStatus'
 import { ClusterGraph } from '@/components/cluster/ClusterGraph'
 import { EventStream } from '@/components/events/EventStream'
 import { IntegrationSection } from '@/components/integration/IntegrationSection'
+import { StartHereGuide } from '@/components/StartHereGuide'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -113,7 +114,7 @@ export function OverviewPage({ api = defaultApi }) {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between border-b border-border/60 pb-5">
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Overview</h1>
           <p className="text-sm text-muted-foreground">
@@ -121,7 +122,7 @@ export function OverviewPage({ api = defaultApi }) {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span
             data-testid="health-statement"
             className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground"
@@ -164,24 +165,26 @@ export function OverviewPage({ api = defaultApi }) {
 
           <Link
             to="/cluster"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             View cluster details
           </Link>
         </div>
       </div>
 
+      <StartHereGuide />
+
       {clusterLoading && (
-        <div data-testid="overview-loading" className="grid gap-6 md:grid-cols-5">
-          <div className="md:col-span-3 aspect-square animate-pulse rounded-lg bg-card/60" />
-          <div className="md:col-span-2 h-80 animate-pulse rounded-lg bg-card/60" />
+        <div data-testid="overview-loading" className="grid gap-6 lg:grid-cols-5">
+          <div className="lg:col-span-3 aspect-square animate-pulse rounded-lg bg-card/60" />
+          <div className="lg:col-span-2 h-80 animate-pulse rounded-lg bg-card/60" />
         </div>
       )}
 
       {!clusterLoading && clusterError && (
-        <div data-testid="overview-error" className="rounded-lg border border-destructive/40 bg-card p-6 text-center">
+        <div data-testid="overview-error" role="status" className="rounded-lg border border-warning/60 bg-card p-6 text-center">
           <h2 className="text-lg font-semibold text-foreground">Cluster connection unavailable</h2>
-          <p className="mt-2 text-sm text-destructive font-medium">
+          <p className="mt-2 text-sm font-medium text-foreground">
             Can&apos;t reach the backend at {getConfig().apiBaseUrl || 'http://localhost:8080'}.
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -196,9 +199,9 @@ export function OverviewPage({ api = defaultApi }) {
       {!clusterLoading && !clusterError && <IntegrationSection cluster={cluster} events={events} />}
 
       {!clusterLoading && !clusterError && (
-        <div className="grid gap-6 md:grid-cols-5 items-start">
+        <div className="grid gap-6 lg:grid-cols-5 items-start">
           {/* SVG Topology Graph (60% width on desktop) */}
-          <div className="md:col-span-3 rounded-lg border border-border bg-card p-4 flex flex-col items-center justify-center">
+          <div className="lg:col-span-3 rounded-lg border border-border bg-card p-4 flex flex-col items-center justify-center">
             <ClusterGraph
               nodes={nodes}
               selectedNodeId={selectedNode?.id}
@@ -207,7 +210,7 @@ export function OverviewPage({ api = defaultApi }) {
           </div>
 
           {/* Selected Node Details Inspector (40% width on desktop) */}
-          <div className="md:col-span-2 rounded-lg border border-border bg-card p-5 space-y-4" data-testid="node-inspector">
+          <div className="lg:col-span-2 rounded-lg border border-border bg-card p-5 space-y-4" data-testid="node-inspector">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div>
                 <h2 className="text-base font-semibold text-foreground">

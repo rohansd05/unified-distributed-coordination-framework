@@ -6,7 +6,7 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import { ClusterContext } from '@/services/cluster/ClusterContext'
 import { ApiError } from '@/services/api'
 import { findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewInitial from '@/test/fixtures/election/overview-initial.json'
 import overviewAfterBully from '@/test/fixtures/election/overview-after-bully.json'
 import overviewAfterRecovery from '@/test/fixtures/election/overview-after-recovery.json'
@@ -69,7 +69,7 @@ afterEach(() => {
 
 describe('ElectionPage', () => {
   it('is registered for the election module and renders the shared layout, sections in order', async () => {
-    expect(modulePages.election).toBe(ElectionPage)
+    expect((await pageLoaders.election()).Page).toBe(ElectionPage)
     await renderPage(makeApi())
     const headings = screen.getAllByRole('heading').filter((h) => ['H1', 'H2'].includes(h.tagName)).map((h) => h.textContent)
     expect(headings).toEqual(['Bully and Ring Election', 'How it works', 'Controls', 'Live visualisation',

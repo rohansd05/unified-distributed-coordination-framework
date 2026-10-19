@@ -6,7 +6,7 @@ import * as useModuleEventsModule from '@/hooks/useModuleEvents'
 import * as useToastModule from '@/hooks/use-toast'
 import { ApiError } from '@/services/api'
 import { findBySlug } from '@/lib/experiments'
-import { modulePages } from '@/modules/registry'
+import { pageLoaders } from '@/modules/registry'
 import overviewAfter from '@/test/fixtures/mpi/overview-after-start.json'
 import overviewCrashed from '@/test/fixtures/mpi/overview-node-crashed.json'
 import overviewLeader from '@/test/fixtures/mpi/overview-leader.json'
@@ -86,7 +86,7 @@ const ALLOWED_ABBREVIATIONS = new Set(['RMI', 'SHA', 'MPI', 'UTC'])
 
 describe('MpiPage: layout and states', () => {
   it('is registered for the mpi module and uses the shared layout with the concept and the algorithm note', async () => {
-    expect(modulePages.mpi).toBe(MpiPage)
+    expect((await pageLoaders.mpi()).Page).toBe(MpiPage)
     await renderPage(makeApi())
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('MPI Collectives')
     expect(screen.getByText(experiment.concept)).toBeTruthy()
