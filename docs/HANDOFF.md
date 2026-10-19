@@ -638,7 +638,7 @@ product:
 
 Every page handles loading (skeletons), empty (guidance on what to do first), error (message and
 retry) and success (toasts). **Cold-start banner:** in public mode, if `/api/system/health` fails,
-show "Waking the server — free hosting sleeps when idle, this can take about a minute" and retry
+show "Waking the server — free hosting sleeps when idle, this can take 1 to 2 minutes (measured 94.6 s)" and retry
 with backoff.
 
 ### 8.6 Onboarding

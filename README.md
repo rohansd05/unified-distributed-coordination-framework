@@ -19,7 +19,15 @@ report what they measured. Anything simulated is labelled "Simulated" on its pag
 
 ## Live demo
 
-<!-- Filled in by Rohan in step 17.3. -->
+**<https://unified-distributed-coordination-fr.vercel.app>**
+
+The public site runs the lite profile: a cluster of 3 nodes on Render's free tier, with the frontend on
+Vercel. The backend sleeps when unused, so the first load takes 1 to 2 minutes (measured 94.6 s) while a
+banner says the server is waking. Keep the tab open: its live connection keeps the backend awake. The
+top bar shows "Leader: None elected" until the first action that needs a leader; that action elects
+node 3. Deployment details and measurements: [docs/deploy/public-deploy.md](docs/deploy/public-deploy.md).
+
+To run the full five-node version on your own machine, see [Quick start (Windows)](#quick-start-windows).
 
 ---
 
