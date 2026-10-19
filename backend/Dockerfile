@@ -1,23 +1,18 @@
 # Stage 1: Build
-FROM eclipse-temurin:21-jdk AS build
+# Plain Maven image, not ./mvnw: the wrapper's distribution checksum check fails inside Docker (seen in 9A.1).
+# Same Maven version as .mvn/wrapper/maven-wrapper.properties (3.9.9).
+FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /build
 
-# Install unzip so mvnw downloads and verifies the pinned .zip distribution rather than falling back to .tar.gz
-RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*
-
-# Copy wrapper and project descriptors first to cache dependencies
-COPY mvnw .
-COPY .mvn .mvn
+# Copy the project descriptor first to cache dependencies
 COPY pom.xml .
-
-# Windows build contexts can lose the executable bit; ensure mvnw is executable
-RUN chmod +x mvnw && ./mvnw -B -q dependency:go-offline
+RUN mvn -B -q dependency:go-offline
 
 # Copy application source code
 COPY src src
 
-# Tests run locally before every push; skipping them here saves Render build minutes.
-RUN ./mvnw -B -q -DskipTests package
+# Tests run in CI before every merge; skipping them here saves Render build minutes.
+RUN mvn -B -DskipTests package
 
 # Stage 2: Runtime
 FROM eclipse-temurin:21-jre
@@ -30,8 +25,8 @@ COPY --from=build --chown=appuser:appgroup /build/target/udcf-backend-0.1.0.jar 
 
 USER 10001
 
-# Handled via environment; default JVM flags tuned for Render free tier (512 MB RAM, docs/HANDOFF.md 6.10)
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -Xss512k"
+# JVM memory flags come from the JAVA_TOOL_OPTIONS environment variable, set on the host
+# (Render: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k; see docs/deploy/public-deploy.md).
 
 # Documentation only; Render maps and exposes the external port dynamically via $PORT
 EXPOSE 8080
