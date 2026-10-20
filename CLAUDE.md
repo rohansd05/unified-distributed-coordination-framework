@@ -70,11 +70,27 @@ log is in its own file: docs/tracks/track-a-nidhi.md, track-b-swanand.md, track-
 track-d-rohan.md. Shared rules: docs/tracks/README.md. Only Rohan edits this file,
 docs/HANDOFF.md and README.md.
 
-Phases 3–12 are complete: all ten experiments, steps a–d, merged by 2026-10-16 (main dc08200,
-PR #47). Phase 9A (system integration of all ten experiments, R19; steps 9A.0–9A.9 in
-docs/tracks/README.md Section 11) is complete for the demo of Friday 2026-10-23, except the
-refreshed public lite redeploy, which moves to Phase 16. Demo script: docs/demo/udcf-demo.md.
-Next phase: 14.
+Phases 0–16 and 9A are complete (Phases 3–12: all ten experiments, merged by 2026-10-16, main
+dc08200, PR #47; Phase 9A: steps 9A.0–9A.9 in docs/tracks/README.md Section 11; Phases 14–16:
+steps 14.1, 15.1, 16.1–16.4 in the track files). Phase 17 is complete except the lab
+deliverables, which live outside the repository. The demo is on Friday 2026-10-23, from tag
+demo-2026-10-23, on the public site (3 nodes; docs/demo/udcf-demo.md, measured limits in
+docs/deploy/public-deploy.md), with the laptop as fallback (scripts/start-all.ps1, 5 nodes).
+
+### After the demo
+- Phase 14 phone layouts: at 375 px the toast viewport is off-screen (components/ui/toast.jsx has
+  no left-0) and an open SimulatedBadge tooltip overflows main (track-a-nidhi.md, Known issues);
+  14.1 had no visual walk below the desktop sizes.
+- Grafana on the public site: cut. Prometheus and Grafana run only in local Docker Compose (R4,
+  15.1); the public Monitoring page is hidden.
+- Playwright end-to-end tests (HANDOFF Phase 17): cut. Not installed, and adding it is a new
+  dependency (R15); manual check lists replace it (track-b-swanand.md).
+- npm audit findings: see Known issues below.
+- Optional: @DirtiesContext(classMode = AFTER_CLASS) on ReplicationControllerTest (Jai), so its
+  context, sockets and election threads close after the class (track-b-swanand.md).
+- Experiment 6: run each strategy's phase several times, interleaved, so drift and the throttle
+  quantum do not land on single phases ("A slow node under load" is not reliable on the shared
+  0.1 CPU; track-b-swanand.md, 16.3).
 
 ### Completed steps
 - 0.1 docs/HANDOFF.md committed (77f5704)
