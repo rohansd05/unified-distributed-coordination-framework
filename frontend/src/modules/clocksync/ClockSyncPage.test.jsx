@@ -15,7 +15,10 @@ import error409Fixture from '@/test/fixtures/clocksync/error-409-node-down.json'
 import error400Fixture from '@/test/fixtures/clocksync/error-400-validation.json'
 import error404Fixture from '@/test/fixtures/clocksync/error-404-unknown-node.json'
 import abortedRoundSynthetic from '@/test/fixtures/clocksync/synthetic/overview-aborted-round.json'
+import { silenceXhr } from '@/test/silentXhr'
 import { ClockSyncPage } from './ClockSyncPage'
+
+silenceXhr()
 
 const experiment = EXPERIMENTS.find((e) => e.id === 'clocksync')
 
